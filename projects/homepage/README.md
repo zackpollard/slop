@@ -22,4 +22,6 @@ Then open `http://localhost:8000` in your browser.
 
 ## Deployment
 
-Serve the contents of this directory as a static site at the root domain `slop.zackpollard.pro`.
+Deployed automatically to GitHub Pages via the `deploy-homepage` workflow on pushes to `main` that change files in this directory.
+
+The custom domain `slop.zackpollard.pro` is configured via the `CNAME` file. DNS must have a CNAME record pointing `slop.zackpollard.pro` to `zackpollard.github.io`.
