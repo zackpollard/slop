@@ -67,11 +67,13 @@ jobs:
               `| ${p.name} | [${sanitizedBranch}.${p.pagesProject}.pages.dev](https://${sanitizedBranch}.${p.pagesProject}.pages.dev) | [${p.domain}](https://${p.domain}) |`
             ).join('\n');
 
-            const body = `### Preview Deployments
-
-            | Project | Preview URL | Production URL |
-            |---------|-------------|----------------|
-            ${previews}`;
+            const body = [
+              '### Preview Deployments',
+              '',
+              '| Project | Preview URL | Production URL |',
+              '|---------|-------------|----------------|',
+              previews,
+            ].join('\n');
 
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
