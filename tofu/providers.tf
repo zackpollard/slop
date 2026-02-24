@@ -2,8 +2,8 @@ terraform {
   required_version = ">= 1.7"
 
   backend "s3" {
-    bucket                      = "slop-tofu-state"
-    key                         = "terraform.tfstate"
+    bucket                      = "tofu-state"
+    key                         = "slop/terraform.tfstate"
     region                      = "auto"
     skip_credentials_validation = true
     skip_metadata_api_check     = true

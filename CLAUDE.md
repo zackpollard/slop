@@ -44,7 +44,7 @@ tofu/                  # OpenTofu infrastructure (Cloudflare Pages + DNS)
 ## Deployment
 
 - **Platform:** Cloudflare Pages (one Pages project per project in this repo)
-- **Infrastructure:** OpenTofu manages Cloudflare Pages projects, custom domains, and DNS CNAME records. State is stored in Cloudflare R2 (`slop-tofu-state` bucket).
+- **Infrastructure:** OpenTofu manages Cloudflare Pages projects, custom domains, and DNS CNAME records. State is stored in Cloudflare R2 (`tofu-state` bucket, key prefix `slop/`).
 - **Workflows:**
   - `.github/workflows/infra.yml` — Runs `tofu plan` on PRs and `tofu apply` on push to `main` (triggered by changes to `tofu/**`)
   - `.github/workflows/deploy.yml` — Deploys each project to its Cloudflare Pages project via Wrangler (triggered by changes to `projects/**`)
