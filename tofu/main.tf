@@ -32,9 +32,10 @@ resource "cloudflare_pages_domain" "domain" {
 resource "cloudflare_record" "cname" {
   for_each = local.project_configs
 
-  zone_id = data.cloudflare_zone.zone.id
-  name    = each.value.subdomain
-  content = cloudflare_pages_project.project[each.key].subdomain
-  type    = "CNAME"
-  proxied = true
+  zone_id         = data.cloudflare_zone.zone.id
+  name            = each.value.subdomain
+  content         = cloudflare_pages_project.project[each.key].subdomain
+  type            = "CNAME"
+  proxied         = true
+  allow_overwrite = true
 }
