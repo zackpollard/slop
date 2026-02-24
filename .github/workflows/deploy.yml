@@ -44,8 +44,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          # TODO: revert - temporarily deploy as production from PR
-          command: pages deploy ${{ matrix.project.directory }} --project-name=${{ matrix.project.pages-project }} --branch=main
+          command: pages deploy ${{ matrix.project.directory }} --project-name=${{ matrix.project.pages-project }} --branch=${{ github.head_ref || 'main' }}
 
   preview-comment:
     name: Post preview URLs

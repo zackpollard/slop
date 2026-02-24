@@ -110,72 +110,9 @@ jobs:
               });
             }
 
-      # TODO: revert - temporarily apply on PR to bootstrap infrastructure
       - name: Apply
-        id: apply
-        run: |
-          set +e
-          OUTPUT=$(tofu apply -auto-approve -no-color tfplan 2>&1)
-          EXIT_CODE=$?
-          echo "$OUTPUT"
-          {
-            echo 'apply_output<<APPLYEOF'
-            echo "$OUTPUT"
-            echo 'APPLYEOF'
-          } >> "$GITHUB_OUTPUT"
-          echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
-          exit $EXIT_CODE
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: tofu apply -auto-approve tfplan
         env:
           TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           TF_VAR_cloudflare_account_id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-
-      - name: Comment apply result on PR
-        if: always() && github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        env:
-          APPLY_OUTPUT: ${{ steps.apply.outputs.apply_output }}
-          APPLY_EXIT: ${{ steps.apply.outputs.exit_code }}
-        with:
-          script: |
-            const output = process.env.APPLY_OUTPUT || 'No output captured';
-            const exitCode = process.env.APPLY_EXIT || 'unknown';
-            const status = exitCode === '0' ? 'Success' : 'Failed';
-
-            const body = [
-              `### OpenTofu Apply - ${status} (exit code ${exitCode})`,
-              '',
-              '<details>',
-              '<summary>Apply output</summary>',
-              '',
-              '```',
-              output,
-              '```',
-              '',
-              '</details>',
-            ].join('\n');
-
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-
-            const botComment = comments.find(c =>
-              c.user.type === 'Bot' && c.body.includes('### OpenTofu Apply')
-            );
-
-            if (botComment) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: botComment.id,
-                body,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body,
-              });
-            }
