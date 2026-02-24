@@ -46,26 +46,40 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy ${{ matrix.project.directory }} --project-name=${{ matrix.project.pages-project }} --branch=${{ github.head_ref || 'main' }}
 
+      - name: Save deployment URL
+        if: github.event_name == 'pull_request'
+        run: echo "${{ steps.deploy.outputs.deployment-url }}" > ${{ matrix.project.name }}-url.txt
+
+      - name: Upload deployment URL
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-url-${{ matrix.project.name }}
+          path: ${{ matrix.project.name }}-url.txt
+
   preview-comment:
     name: Post preview URLs
     needs: deploy
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
+      - name: Download deployment URLs
+        uses: actions/download-artifact@v4
+
       - name: Comment preview URLs on PR
         uses: actions/github-script@v7
         with:
           script: |
-            const branch = context.payload.pull_request.head.ref;
-            const sanitizedBranch = branch.replace(/[^a-zA-Z0-9-]/g, '-').toLowerCase();
+            const fs = require('fs');
             const projects = [
-              { name: 'homepage', pagesProject: 'slop-homepage', domain: 'slop.zackpollard.pro' },
-              { name: 'roof-calculator', pagesProject: 'slop-roof-calculator', domain: 'roof-calculator.slop.zackpollard.pro' },
+              { name: 'homepage', domain: 'slop.zackpollard.pro' },
+              { name: 'roof-calculator', domain: 'roof-calculator.slop.zackpollard.pro' },
             ];
 
-            const previews = projects.map(p =>
-              `| ${p.name} | [${sanitizedBranch}.${p.pagesProject}.pages.dev](https://${sanitizedBranch}.${p.pagesProject}.pages.dev) | [${p.domain}](https://${p.domain}) |`
-            ).join('\n');
+            const previews = projects.map(p => {
+              const url = fs.readFileSync(`deploy-url-${p.name}/${p.name}-url.txt`, 'utf8').trim();
+              return `| ${p.name} | [${url}](${url}) | [${p.domain}](https://${p.domain}) |`;
+            }).join('\n');
 
             const body = [
               '### Preview Deployments',
