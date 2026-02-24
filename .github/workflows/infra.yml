@@ -110,8 +110,8 @@ jobs:
               });
             }
 
+      # TODO: revert - temporarily apply on PR to bootstrap infrastructure
       - name: Apply
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: tofu apply -auto-approve tfplan
         env:
           TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
