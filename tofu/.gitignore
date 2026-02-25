@@ -1,0 +1,7 @@
+.terraform/
+.terraform.lock.hcl
+*.tfvars
+*.tfvars.json
+backend.conf
+tfplan
+plan_output.txt
