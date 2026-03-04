@@ -27,5 +27,8 @@ variable "projects" {
     roof-calculator = {
       subdomain = "roof-calculator.slop"
     }
+    dnd-encounter-generator = {
+      subdomain = "dnd-encounter-generator.slop"
+    }
   }
 }

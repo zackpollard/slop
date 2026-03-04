@@ -34,6 +34,9 @@ jobs:
           - name: roof-calculator
             pages-project: slop-roof-calculator
             directory: projects/roof-calculator
+          - name: dnd-encounter-generator
+            pages-project: slop-dnd-encounter-generator
+            directory: projects/dnd-encounter-generator
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -74,6 +77,7 @@ jobs:
             const projects = [
               { name: 'homepage', domain: 'slop.zackpollard.pro' },
               { name: 'roof-calculator', domain: 'roof-calculator.slop.zackpollard.pro' },
+              { name: 'dnd-encounter-generator', domain: 'dnd-encounter-generator.slop.zackpollard.pro' },
             ];
 
             const previews = projects.map(p => {

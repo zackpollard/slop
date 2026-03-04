@@ -10,8 +10,9 @@ This is a **monorepo** for small projects hosted under **slop.zackpollard.pro**.
 
 ```
 projects/
-├── homepage/          # Landing page (serves slop.zackpollard.pro)
-└── roof-calculator/   # Satellite-based roof measurement tool
+├── homepage/                  # Landing page (serves slop.zackpollard.pro)
+├── roof-calculator/           # Satellite-based roof measurement tool
+└── dnd-encounter-generator/   # D&D 2024 combat encounter generator
 tofu/                  # OpenTofu infrastructure (Cloudflare Pages + DNS)
 .github/workflows/
 ├── infra.yml          # OpenTofu plan/apply
@@ -24,6 +25,7 @@ tofu/                  # OpenTofu infrastructure (Cloudflare Pages + DNS)
 |---------|------|------|-------------|
 | homepage | `projects/homepage/` | Static HTML/CSS | Main landing page and project directory |
 | roof-calculator | `projects/roof-calculator/` | Static HTML/CSS/JS, Leaflet.js | Satellite map-based roof area measurement tool |
+| dnd-encounter-generator | `projects/dnd-encounter-generator/` | Static HTML/CSS/JS | D&D 2024 combat encounter generator |
 
 **When adding a new project:**
 1. Create `projects/<project-name>/` with a `README.md`
