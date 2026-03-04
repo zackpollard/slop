@@ -1,0 +1,146 @@
+name: Preview
+
+on:
+  pull_request:
+    paths:
+      - "projects/**"
+      - ".github/workflows/preview.yml"
+
+permissions:
+  contents: read
+  pull-requests: write
+  deployments: write
+
+concurrency:
+  group: preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    name: Deploy preview
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Assemble preview site
+        run: |
+          mkdir -p _preview
+
+          # Copy each project into a subpath
+          for dir in projects/*/; do
+            project_name=$(basename "$dir")
+            cp -r "$dir" "_preview/$project_name"
+          done
+
+          # Generate index page listing all projects
+          cat > _preview/index.html <<'INDEXEOF'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Preview — slop</title>
+            <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+            <style>
+              *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+              body { font-family: 'Inter', sans-serif; background: #0f0f0c; color: #e8e4d4; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+              .container { max-width: 600px; padding: 2rem; }
+              h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+              h1 .accent { color: #c4a24e; }
+              p { color: #9a9686; font-size: 0.9rem; margin-bottom: 1.5rem; }
+              ul { list-style: none; }
+              li { margin-bottom: 0.5rem; }
+              a { color: #c4a24e; text-decoration: none; font-weight: 600; font-size: 1rem; }
+              a:hover { text-decoration: underline; }
+              .mono { font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; color: #9a9686; margin-left: 0.5rem; }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <h1>Preview <span class="accent">Deployment</span></h1>
+              <p>This is a combined preview of all projects in this PR.</p>
+              <ul id="projects"></ul>
+              <script>
+                fetch('.')
+                  .then(r => r.text())
+                  .then(() => {
+                    // Statically list known projects — generated at build time
+                  });
+              </script>
+            </div>
+          </body>
+          </html>
+          INDEXEOF
+
+          # Replace the placeholder script with actual project links
+          PROJECT_LINKS=""
+          for dir in projects/*/; do
+            name=$(basename "$dir")
+            PROJECT_LINKS="${PROJECT_LINKS}<li><a href=\"/${name}/\">${name}</a></li>"
+          done
+
+          sed -i "s|<ul id=\"projects\"></ul>|<ul>${PROJECT_LINKS}</ul>|" _preview/index.html
+
+          # Remove the unused script tag
+          sed -i '/<script>/,/<\/script>/d' _preview/index.html
+
+      - name: Deploy to Cloudflare Pages
+        id: deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy _preview --project-name=slop-preview --branch=${{ github.head_ref }}
+
+      - name: Comment preview URL on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const url = '${{ steps.deploy.outputs.deployment-url }}';
+
+            const projects = [];
+            const fs = require('fs');
+            const dirs = fs.readdirSync('projects', { withFileTypes: true })
+              .filter(d => d.isDirectory())
+              .map(d => d.name);
+
+            const rows = dirs.map(name =>
+              `| ${name} | [${url}/${name}/](${url}/${name}/) |`
+            ).join('\n');
+
+            const body = [
+              '### Preview Deployment',
+              '',
+              `**Preview URL:** [${url}](${url})`,
+              '',
+              '| Project | Preview URL |',
+              '|---------|-------------|',
+              rows,
+            ].join('\n');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('### Preview Deployment')
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }

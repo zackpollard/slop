@@ -2,7 +2,7 @@ name: Infrastructure
 
 on:
   push:
-    branches: [main]
+    branches: [main, claude/dnd-encounter-generator-5hJK5] # TODO: remove feature branch after testing
     paths:
       - "tofu/**"
       - ".github/workflows/infra.yml"
@@ -111,7 +111,7 @@ jobs:
             }
 
       - name: Apply
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/claude/dnd-encounter-generator-5hJK5') && github.event_name == 'push' # TODO: remove feature branch after testing
         run: tofu apply -auto-approve tfplan
         env:
           TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}

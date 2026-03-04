@@ -1,0 +1,1010 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>D&D Encounter Generator — slop</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --color-bg: #0f0f0c;
+            --color-surface: #1a1a16;
+            --color-surface-hover: #222218;
+            --color-border: #2e2e24;
+            --color-text: #e8e4d4;
+            --color-text-muted: #9a9686;
+            --color-accent: #c4a24e;
+            --color-accent-dim: rgba(196, 162, 78, 0.15);
+            --color-low: #4a9e6e;
+            --color-moderate: #c4a24e;
+            --color-high: #c45e4e;
+            --font-body: 'Inter', sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+        }
+
+        body {
+            font-family: var(--font-body);
+            background: var(--color-bg);
+            color: var(--color-text);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 960px;
+            margin: 0 auto;
+            padding: 2rem 1.5rem;
+        }
+
+        header {
+            margin-bottom: 2rem;
+            text-align: center;
+        }
+
+        header h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+        }
+
+        header h1 .accent { color: var(--color-accent); }
+
+        header p {
+            color: var(--color-text-muted);
+            margin-top: 0.25rem;
+            font-size: 0.95rem;
+        }
+
+        .controls {
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .controls h2 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            color: var(--color-accent);
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1rem;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.35rem;
+        }
+
+        .form-group label {
+            font-size: 0.8rem;
+            font-weight: 500;
+            color: var(--color-text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .form-group select,
+        .form-group input[type="number"] {
+            background: var(--color-bg);
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            padding: 0.6rem 0.75rem;
+            color: var(--color-text);
+            font-family: var(--font-body);
+            font-size: 0.95rem;
+            transition: border-color 0.2s;
+        }
+
+        .form-group select:focus,
+        .form-group input[type="number"]:focus {
+            outline: none;
+            border-color: var(--color-accent);
+        }
+
+        .form-group select { cursor: pointer; }
+
+        .filter-section {
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--color-border);
+        }
+
+        .filter-section summary {
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: var(--color-text-muted);
+            user-select: none;
+        }
+
+        .filter-section summary:hover { color: var(--color-text); }
+
+        .filter-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.4rem;
+            margin-top: 0.75rem;
+        }
+
+        .filter-tag {
+            background: var(--color-bg);
+            border: 1px solid var(--color-border);
+            border-radius: 6px;
+            padding: 0.3rem 0.65rem;
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: all 0.15s;
+            user-select: none;
+            color: var(--color-text-muted);
+        }
+
+        .filter-tag:hover {
+            border-color: var(--color-accent);
+            color: var(--color-text);
+        }
+
+        .filter-tag.active {
+            background: var(--color-accent-dim);
+            border-color: var(--color-accent);
+            color: var(--color-accent);
+        }
+
+        .btn-row {
+            display: flex;
+            gap: 0.75rem;
+            margin-top: 1.25rem;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            background: var(--color-accent);
+            color: var(--color-bg);
+            border: none;
+            border-radius: 8px;
+            padding: 0.65rem 1.5rem;
+            font-family: var(--font-body);
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.15s;
+        }
+
+        .btn:hover { opacity: 0.85; }
+
+        .btn-secondary {
+            background: transparent;
+            color: var(--color-text-muted);
+            border: 1px solid var(--color-border);
+        }
+
+        .btn-secondary:hover {
+            border-color: var(--color-accent);
+            color: var(--color-text);
+            opacity: 1;
+        }
+
+        .results {
+            margin-top: 1.5rem;
+        }
+
+        .budget-bar {
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: 12px;
+            padding: 1rem 1.5rem;
+            margin-bottom: 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+        }
+
+        .budget-info {
+            display: flex;
+            gap: 1.5rem;
+            flex-wrap: wrap;
+        }
+
+        .budget-stat {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .budget-stat .label {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--color-text-muted);
+        }
+
+        .budget-stat .value {
+            font-family: var(--font-mono);
+            font-size: 1.1rem;
+            font-weight: 500;
+        }
+
+        .budget-stat .value.low { color: var(--color-low); }
+        .budget-stat .value.moderate { color: var(--color-moderate); }
+        .budget-stat .value.high { color: var(--color-high); }
+
+        .difficulty-badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .difficulty-badge.low { background: rgba(74, 158, 110, 0.15); color: var(--color-low); }
+        .difficulty-badge.moderate { background: var(--color-accent-dim); color: var(--color-moderate); }
+        .difficulty-badge.high { background: rgba(196, 94, 78, 0.15); color: var(--color-high); }
+
+        .encounter-card {
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .encounter-header {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--color-border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .encounter-header h3 {
+            font-size: 1.05rem;
+            font-weight: 600;
+        }
+
+        .encounter-theme {
+            font-size: 0.8rem;
+            color: var(--color-text-muted);
+            font-style: italic;
+        }
+
+        .monster-list {
+            list-style: none;
+        }
+
+        .monster-item {
+            display: grid;
+            grid-template-columns: auto 1fr auto auto;
+            gap: 1rem;
+            align-items: center;
+            padding: 0.85rem 1.5rem;
+            border-bottom: 1px solid var(--color-border);
+            transition: background 0.1s;
+        }
+
+        .monster-item:last-child { border-bottom: none; }
+        .monster-item:hover { background: var(--color-surface-hover); }
+
+        .monster-count {
+            font-family: var(--font-mono);
+            font-weight: 600;
+            color: var(--color-accent);
+            min-width: 2.5rem;
+            text-align: center;
+        }
+
+        .monster-info {
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+        }
+
+        .monster-name {
+            font-weight: 600;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .monster-meta {
+            font-size: 0.78rem;
+            color: var(--color-text-muted);
+        }
+
+        .monster-cr {
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            color: var(--color-text-muted);
+            white-space: nowrap;
+        }
+
+        .monster-xp {
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            color: var(--color-accent);
+            white-space: nowrap;
+            text-align: right;
+            min-width: 4.5rem;
+        }
+
+        .encounter-footer {
+            padding: 0.75rem 1.5rem;
+            border-top: 1px solid var(--color-border);
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.85rem;
+            color: var(--color-text-muted);
+        }
+
+        .encounter-footer .total-xp {
+            font-family: var(--font-mono);
+            color: var(--color-accent);
+            font-weight: 500;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 3rem 1rem;
+            color: var(--color-text-muted);
+        }
+
+        .empty-state p {
+            margin-bottom: 0.5rem;
+        }
+
+        .warning {
+            background: rgba(196, 94, 78, 0.1);
+            border: 1px solid rgba(196, 94, 78, 0.3);
+            border-radius: 8px;
+            padding: 0.75rem 1rem;
+            margin-top: 1rem;
+            font-size: 0.85rem;
+            color: #e8a090;
+        }
+
+        .tip {
+            background: var(--color-accent-dim);
+            border: 1px solid rgba(196, 162, 78, 0.3);
+            border-radius: 8px;
+            padding: 0.75rem 1rem;
+            margin-top: 1rem;
+            font-size: 0.85rem;
+            color: #d4c488;
+        }
+
+        footer {
+            margin-top: 3rem;
+            text-align: center;
+            font-size: 0.8rem;
+            color: var(--color-text-muted);
+        }
+
+        footer a {
+            color: var(--color-accent);
+            text-decoration: none;
+        }
+
+        footer a:hover { text-decoration: underline; }
+
+        @media (max-width: 600px) {
+            .container { padding: 1rem; }
+            header h1 { font-size: 1.5rem; }
+            .form-grid { grid-template-columns: 1fr 1fr; }
+            .monster-item {
+                grid-template-columns: auto 1fr auto;
+                gap: 0.5rem;
+                padding: 0.7rem 1rem;
+            }
+            .monster-xp { display: none; }
+            .budget-info { gap: 1rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>D&D Encounter <span class="accent">Generator</span></h1>
+            <p>Build balanced combat encounters using D&D 2024 rules</p>
+        </header>
+
+        <div class="controls">
+            <h2>Encounter Settings</h2>
+            <div class="form-grid">
+                <div class="form-group">
+                    <label for="num-players">Players</label>
+                    <input type="number" id="num-players" min="1" max="10" value="4">
+                </div>
+                <div class="form-group">
+                    <label for="party-level">Party Level</label>
+                    <input type="number" id="party-level" min="1" max="20" value="3">
+                </div>
+                <div class="form-group">
+                    <label for="difficulty">Difficulty</label>
+                    <select id="difficulty">
+                        <option value="low">Low</option>
+                        <option value="moderate" selected>Moderate</option>
+                        <option value="high">High</option>
+                    </select>
+                </div>
+            </div>
+
+            <details class="filter-section">
+                <summary>Environment Filter</summary>
+                <div class="filter-tags" id="env-filters"></div>
+            </details>
+
+            <details class="filter-section">
+                <summary>Creature Type Filter</summary>
+                <div class="filter-tags" id="type-filters"></div>
+            </details>
+
+            <details class="filter-section">
+                <summary>Encounter Theme</summary>
+                <div class="filter-tags" id="theme-filters"></div>
+            </details>
+
+            <div class="btn-row">
+                <button class="btn" id="generate-btn">Generate Encounter</button>
+                <button class="btn btn-secondary" id="clear-filters-btn">Clear Filters</button>
+            </div>
+        </div>
+
+        <div class="results" id="results">
+            <div class="empty-state">
+                <p>Configure your encounter settings above and hit <strong>Generate Encounter</strong>.</p>
+            </div>
+        </div>
+
+        <footer>
+            <p>Uses D&D 2024 Dungeon Master's Guide XP budget system &bull; <a href="https://slop.zackpollard.pro/">slop.zackpollard.pro</a></p>
+        </footer>
+    </div>
+
+    <script>
+    (function () {
+        'use strict';
+
+        // ─── XP Budget Table (2024 DMG) ───
+        // Index 0 = level 1, index 19 = level 20
+        const XP_BUDGET = {
+            low:      [50,100,150,250,500,600,750,1000,1300,1600,1900,2200,2600,2900,3300,3800,4500,5000,5500,6400],
+            moderate: [75,150,225,375,750,1000,1300,1700,2000,2300,2900,3700,4200,4900,5400,6100,7200,8700,10700,13200],
+            high:     [100,200,400,500,1100,1400,1700,2100,2600,3100,4100,4700,5400,6200,7800,9800,11700,14200,17200,22000]
+        };
+
+        // ─── CR to XP mapping ───
+        const CR_XP = {
+            '0': 10, '1/8': 25, '1/4': 50, '1/2': 100,
+            '1': 200, '2': 450, '3': 700, '4': 1100, '5': 1800,
+            '6': 2300, '7': 2900, '8': 3900, '9': 5000, '10': 5900,
+            '11': 7200, '12': 8400, '13': 10000, '14': 11500, '15': 13000,
+            '16': 15000, '17': 18000, '18': 20000, '19': 22000, '20': 25000,
+            '21': 33000, '22': 41000, '23': 50000, '24': 62000, '25': 75000,
+            '26': 90000, '27': 105000, '28': 120000, '29': 135000, '30': 155000
+        };
+
+        function crToNumber(cr) {
+            if (cr === '1/8') return 0.125;
+            if (cr === '1/4') return 0.25;
+            if (cr === '1/2') return 0.5;
+            return parseFloat(cr);
+        }
+
+        // ─── Environments ───
+        const ENVIRONMENTS = [
+            'Arctic','Coastal','Desert','Forest','Grassland','Hill',
+            'Mountain','Swamp','Underdark','Underwater','Urban','Dungeon'
+        ];
+
+        // ─── Creature Types ───
+        const CREATURE_TYPES = [
+            'Aberration','Beast','Celestial','Construct','Dragon','Elemental',
+            'Fey','Fiend','Giant','Humanoid','Monstrosity','Ooze','Plant','Undead'
+        ];
+
+        // ─── Encounter Themes ───
+        const THEMES = {
+            'Goblinoid Warband':   { monsters: ['Goblin','Goblin Boss','Hobgoblin','Hobgoblin Captain','Bugbear','Bugbear Chief'], icon: '⚔️' },
+            'Undead Rising':       { monsters: ['Skeleton','Zombie','Ghoul','Ghost','Wight','Wraith','Mummy','Specter','Shadow','Vampire Spawn'], icon: '💀' },
+            'Dragon\'s Lair':      { monsters: ['Kobold','Wyrmling (Red)','Wyrmling (Blue)','Wyrmling (Green)','Wyrmling (White)','Wyrmling (Black)','Young Red Dragon','Young Blue Dragon','Young Green Dragon','Young White Dragon','Young Black Dragon','Adult Red Dragon','Adult Blue Dragon','Adult Green Dragon'], icon: '🐉' },
+            'Demonic Incursion':   { monsters: ['Dretch','Quasit','Shadow Demon','Barlgura','Vrock','Hezrou','Glabrezu','Nalfeshnee'], icon: '👹' },
+            'Beast Hunt':          { monsters: ['Wolf','Dire Wolf','Brown Bear','Giant Spider','Giant Scorpion','Owlbear','Basilisk','Manticore','Chimera','Hydra'], icon: '🐺' },
+            'Bandit Ambush':       { monsters: ['Bandit','Bandit Captain','Thug','Scout','Spy','Assassin','Veteran','Knight'], icon: '🗡️' },
+            'Cult Ritual':         { monsters: ['Cultist','Cult Fanatic','Acolyte','Mage','Dark Mage','Shadow Demon','Imp','Quasit'], icon: '🕯️' },
+            'Giant Raid':          { monsters: ['Ogre','Troll','Hill Giant','Stone Giant','Frost Giant','Fire Giant','Ettin'], icon: '🏔️' },
+            'Fey Mischief':        { monsters: ['Pixie','Sprite','Satyr','Dryad','Green Hag','Blink Dog','Treant'], icon: '🍃' },
+            'Elemental Chaos':     { monsters: ['Magma Mephit','Ice Mephit','Dust Mephit','Fire Elemental','Water Elemental','Earth Elemental','Air Elemental','Gargoyle','Salamander'], icon: '🌪️' },
+            'Ooze Infestation':    { monsters: ['Gray Ooze','Ochre Jelly','Gelatinous Cube','Black Pudding'], icon: '🟢' },
+            'Arachnid Nest':       { monsters: ['Giant Spider','Phase Spider','Ettercap','Drider'], icon: '🕷️' },
+        };
+
+        // ─── Monster Database ───
+        const MONSTERS = [
+            // CR 0
+            { name: 'Commoner', cr: '0', type: 'Humanoid', env: ['Urban','Grassland','Forest'] },
+            { name: 'Bat', cr: '0', type: 'Beast', env: ['Dungeon','Forest','Underdark'] },
+            { name: 'Cat', cr: '0', type: 'Beast', env: ['Urban','Forest'] },
+            { name: 'Rat', cr: '0', type: 'Beast', env: ['Urban','Dungeon','Underdark'] },
+
+            // CR 1/8
+            { name: 'Bandit', cr: '1/8', type: 'Humanoid', env: ['Urban','Forest','Grassland','Hill','Desert','Coastal'] },
+            { name: 'Cultist', cr: '1/8', type: 'Humanoid', env: ['Urban','Dungeon','Underdark'] },
+            { name: 'Kobold', cr: '1/8', type: 'Humanoid', env: ['Dungeon','Forest','Hill','Mountain','Underdark'] },
+            { name: 'Giant Rat', cr: '1/8', type: 'Beast', env: ['Dungeon','Urban','Underdark','Swamp'] },
+            { name: 'Stirge', cr: '1/8', type: 'Beast', env: ['Dungeon','Forest','Swamp','Underdark'] },
+            { name: 'Poisonous Snake', cr: '1/8', type: 'Beast', env: ['Forest','Swamp','Desert','Grassland'] },
+
+            // CR 1/4
+            { name: 'Acolyte', cr: '1/4', type: 'Humanoid', env: ['Urban','Dungeon'] },
+            { name: 'Goblin', cr: '1/4', type: 'Humanoid', env: ['Dungeon','Forest','Hill','Grassland','Underdark'] },
+            { name: 'Skeleton', cr: '1/4', type: 'Undead', env: ['Dungeon','Underdark','Swamp','Desert'] },
+            { name: 'Zombie', cr: '1/4', type: 'Undead', env: ['Dungeon','Underdark','Swamp','Urban'] },
+            { name: 'Wolf', cr: '1/4', type: 'Beast', env: ['Forest','Grassland','Hill','Arctic','Mountain'] },
+            { name: 'Giant Spider', cr: '1/4', type: 'Beast', env: ['Dungeon','Forest','Underdark','Swamp'] },
+            { name: 'Pixie', cr: '1/4', type: 'Fey', env: ['Forest'] },
+            { name: 'Sprite', cr: '1/4', type: 'Fey', env: ['Forest'] },
+            { name: 'Blink Dog', cr: '1/4', type: 'Fey', env: ['Forest','Grassland'] },
+            { name: 'Dretch', cr: '1/4', type: 'Fiend', env: ['Underdark','Dungeon'] },
+            { name: 'Magma Mephit', cr: '1/4', type: 'Elemental', env: ['Mountain','Underdark','Dungeon'] },
+            { name: 'Ice Mephit', cr: '1/4', type: 'Elemental', env: ['Arctic','Mountain'] },
+            { name: 'Dust Mephit', cr: '1/4', type: 'Elemental', env: ['Desert','Dungeon'] },
+
+            // CR 1/2
+            { name: 'Scout', cr: '1/2', type: 'Humanoid', env: ['Forest','Grassland','Hill','Mountain','Coastal','Arctic'] },
+            { name: 'Thug', cr: '1/2', type: 'Humanoid', env: ['Urban','Dungeon'] },
+            { name: 'Hobgoblin', cr: '1/2', type: 'Humanoid', env: ['Dungeon','Forest','Hill','Grassland','Desert'] },
+            { name: 'Orc', cr: '1/2', type: 'Humanoid', env: ['Forest','Hill','Mountain','Grassland','Underdark'] },
+            { name: 'Gnoll', cr: '1/2', type: 'Humanoid', env: ['Forest','Grassland','Hill','Desert'] },
+            { name: 'Satyr', cr: '1/2', type: 'Fey', env: ['Forest'] },
+            { name: 'Shadow', cr: '1/2', type: 'Undead', env: ['Dungeon','Underdark','Swamp','Urban'] },
+            { name: 'Gray Ooze', cr: '1/2', type: 'Ooze', env: ['Dungeon','Underdark','Swamp'] },
+            { name: 'Warhorse', cr: '1/2', type: 'Beast', env: ['Grassland','Urban'] },
+            { name: 'Black Bear', cr: '1/2', type: 'Beast', env: ['Forest','Hill'] },
+
+            // CR 1
+            { name: 'Bugbear', cr: '1', type: 'Humanoid', env: ['Dungeon','Forest','Hill','Underdark'] },
+            { name: 'Goblin Boss', cr: '1', type: 'Humanoid', env: ['Dungeon','Forest','Hill','Grassland','Underdark'] },
+            { name: 'Spy', cr: '1', type: 'Humanoid', env: ['Urban','Dungeon'] },
+            { name: 'Ghoul', cr: '1', type: 'Undead', env: ['Dungeon','Underdark','Swamp'] },
+            { name: 'Specter', cr: '1', type: 'Undead', env: ['Dungeon','Underdark','Urban'] },
+            { name: 'Imp', cr: '1', type: 'Fiend', env: ['Urban','Dungeon','Underdark'] },
+            { name: 'Quasit', cr: '1', type: 'Fiend', env: ['Urban','Dungeon','Underdark'] },
+            { name: 'Dryad', cr: '1', type: 'Fey', env: ['Forest'] },
+            { name: 'Dire Wolf', cr: '1', type: 'Beast', env: ['Forest','Hill','Arctic','Mountain'] },
+            { name: 'Brown Bear', cr: '1', type: 'Beast', env: ['Forest','Hill','Arctic'] },
+            { name: 'Giant Scorpion', cr: '1', type: 'Beast', env: ['Desert','Dungeon','Underdark'] },
+            { name: 'Hippogriff', cr: '1', type: 'Monstrosity', env: ['Hill','Mountain','Grassland'] },
+            { name: 'Death Dog', cr: '1', type: 'Monstrosity', env: ['Desert','Dungeon'] },
+
+            // CR 2
+            { name: 'Bandit Captain', cr: '2', type: 'Humanoid', env: ['Urban','Forest','Grassland','Hill','Desert','Coastal'] },
+            { name: 'Cult Fanatic', cr: '2', type: 'Humanoid', env: ['Urban','Dungeon','Underdark'] },
+            { name: 'Ogre', cr: '2', type: 'Giant', env: ['Hill','Mountain','Forest','Swamp','Dungeon'] },
+            { name: 'Ettercap', cr: '2', type: 'Monstrosity', env: ['Forest','Dungeon','Underdark'] },
+            { name: 'Gargoyle', cr: '2', type: 'Elemental', env: ['Urban','Dungeon','Mountain'] },
+            { name: 'Ghast', cr: '2', type: 'Undead', env: ['Dungeon','Underdark','Swamp'] },
+            { name: 'Mimic', cr: '2', type: 'Monstrosity', env: ['Dungeon','Underdark'] },
+            { name: 'Gelatinous Cube', cr: '2', type: 'Ooze', env: ['Dungeon','Underdark'] },
+            { name: 'Ochre Jelly', cr: '2', type: 'Ooze', env: ['Dungeon','Underdark','Swamp'] },
+            { name: 'Awakened Tree', cr: '2', type: 'Plant', env: ['Forest'] },
+            { name: 'Giant Constrictor Snake', cr: '2', type: 'Beast', env: ['Forest','Swamp','Underwater'] },
+            { name: 'Rhinoceros', cr: '2', type: 'Beast', env: ['Grassland'] },
+
+            // CR 3
+            { name: 'Knight', cr: '3', type: 'Humanoid', env: ['Urban','Grassland','Hill'] },
+            { name: 'Veteran', cr: '3', type: 'Humanoid', env: ['Urban','Grassland','Hill','Dungeon'] },
+            { name: 'Hobgoblin Captain', cr: '3', type: 'Humanoid', env: ['Dungeon','Forest','Hill','Grassland','Desert'] },
+            { name: 'Mummy', cr: '3', type: 'Undead', env: ['Desert','Dungeon'] },
+            { name: 'Wight', cr: '3', type: 'Undead', env: ['Dungeon','Underdark','Swamp'] },
+            { name: 'Basilisk', cr: '3', type: 'Monstrosity', env: ['Dungeon','Mountain','Underdark'] },
+            { name: 'Manticore', cr: '3', type: 'Monstrosity', env: ['Hill','Mountain','Grassland','Coastal'] },
+            { name: 'Owlbear', cr: '3', type: 'Monstrosity', env: ['Forest','Hill'] },
+            { name: 'Phase Spider', cr: '3', type: 'Monstrosity', env: ['Dungeon','Underdark','Forest'] },
+            { name: 'Minotaur', cr: '3', type: 'Monstrosity', env: ['Dungeon','Underdark'] },
+            { name: 'Green Hag', cr: '3', type: 'Fey', env: ['Forest','Swamp'] },
+            { name: 'Hell Hound', cr: '3', type: 'Fiend', env: ['Dungeon','Underdark','Mountain'] },
+            { name: 'Killer Whale', cr: '3', type: 'Beast', env: ['Underwater','Coastal'] },
+            { name: 'Giant Scorpion', cr: '3', type: 'Beast', env: ['Desert','Dungeon','Underdark'] },
+
+            // CR 4
+            { name: 'Dark Mage', cr: '4', type: 'Humanoid', env: ['Urban','Dungeon','Underdark'] },
+            { name: 'Ghost', cr: '4', type: 'Undead', env: ['Dungeon','Underdark','Urban','Swamp'] },
+            { name: 'Ettin', cr: '4', type: 'Giant', env: ['Hill','Mountain','Dungeon'] },
+            { name: 'Lamia', cr: '4', type: 'Monstrosity', env: ['Desert','Dungeon'] },
+            { name: 'Black Pudding', cr: '4', type: 'Ooze', env: ['Dungeon','Underdark','Swamp'] },
+            { name: 'Shadow Demon', cr: '4', type: 'Fiend', env: ['Underdark','Dungeon'] },
+            { name: 'Elephant', cr: '4', type: 'Beast', env: ['Grassland'] },
+            { name: 'Wyrmling (Red)', cr: '4', type: 'Dragon', env: ['Mountain','Hill','Dungeon'] },
+            { name: 'Wyrmling (Blue)', cr: '4', type: 'Dragon', env: ['Desert','Coastal'] },
+            { name: 'Wyrmling (Green)', cr: '4', type: 'Dragon', env: ['Forest'] },
+            { name: 'Wyrmling (White)', cr: '4', type: 'Dragon', env: ['Arctic','Mountain'] },
+            { name: 'Wyrmling (Black)', cr: '4', type: 'Dragon', env: ['Swamp'] },
+
+            // CR 5
+            { name: 'Assassin', cr: '5', type: 'Humanoid', env: ['Urban','Dungeon'] },
+            { name: 'Mage', cr: '5', type: 'Humanoid', env: ['Urban','Dungeon'] },
+            { name: 'Wraith', cr: '5', type: 'Undead', env: ['Dungeon','Underdark','Swamp'] },
+            { name: 'Vampire Spawn', cr: '5', type: 'Undead', env: ['Dungeon','Urban','Underdark'] },
+            { name: 'Troll', cr: '5', type: 'Giant', env: ['Forest','Hill','Mountain','Swamp','Underdark'] },
+            { name: 'Bulette', cr: '5', type: 'Monstrosity', env: ['Grassland','Hill','Mountain'] },
+            { name: 'Chimera', cr: '5', type: 'Monstrosity', env: ['Hill','Mountain'] },
+            { name: 'Gorgon', cr: '5', type: 'Monstrosity', env: ['Grassland','Hill','Forest'] },
+            { name: 'Salamander', cr: '5', type: 'Elemental', env: ['Underdark','Dungeon','Mountain'] },
+            { name: 'Barlgura', cr: '5', type: 'Fiend', env: ['Underdark','Dungeon'] },
+            { name: 'Air Elemental', cr: '5', type: 'Elemental', env: ['Mountain','Grassland','Coastal'] },
+            { name: 'Earth Elemental', cr: '5', type: 'Elemental', env: ['Mountain','Underdark','Dungeon'] },
+            { name: 'Fire Elemental', cr: '5', type: 'Elemental', env: ['Desert','Mountain','Dungeon'] },
+            { name: 'Water Elemental', cr: '5', type: 'Elemental', env: ['Coastal','Swamp','Underwater'] },
+            { name: 'Shambling Mound', cr: '5', type: 'Plant', env: ['Forest','Swamp'] },
+
+            // CR 6
+            { name: 'Hobgoblin Warlord', cr: '6', type: 'Humanoid', env: ['Dungeon','Forest','Hill','Grassland','Desert'] },
+            { name: 'Drider', cr: '6', type: 'Monstrosity', env: ['Underdark','Dungeon'] },
+            { name: 'Galeb Duhr', cr: '6', type: 'Elemental', env: ['Mountain','Hill','Underdark'] },
+            { name: 'Vrock', cr: '6', type: 'Fiend', env: ['Underdark','Dungeon'] },
+            { name: 'Medusa', cr: '6', type: 'Monstrosity', env: ['Dungeon','Desert'] },
+            { name: 'Mammoth', cr: '6', type: 'Beast', env: ['Arctic','Grassland'] },
+            { name: 'Wyvern', cr: '6', type: 'Dragon', env: ['Hill','Mountain','Coastal'] },
+            { name: 'Young White Dragon', cr: '6', type: 'Dragon', env: ['Arctic','Mountain'] },
+            { name: 'Young Black Dragon', cr: '6', type: 'Dragon', env: ['Swamp'] },
+            { name: 'Cyclops', cr: '6', type: 'Giant', env: ['Hill','Mountain','Coastal','Desert'] },
+
+            // CR 7
+            { name: 'Shield Guardian', cr: '7', type: 'Construct', env: ['Dungeon','Urban'] },
+            { name: 'Young Blue Dragon', cr: '7', type: 'Dragon', env: ['Desert','Coastal'] },
+            { name: 'Young Green Dragon', cr: '7', type: 'Dragon', env: ['Forest'] },
+            { name: 'Stone Giant', cr: '7', type: 'Giant', env: ['Mountain','Hill','Underdark'] },
+            { name: 'Oni', cr: '7', type: 'Giant', env: ['Forest','Hill','Urban'] },
+            { name: 'Hezrou', cr: '7', type: 'Fiend', env: ['Underdark','Dungeon','Swamp'] },
+            { name: 'Grick Alpha', cr: '7', type: 'Monstrosity', env: ['Dungeon','Underdark'] },
+
+            // CR 8
+            { name: 'Assassin Vine', cr: '8', type: 'Plant', env: ['Forest','Swamp','Dungeon'] },
+            { name: 'Frost Giant', cr: '8', type: 'Giant', env: ['Arctic','Mountain'] },
+            { name: 'Hydra', cr: '8', type: 'Monstrosity', env: ['Swamp','Coastal','Underwater'] },
+            { name: 'Young Red Dragon', cr: '8', type: 'Dragon', env: ['Mountain','Hill','Dungeon'] },
+            { name: 'Cloaker', cr: '8', type: 'Aberration', env: ['Underdark','Dungeon'] },
+            { name: 'Hezrou', cr: '8', type: 'Fiend', env: ['Underdark','Dungeon'] },
+            { name: 'Spirit Naga', cr: '8', type: 'Monstrosity', env: ['Dungeon','Underdark'] },
+            { name: 'Tyrannosaurus Rex', cr: '8', type: 'Beast', env: ['Grassland','Forest'] },
+
+            // CR 9
+            { name: 'Treant', cr: '9', type: 'Plant', env: ['Forest'] },
+            { name: 'Fire Giant', cr: '9', type: 'Giant', env: ['Mountain','Underdark','Dungeon'] },
+            { name: 'Cloud Giant', cr: '9', type: 'Giant', env: ['Mountain','Hill'] },
+            { name: 'Glabrezu', cr: '9', type: 'Fiend', env: ['Underdark','Dungeon'] },
+            { name: 'Bone Devil', cr: '9', type: 'Fiend', env: ['Underdark','Dungeon'] },
+            { name: 'Abominable Yeti', cr: '9', type: 'Monstrosity', env: ['Arctic','Mountain'] },
+            { name: 'Young Silver Dragon', cr: '9', type: 'Dragon', env: ['Mountain','Urban'] },
+            { name: 'Young Gold Dragon', cr: '9', type: 'Dragon', env: ['Grassland','Forest'] },
+
+            // CR 10
+            { name: 'Aboleth', cr: '10', type: 'Aberration', env: ['Underdark','Underwater'] },
+            { name: 'Guardian Naga', cr: '10', type: 'Monstrosity', env: ['Forest','Dungeon'] },
+            { name: 'Stone Golem', cr: '10', type: 'Construct', env: ['Dungeon','Urban'] },
+            { name: 'Young Red Shadow Dragon', cr: '10', type: 'Dragon', env: ['Underdark','Dungeon'] },
+
+            // CR 11
+            { name: 'Behir', cr: '11', type: 'Monstrosity', env: ['Mountain','Underdark','Dungeon'] },
+            { name: 'Remorhaz', cr: '11', type: 'Monstrosity', env: ['Arctic'] },
+            { name: 'Djinni', cr: '11', type: 'Elemental', env: ['Desert','Mountain','Coastal'] },
+            { name: 'Efreeti', cr: '11', type: 'Elemental', env: ['Desert','Mountain','Underdark'] },
+            { name: 'Horned Devil', cr: '11', type: 'Fiend', env: ['Underdark','Dungeon'] },
+            { name: 'Roc', cr: '11', type: 'Monstrosity', env: ['Mountain','Hill','Coastal'] },
+            { name: 'Hill Giant', cr: '5', type: 'Giant', env: ['Hill','Mountain','Forest'] },
+
+            // CR 12
+            { name: 'Archmage', cr: '12', type: 'Humanoid', env: ['Urban','Dungeon'] },
+            { name: 'Erinyes', cr: '12', type: 'Fiend', env: ['Underdark','Dungeon','Urban'] },
+
+            // CR 13
+            { name: 'Adult White Dragon', cr: '13', type: 'Dragon', env: ['Arctic','Mountain'] },
+            { name: 'Adult Black Dragon', cr: '13', type: 'Dragon', env: ['Swamp'] },
+            { name: 'Beholder', cr: '13', type: 'Aberration', env: ['Underdark','Dungeon'] },
+            { name: 'Nalfeshnee', cr: '13', type: 'Fiend', env: ['Underdark','Dungeon'] },
+            { name: 'Vampire', cr: '13', type: 'Undead', env: ['Dungeon','Urban','Underdark'] },
+
+            // CR 14
+            { name: 'Adult Blue Dragon', cr: '14', type: 'Dragon', env: ['Desert','Coastal'] },
+            { name: 'Adult Green Dragon', cr: '14', type: 'Dragon', env: ['Forest'] },
+            { name: 'Ice Devil', cr: '14', type: 'Fiend', env: ['Arctic','Underdark','Dungeon'] },
+
+            // CR 15
+            { name: 'Mummy Lord', cr: '15', type: 'Undead', env: ['Desert','Dungeon'] },
+            { name: 'Purple Worm', cr: '15', type: 'Monstrosity', env: ['Underdark','Desert'] },
+            { name: 'Adult Bronze Dragon', cr: '15', type: 'Dragon', env: ['Coastal'] },
+            { name: 'Adult Silver Dragon', cr: '15', type: 'Dragon', env: ['Mountain','Urban'] },
+
+            // CR 16
+            { name: 'Iron Golem', cr: '16', type: 'Construct', env: ['Dungeon','Urban'] },
+            { name: 'Adult Gold Dragon', cr: '16', type: 'Dragon', env: ['Grassland','Forest'] },
+            { name: 'Marilith', cr: '16', type: 'Fiend', env: ['Underdark','Dungeon'] },
+
+            // CR 17
+            { name: 'Adult Red Dragon', cr: '17', type: 'Dragon', env: ['Mountain','Hill','Dungeon'] },
+            { name: 'Death Knight', cr: '17', type: 'Undead', env: ['Dungeon','Underdark'] },
+            { name: 'Goristro', cr: '17', type: 'Fiend', env: ['Underdark','Dungeon'] },
+
+            // CR 18
+            { name: 'Demilich', cr: '18', type: 'Undead', env: ['Dungeon','Underdark'] },
+
+            // CR 19
+            { name: 'Balor', cr: '19', type: 'Fiend', env: ['Underdark','Dungeon'] },
+
+            // CR 20
+            { name: 'Ancient White Dragon', cr: '20', type: 'Dragon', env: ['Arctic','Mountain'] },
+            { name: 'Ancient Black Dragon', cr: '20', type: 'Dragon', env: ['Swamp'] },
+            { name: 'Pit Fiend', cr: '20', type: 'Fiend', env: ['Underdark','Dungeon'] },
+            { name: 'Ancient Bronze Dragon', cr: '20', type: 'Dragon', env: ['Coastal'] },
+
+            // CR 21+
+            { name: 'Lich', cr: '21', type: 'Undead', env: ['Dungeon','Underdark'] },
+            { name: 'Ancient Blue Dragon', cr: '21', type: 'Dragon', env: ['Desert','Coastal'] },
+            { name: 'Ancient Green Dragon', cr: '21', type: 'Dragon', env: ['Forest'] },
+            { name: 'Ancient Silver Dragon', cr: '22', type: 'Dragon', env: ['Mountain','Urban'] },
+            { name: 'Ancient Gold Dragon', cr: '22', type: 'Dragon', env: ['Grassland','Forest'] },
+            { name: 'Ancient Red Dragon', cr: '24', type: 'Dragon', env: ['Mountain','Hill','Dungeon'] },
+            { name: 'Tarrasque', cr: '30', type: 'Monstrosity', env: ['Grassland','Hill','Mountain','Urban'] },
+        ];
+
+        // ─── State ───
+        let activeEnvs = new Set();
+        let activeTypes = new Set();
+        let activeTheme = null;
+
+        // ─── DOM refs ───
+        const numPlayersEl = document.getElementById('num-players');
+        const partyLevelEl = document.getElementById('party-level');
+        const difficultyEl = document.getElementById('difficulty');
+        const envFiltersEl = document.getElementById('env-filters');
+        const typeFiltersEl = document.getElementById('type-filters');
+        const themeFiltersEl = document.getElementById('theme-filters');
+        const resultsEl = document.getElementById('results');
+        const generateBtn = document.getElementById('generate-btn');
+        const clearBtn = document.getElementById('clear-filters-btn');
+
+        function init() {
+            renderFilterTags(envFiltersEl, ENVIRONMENTS, activeEnvs, toggleEnv);
+            renderFilterTags(typeFiltersEl, CREATURE_TYPES, activeTypes, toggleType);
+            renderThemeTags();
+            generateBtn.addEventListener('click', generate);
+            clearBtn.addEventListener('click', clearFilters);
+        }
+
+        function renderFilterTags(container, items, activeSet, toggleFn) {
+            container.innerHTML = '';
+            items.forEach(item => {
+                const tag = document.createElement('span');
+                tag.className = 'filter-tag' + (activeSet.has(item) ? ' active' : '');
+                tag.textContent = item;
+                tag.addEventListener('click', () => {
+                    toggleFn(item);
+                    renderFilterTags(container, items, activeSet, toggleFn);
+                });
+                container.appendChild(tag);
+            });
+        }
+
+        function renderThemeTags() {
+            themeFiltersEl.innerHTML = '';
+            Object.keys(THEMES).forEach(name => {
+                const tag = document.createElement('span');
+                tag.className = 'filter-tag' + (activeTheme === name ? ' active' : '');
+                tag.textContent = THEMES[name].icon + ' ' + name;
+                tag.addEventListener('click', () => {
+                    activeTheme = activeTheme === name ? null : name;
+                    renderThemeTags();
+                });
+                themeFiltersEl.appendChild(tag);
+            });
+        }
+
+        function toggleEnv(env) {
+            activeEnvs.has(env) ? activeEnvs.delete(env) : activeEnvs.add(env);
+        }
+
+        function toggleType(type) {
+            activeTypes.has(type) ? activeTypes.delete(type) : activeTypes.add(type);
+        }
+
+        function clearFilters() {
+            activeEnvs.clear();
+            activeTypes.clear();
+            activeTheme = null;
+            renderFilterTags(envFiltersEl, ENVIRONMENTS, activeEnvs, toggleEnv);
+            renderFilterTags(typeFiltersEl, CREATURE_TYPES, activeTypes, toggleType);
+            renderThemeTags();
+        }
+
+        function getFilteredMonsters() {
+            let pool = MONSTERS;
+
+            if (activeTheme) {
+                const themeNames = new Set(THEMES[activeTheme].monsters);
+                pool = pool.filter(m => themeNames.has(m.name));
+            }
+
+            if (activeEnvs.size > 0) {
+                pool = pool.filter(m => m.env.some(e => activeEnvs.has(e)));
+            }
+
+            if (activeTypes.size > 0) {
+                pool = pool.filter(m => activeTypes.has(m.type));
+            }
+
+            return pool;
+        }
+
+        function generate() {
+            const numPlayers = Math.max(1, Math.min(10, parseInt(numPlayersEl.value) || 4));
+            const level = Math.max(1, Math.min(20, parseInt(partyLevelEl.value) || 1));
+            const difficulty = difficultyEl.value;
+            const budgetPerChar = XP_BUDGET[difficulty][level - 1];
+            const totalBudget = budgetPerChar * numPlayers;
+
+            const pool = getFilteredMonsters();
+            if (pool.length === 0) {
+                resultsEl.innerHTML = '<div class="empty-state"><p>No monsters match your current filters. Try broadening your selection.</p></div>';
+                return;
+            }
+
+            // Filter out monsters that cost more than the total budget
+            const affordable = pool.filter(m => CR_XP[m.cr] <= totalBudget);
+            if (affordable.length === 0) {
+                resultsEl.innerHTML = '<div class="empty-state"><p>No monsters fit within the XP budget for this difficulty. Try a higher difficulty or higher party level.</p></div>';
+                return;
+            }
+
+            const encounter = buildEncounter(affordable, totalBudget, level, numPlayers);
+            renderEncounter(encounter, totalBudget, budgetPerChar, difficulty, numPlayers, level);
+        }
+
+        function buildEncounter(pool, budget, partyLevel, numPlayers) {
+            // Sort pool by XP descending for better packing
+            const sorted = [...pool].sort((a, b) => CR_XP[b.cr] - CR_XP[a.cr]);
+            const result = [];
+            let remaining = budget;
+            const maxAttempts = 100;
+            let attempts = 0;
+
+            // Strategy: pick a mix of monsters
+            // First, optionally pick a "boss" (highest CR that fits)
+            const hasBoss = Math.random() < 0.5 && sorted.length > 0;
+
+            if (hasBoss) {
+                // Pick from top-tier monsters that fit
+                const bossPool = sorted.filter(m => CR_XP[m.cr] <= remaining && CR_XP[m.cr] >= remaining * 0.3);
+                if (bossPool.length > 0) {
+                    const boss = bossPool[Math.floor(Math.random() * bossPool.length)];
+                    result.push({ monster: boss, count: 1 });
+                    remaining -= CR_XP[boss.cr];
+                }
+            }
+
+            // Fill remaining budget with monsters
+            while (remaining > 0 && attempts < maxAttempts) {
+                attempts++;
+                const canAfford = sorted.filter(m => CR_XP[m.cr] <= remaining);
+                if (canAfford.length === 0) break;
+
+                // Prefer monsters that use a decent chunk of remaining budget
+                // but also sometimes pick weaker ones for variety
+                let pick;
+                const roll = Math.random();
+                if (roll < 0.3) {
+                    // Pick from cheaper half for minion variety
+                    const cheapHalf = canAfford.slice(Math.floor(canAfford.length / 2));
+                    pick = cheapHalf[Math.floor(Math.random() * cheapHalf.length)];
+                } else {
+                    // Pick from middle range
+                    pick = canAfford[Math.floor(Math.random() * canAfford.length)];
+                }
+
+                const xp = CR_XP[pick.cr];
+                const maxCount = Math.floor(remaining / xp);
+                const count = Math.max(1, Math.min(maxCount, Math.ceil(Math.random() * Math.min(maxCount, 4 + numPlayers))));
+
+                // Check if this monster is already in results
+                const existing = result.find(r => r.monster.name === pick.name && r.monster.cr === pick.cr);
+                if (existing) {
+                    const addCount = Math.min(count, Math.floor(remaining / xp));
+                    existing.count += addCount;
+                    remaining -= xp * addCount;
+                } else {
+                    const addCount = Math.min(count, Math.floor(remaining / xp));
+                    result.push({ monster: pick, count: addCount });
+                    remaining -= xp * addCount;
+                }
+            }
+
+            // Sort result: highest CR first
+            result.sort((a, b) => crToNumber(b.monster.cr) - crToNumber(a.monster.cr));
+            return result;
+        }
+
+        function renderEncounter(encounter, totalBudget, budgetPerChar, difficulty, numPlayers, level) {
+            const usedXP = encounter.reduce((sum, e) => sum + CR_XP[e.monster.cr] * e.count, 0);
+            const totalMonsters = encounter.reduce((sum, e) => sum + e.count, 0);
+            const themeName = activeTheme || 'Random';
+
+            let warnings = '';
+            // Check for high-CR creatures
+            const dangerousMonsters = encounter.filter(e => crToNumber(e.monster.cr) > level);
+            if (dangerousMonsters.length > 0) {
+                warnings += '<div class="warning">Warning: This encounter includes creatures with CR higher than the party level (' + level + '). A single action from these creatures could potentially down a character.</div>';
+            }
+            // Check for too many creatures
+            if (totalMonsters > numPlayers * 2) {
+                warnings += '<div class="tip">Tip: This encounter has more than 2 creatures per character. Consider ensuring some are fragile enough to be defeated quickly.</div>';
+            }
+
+            let html = `
+                <div class="budget-bar">
+                    <div class="budget-info">
+                        <div class="budget-stat">
+                            <span class="label">XP Budget</span>
+                            <span class="value">${totalBudget.toLocaleString()} XP</span>
+                        </div>
+                        <div class="budget-stat">
+                            <span class="label">Per Character</span>
+                            <span class="value">${budgetPerChar.toLocaleString()} XP</span>
+                        </div>
+                        <div class="budget-stat">
+                            <span class="label">XP Used</span>
+                            <span class="value">${usedXP.toLocaleString()} XP</span>
+                        </div>
+                    </div>
+                    <span class="difficulty-badge ${difficulty}">${difficulty}</span>
+                </div>
+                <div class="encounter-card">
+                    <div class="encounter-header">
+                        <h3>Generated Encounter</h3>
+                        <span class="encounter-theme">${themeName !== 'Random' ? THEMES[themeName].icon + ' ' + themeName : 'Mixed creatures'}</span>
+                    </div>
+                    <ul class="monster-list">`;
+
+            encounter.forEach(entry => {
+                const xpEach = CR_XP[entry.monster.cr];
+                const xpTotal = xpEach * entry.count;
+                html += `
+                        <li class="monster-item">
+                            <span class="monster-count">${entry.count}×</span>
+                            <div class="monster-info">
+                                <span class="monster-name">${entry.monster.name}</span>
+                                <span class="monster-meta">${entry.monster.type} · ${entry.monster.env.join(', ')}</span>
+                            </div>
+                            <span class="monster-cr">CR ${entry.monster.cr}</span>
+                            <span class="monster-xp">${xpTotal.toLocaleString()} XP</span>
+                        </li>`;
+            });
+
+            html += `
+                    </ul>
+                    <div class="encounter-footer">
+                        <span>${totalMonsters} creature${totalMonsters !== 1 ? 's' : ''} total</span>
+                        <span class="total-xp">${usedXP.toLocaleString()} / ${totalBudget.toLocaleString()} XP</span>
+                    </div>
+                </div>
+                ${warnings}`;
+
+            resultsEl.innerHTML = html;
+        }
+
+        init();
+    })();
+    </script>
+</body>
+</html>

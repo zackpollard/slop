@@ -13,6 +13,12 @@ locals {
   }
 }
 
+resource "cloudflare_pages_project" "preview" {
+  account_id        = var.cloudflare_account_id
+  name              = "slop-preview"
+  production_branch = "main"
+}
+
 resource "cloudflare_pages_project" "project" {
   for_each = local.project_configs
 

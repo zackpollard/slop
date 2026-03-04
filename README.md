@@ -18,6 +18,7 @@ projects/
 |---------|-----|-------------|
 | [homepage](projects/homepage) | [slop.zackpollard.pro](https://slop.zackpollard.pro) | Main landing page and project index |
 | [roof-calculator](projects/roof-calculator) | [roof-calculator.slop.zackpollard.pro](https://roof-calculator.slop.zackpollard.pro) | Satellite map-based roof measurement tool |
+| [dnd-encounter-generator](projects/dnd-encounter-generator) | [dnd-encounter-generator.slop.zackpollard.pro](https://dnd-encounter-generator.slop.zackpollard.pro) | D&D 2024 combat encounter generator |
 
 ## Adding a new project
 

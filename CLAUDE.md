@@ -10,12 +10,14 @@ This is a **monorepo** for small projects hosted under **slop.zackpollard.pro**.
 
 ```
 projects/
-├── homepage/          # Landing page (serves slop.zackpollard.pro)
-└── roof-calculator/   # Satellite-based roof measurement tool
+├── homepage/                  # Landing page (serves slop.zackpollard.pro)
+├── roof-calculator/           # Satellite-based roof measurement tool
+└── dnd-encounter-generator/   # D&D 2024 combat encounter generator
 tofu/                  # OpenTofu infrastructure (Cloudflare Pages + DNS)
 .github/workflows/
 ├── infra.yml          # OpenTofu plan/apply
-└── deploy.yml         # Cloudflare Pages deployment
+├── deploy.yml         # Production deployment (push to main)
+└── preview.yml        # PR preview deployment (combined subpath site)
 ```
 
 ## Projects
@@ -24,6 +26,7 @@ tofu/                  # OpenTofu infrastructure (Cloudflare Pages + DNS)
 |---------|------|------|-------------|
 | homepage | `projects/homepage/` | Static HTML/CSS | Main landing page and project directory |
 | roof-calculator | `projects/roof-calculator/` | Static HTML/CSS/JS, Leaflet.js | Satellite map-based roof area measurement tool |
+| dnd-encounter-generator | `projects/dnd-encounter-generator/` | Static HTML/CSS/JS | D&D 2024 combat encounter generator |
 
 **When adding a new project:**
 1. Create `projects/<project-name>/` with a `README.md`
@@ -47,8 +50,9 @@ tofu/                  # OpenTofu infrastructure (Cloudflare Pages + DNS)
 - **Infrastructure:** OpenTofu manages Cloudflare Pages projects, custom domains, and DNS CNAME records. State is stored in Cloudflare R2 (`tofu-state` bucket, key prefix `slop/`).
 - **Workflows:**
   - `.github/workflows/infra.yml` — Runs `tofu plan` on PRs and `tofu apply` on push to `main` (triggered by changes to `tofu/**`)
-  - `.github/workflows/deploy.yml` — Deploys each project to its Cloudflare Pages project via Wrangler (triggered by changes to `projects/**`)
-- **Preview deployments:** PRs automatically get preview deployments. Preview URLs are posted as PR comments.
+  - `.github/workflows/deploy.yml` — Production deploys: pushes each project to its own Cloudflare Pages project on merge to `main`
+  - `.github/workflows/preview.yml` — Preview deploys: assembles all projects under subpaths into a single `slop-preview` Pages project on PRs. No per-project Pages project needed for previews.
+- **Preview deployments:** PRs automatically get a combined preview deployment to a single `slop-preview` Cloudflare Pages project. All projects are served under subpaths (e.g. `/homepage/`, `/roof-calculator/`). Preview URLs are posted as PR comments. This avoids needing to create per-project Pages infrastructure before previews work.
 - **Domains:**
   - Homepage → `slop.zackpollard.pro`
   - Other projects → `<project-name>.slop.zackpollard.pro`
