@@ -30,5 +30,14 @@ variable "projects" {
     dnd-encounter-generator = {
       subdomain = "dnd-encounter-generator.slop"
     }
+    cron = {
+      subdomain = "cron.slop"
+    }
+    subnet = {
+      subdomain = "subnet.slop"
+    }
+    json = {
+      subdomain = "json.slop"
+    }
   }
 }

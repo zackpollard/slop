@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Subnet — slop</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --color-bg: #0f0f0c;
+            --color-surface: #1a1a16;
+            --color-surface-hover: #222218;
+            --color-border: #2e2e24;
+            --color-text: #e8e4d4;
+            --color-text-muted: #9a9686;
+            --color-accent: #c4a24e;
+            --color-accent-dim: rgba(196, 162, 78, 0.15);
+            --color-error: #c45e4e;
+            --color-success: #4a9e6e;
+            --color-host: #5b8fd4;
+            --color-network: #c4a24e;
+            --color-broadcast: #c45e4e;
+            --font-body: 'Inter', sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+        }
+
+        body {
+            font-family: var(--font-body);
+            background: var(--color-bg);
+            color: var(--color-text);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 2rem 1.5rem;
+        }
+
+        header {
+            margin-bottom: 2rem;
+            text-align: center;
+        }
+
+        header h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+        }
+
+        header h1 .accent { color: var(--color-accent); }
+
+        header p {
+            color: var(--color-text-muted);
+            margin-top: 0.25rem;
+            font-size: 0.95rem;
+        }
+
+        .input-section {
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .input-section label {
+            display: block;
+            font-size: 0.85rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--color-text-muted);
+            margin-bottom: 0.5rem;
+        }
+
+        .ip-input-row {
+            display: flex;
+            gap: 0.75rem;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .ip-input-row input {
+            flex: 1;
+            min-width: 200px;
+            font-family: var(--font-mono);
+            font-size: 1.25rem;
+            padding: 0.75rem 1rem;
+            background: var(--color-bg);
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            color: var(--color-text);
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .ip-input-row input:focus {
+            border-color: var(--color-accent);
+        }
+
+        .ip-input-row input::placeholder {
+            color: var(--color-text-muted);
+            opacity: 0.5;
+        }
+
+        .cidr-slider {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-top: 1rem;
+        }
+
+        .cidr-slider label {
+            margin-bottom: 0;
+            min-width: 60px;
+        }
+
+        .cidr-slider input[type="range"] {
+            flex: 1;
+            accent-color: var(--color-accent);
+            height: 6px;
+        }
+
+        .cidr-value {
+            font-family: var(--font-mono);
+            font-size: 1.1rem;
+            color: var(--color-accent);
+            min-width: 40px;
+            text-align: center;
+        }
+
+        .presets {
+            margin-top: 0.75rem;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .presets button {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            padding: 0.3rem 0.6rem;
+            background: var(--color-accent-dim);
+            border: 1px solid transparent;
+            border-radius: 6px;
+            color: var(--color-accent);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .presets button:hover {
+            border-color: var(--color-accent);
+            background: rgba(196, 162, 78, 0.25);
+        }
+
+        .results {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
+        }
+
+        .result-card {
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: 12px;
+            padding: 1.5rem;
+        }
+
+        .result-card.full-width {
+            grid-column: 1 / -1;
+        }
+
+        .result-card h2 {
+            font-size: 0.85rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--color-text-muted);
+            margin-bottom: 0.75rem;
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 0.4rem 1rem;
+            align-items: baseline;
+        }
+
+        .info-label {
+            font-size: 0.8rem;
+            color: var(--color-text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+        }
+
+        .info-value {
+            font-family: var(--font-mono);
+            font-size: 0.95rem;
+            word-break: break-all;
+        }
+
+        .info-value.accent { color: var(--color-accent); }
+        .info-value.network { color: var(--color-network); }
+        .info-value.broadcast { color: var(--color-broadcast); }
+        .info-value.host { color: var(--color-host); }
+
+        .binary-display {
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            line-height: 1.8;
+            word-break: break-all;
+        }
+
+        .binary-display .net-bit { color: var(--color-accent); }
+        .binary-display .host-bit { color: var(--color-host); }
+        .binary-display .separator { color: var(--color-text-muted); }
+
+        .address-bar {
+            margin-top: 1rem;
+            position: relative;
+            height: 40px;
+            background: var(--color-bg);
+            border-radius: 8px;
+            border: 1px solid var(--color-border);
+            overflow: hidden;
+            display: flex;
+        }
+
+        .bar-segment {
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: var(--font-mono);
+            font-size: 0.7rem;
+            color: #fff;
+            transition: width 0.3s ease;
+            overflow: hidden;
+            white-space: nowrap;
+        }
+
+        .bar-network {
+            background: rgba(196, 162, 78, 0.4);
+            border-right: 2px solid var(--color-accent);
+        }
+
+        .bar-usable {
+            background: rgba(91, 143, 212, 0.3);
+        }
+
+        .bar-broadcast {
+            background: rgba(196, 94, 78, 0.4);
+            border-left: 2px solid var(--color-broadcast);
+        }
+
+        .bar-legend {
+            display: flex;
+            gap: 1rem;
+            margin-top: 0.5rem;
+            font-size: 0.75rem;
+        }
+
+        .bar-legend span {
+            display: flex;
+            align-items: center;
+            gap: 0.3rem;
+        }
+
+        .legend-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+
+        .class-badge {
+            display: inline-block;
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        .class-a { background: rgba(74, 158, 110, 0.2); color: #4a9e6e; }
+        .class-b { background: rgba(91, 143, 212, 0.2); color: #5b8fd4; }
+        .class-c { background: rgba(196, 162, 78, 0.2); color: #c4a24e; }
+        .class-d { background: rgba(196, 94, 78, 0.2); color: #c45e4e; }
+        .class-e { background: rgba(150, 150, 150, 0.2); color: #999; }
+
+        .error-message {
+            color: var(--color-error);
+            font-size: 0.95rem;
+            text-align: center;
+            padding: 2rem;
+        }
+
+        #results-container { display: none; }
+
+        footer {
+            text-align: center;
+            margin-top: 3rem;
+            padding-top: 1.5rem;
+            border-top: 1px solid var(--color-border);
+        }
+
+        footer a {
+            color: var(--color-text-muted);
+            text-decoration: none;
+            font-size: 0.85rem;
+        }
+
+        footer a:hover {
+            color: var(--color-accent);
+        }
+
+        @media (max-width: 600px) {
+            .results {
+                grid-template-columns: 1fr;
+            }
+            .ip-input-row input {
+                font-size: 1rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Subnet <span class="accent">Calculator</span></h1>
+            <p>Enter an IP address and CIDR prefix to visualize and analyze the subnet.</p>
+        </header>
+
+        <div class="input-section">
+            <label for="ip-input">IP Address / CIDR</label>
+            <div class="ip-input-row">
+                <input type="text" id="ip-input" placeholder="192.168.1.0/24" spellcheck="false" autocomplete="off">
+            </div>
+            <div class="cidr-slider">
+                <label>CIDR</label>
+                <input type="range" id="cidr-slider" min="0" max="32" value="24">
+                <span class="cidr-value" id="cidr-display">/24</span>
+            </div>
+            <div class="presets">
+                <button data-ip="10.0.0.0/8">10.0.0.0/8</button>
+                <button data-ip="172.16.0.0/12">172.16.0.0/12</button>
+                <button data-ip="192.168.1.0/24">192.168.1.0/24</button>
+                <button data-ip="192.168.0.0/16">192.168.0.0/16</button>
+                <button data-ip="10.10.0.0/20">10.10.0.0/20</button>
+                <button data-ip="255.255.255.0/32">255.255.255.0/32</button>
+            </div>
+        </div>
+
+        <div id="error-container"></div>
+
+        <div id="results-container">
+            <div class="results">
+                <div class="result-card">
+                    <h2>Network Info</h2>
+                    <div class="info-grid">
+                        <span class="info-label">Network</span>
+                        <span class="info-value network" id="r-network"></span>
+                        <span class="info-label">Broadcast</span>
+                        <span class="info-value broadcast" id="r-broadcast"></span>
+                        <span class="info-label">Netmask</span>
+                        <span class="info-value" id="r-netmask"></span>
+                        <span class="info-label">Wildcard</span>
+                        <span class="info-value" id="r-wildcard"></span>
+                        <span class="info-label">Class</span>
+                        <span class="info-value" id="r-class"></span>
+                    </div>
+                </div>
+
+                <div class="result-card">
+                    <h2>Host Info</h2>
+                    <div class="info-grid">
+                        <span class="info-label">Host Range</span>
+                        <span class="info-value host" id="r-range"></span>
+                        <span class="info-label">Usable Hosts</span>
+                        <span class="info-value accent" id="r-hosts"></span>
+                        <span class="info-label">Total Addrs</span>
+                        <span class="info-value" id="r-total"></span>
+                        <span class="info-label">CIDR</span>
+                        <span class="info-value accent" id="r-cidr"></span>
+                        <span class="info-label">Type</span>
+                        <span class="info-value" id="r-type"></span>
+                    </div>
+                </div>
+
+                <div class="result-card full-width">
+                    <h2>Binary Breakdown</h2>
+                    <div>
+                        <div style="margin-bottom:0.5rem; font-size:0.8rem; color:var(--color-text-muted);">IP Address</div>
+                        <div class="binary-display" id="r-binary-ip"></div>
+                    </div>
+                    <div style="margin-top:0.75rem;">
+                        <div style="margin-bottom:0.5rem; font-size:0.8rem; color:var(--color-text-muted);">Subnet Mask</div>
+                        <div class="binary-display" id="r-binary-mask"></div>
+                    </div>
+                </div>
+
+                <div class="result-card full-width">
+                    <h2>Address Space Visualization</h2>
+                    <div class="address-bar" id="address-bar"></div>
+                    <div class="bar-legend">
+                        <span><span class="legend-dot" style="background:var(--color-network)"></span> Network</span>
+                        <span><span class="legend-dot" style="background:var(--color-host)"></span> Usable Hosts</span>
+                        <span><span class="legend-dot" style="background:var(--color-broadcast)"></span> Broadcast</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <footer>
+            <a href="https://slop.zackpollard.pro">← back to slop</a>
+        </footer>
+    </div>
+
+    <script>
+    (function() {
+        const ipInput = document.getElementById('ip-input');
+        const cidrSlider = document.getElementById('cidr-slider');
+        const cidrDisplay = document.getElementById('cidr-display');
+        const resultsContainer = document.getElementById('results-container');
+        const errorContainer = document.getElementById('error-container');
+
+        function parseIP(str) {
+            const parts = str.split('.');
+            if (parts.length !== 4) return null;
+            const octets = parts.map(p => {
+                const n = parseInt(p, 10);
+                return (isNaN(n) || n < 0 || n > 255 || p !== String(n)) ? null : n;
+            });
+            if (octets.includes(null)) return null;
+            return octets;
+        }
+
+        function ipToInt(octets) {
+            return ((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]) >>> 0;
+        }
+
+        function intToIP(num) {
+            return [
+                (num >>> 24) & 0xFF,
+                (num >>> 16) & 0xFF,
+                (num >>> 8) & 0xFF,
+                num & 0xFF
+            ].join('.');
+        }
+
+        function toBinary(num) {
+            return num.toString(2).padStart(32, '0');
+        }
+
+        function getClass(firstOctet) {
+            if (firstOctet < 128) return { name: 'A', css: 'class-a' };
+            if (firstOctet < 192) return { name: 'B', css: 'class-b' };
+            if (firstOctet < 224) return { name: 'C', css: 'class-c' };
+            if (firstOctet < 240) return { name: 'D (Multicast)', css: 'class-d' };
+            return { name: 'E (Reserved)', css: 'class-e' };
+        }
+
+        function getType(networkInt, firstOctet, cidr) {
+            if (cidr === 32) return 'Host route';
+            if (cidr === 31) return 'Point-to-point link';
+            if (firstOctet === 10) return 'Private (RFC 1918)';
+            if (firstOctet === 172 && ((networkInt >>> 16) & 0xFF) >= 16 && ((networkInt >>> 16) & 0xFF) <= 31) return 'Private (RFC 1918)';
+            if (firstOctet === 192 && ((networkInt >>> 16) & 0xFF) === 168) return 'Private (RFC 1918)';
+            if (firstOctet === 127) return 'Loopback';
+            if (firstOctet >= 224 && firstOctet < 240) return 'Multicast';
+            if (firstOctet === 169 && ((networkInt >>> 16) & 0xFF) === 254) return 'Link-local';
+            return 'Public';
+        }
+
+        function formatNumber(n) {
+            return n.toLocaleString();
+        }
+
+        function colorBinary(binaryStr, cidr) {
+            let html = '';
+            for (let i = 0; i < 32; i++) {
+                if (i > 0 && i % 8 === 0) html += '<span class="separator">.</span>';
+                if (i < cidr) {
+                    html += `<span class="net-bit">${binaryStr[i]}</span>`;
+                } else {
+                    html += `<span class="host-bit">${binaryStr[i]}</span>`;
+                }
+            }
+            return html;
+        }
+
+        function calculate() {
+            const raw = ipInput.value.trim();
+            if (!raw) {
+                resultsContainer.style.display = 'none';
+                errorContainer.innerHTML = '';
+                return;
+            }
+
+            let ipStr, cidr;
+            if (raw.includes('/')) {
+                const parts = raw.split('/');
+                ipStr = parts[0];
+                const c = parseInt(parts[1], 10);
+                if (!isNaN(c) && c >= 0 && c <= 32) {
+                    cidr = c;
+                    cidrSlider.value = cidr;
+                    cidrDisplay.textContent = '/' + cidr;
+                }
+            } else {
+                ipStr = raw;
+                cidr = parseInt(cidrSlider.value, 10);
+            }
+
+            if (cidr === undefined) cidr = parseInt(cidrSlider.value, 10);
+
+            const octets = parseIP(ipStr);
+            if (!octets) {
+                resultsContainer.style.display = 'none';
+                errorContainer.innerHTML = '<div class="error-message">Invalid IP address. Enter a valid IPv4 address (e.g., 192.168.1.0).</div>';
+                return;
+            }
+
+            errorContainer.innerHTML = '';
+            resultsContainer.style.display = '';
+
+            const ipInt = ipToInt(octets);
+            const maskInt = cidr === 0 ? 0 : (0xFFFFFFFF << (32 - cidr)) >>> 0;
+            const wildcardInt = (~maskInt) >>> 0;
+            const networkInt = (ipInt & maskInt) >>> 0;
+            const broadcastInt = (networkInt | wildcardInt) >>> 0;
+            const totalAddrs = Math.pow(2, 32 - cidr);
+            const usableHosts = cidr >= 31 ? (cidr === 32 ? 1 : 2) : totalAddrs - 2;
+
+            const firstHost = cidr >= 31 ? networkInt : networkInt + 1;
+            const lastHost = cidr >= 31 ? broadcastInt : broadcastInt - 1;
+
+            const ipClass = getClass(octets[0]);
+
+            document.getElementById('r-network').textContent = intToIP(networkInt);
+            document.getElementById('r-broadcast').textContent = intToIP(broadcastInt);
+            document.getElementById('r-netmask').textContent = intToIP(maskInt);
+            document.getElementById('r-wildcard').textContent = intToIP(wildcardInt);
+            document.getElementById('r-class').innerHTML = `<span class="class-badge ${ipClass.css}">Class ${ipClass.name}</span>`;
+            document.getElementById('r-range').textContent = `${intToIP(firstHost)} — ${intToIP(lastHost)}`;
+            document.getElementById('r-hosts').textContent = formatNumber(usableHosts);
+            document.getElementById('r-total').textContent = formatNumber(totalAddrs);
+            document.getElementById('r-cidr').textContent = `/${cidr}`;
+            document.getElementById('r-type').textContent = getType(networkInt, octets[0], cidr);
+
+            document.getElementById('r-binary-ip').innerHTML = colorBinary(toBinary(ipInt), cidr);
+            document.getElementById('r-binary-mask').innerHTML = colorBinary(toBinary(maskInt), cidr);
+
+            // Address bar
+            const bar = document.getElementById('address-bar');
+            bar.innerHTML = '';
+            if (cidr >= 31) {
+                const seg = document.createElement('div');
+                seg.className = 'bar-segment bar-usable';
+                seg.style.width = '100%';
+                seg.textContent = cidr === 32 ? '1 host' : '2 hosts';
+                bar.appendChild(seg);
+            } else {
+                const netSeg = document.createElement('div');
+                netSeg.className = 'bar-segment bar-network';
+                netSeg.style.width = `${Math.max(1/totalAddrs*100, 2)}%`;
+                netSeg.textContent = totalAddrs > 8 ? 'Net' : '';
+
+                const usableSeg = document.createElement('div');
+                usableSeg.className = 'bar-segment bar-usable';
+                usableSeg.style.width = `${Math.max((totalAddrs-2)/totalAddrs*100, 10)}%`;
+                usableSeg.textContent = `${formatNumber(usableHosts)} hosts`;
+
+                const bcSeg = document.createElement('div');
+                bcSeg.className = 'bar-segment bar-broadcast';
+                bcSeg.style.width = `${Math.max(1/totalAddrs*100, 2)}%`;
+                bcSeg.textContent = totalAddrs > 8 ? 'Bcast' : '';
+
+                bar.appendChild(netSeg);
+                bar.appendChild(usableSeg);
+                bar.appendChild(bcSeg);
+            }
+        }
+
+        ipInput.addEventListener('input', calculate);
+        cidrSlider.addEventListener('input', () => {
+            cidrDisplay.textContent = '/' + cidrSlider.value;
+            // Update the input if it has a CIDR
+            const raw = ipInput.value.trim();
+            if (raw.includes('/')) {
+                ipInput.value = raw.split('/')[0] + '/' + cidrSlider.value;
+            }
+            calculate();
+        });
+
+        document.querySelectorAll('.presets button').forEach(btn => {
+            btn.addEventListener('click', () => {
+                ipInput.value = btn.dataset.ip;
+                calculate();
+                ipInput.focus();
+            });
+        });
+
+        // Init
+        if (location.hash) {
+            ipInput.value = decodeURIComponent(location.hash.slice(1));
+        } else {
+            ipInput.value = '192.168.1.0/24';
+        }
+        calculate();
+
+        ipInput.addEventListener('input', () => {
+            history.replaceState(null, '', '#' + encodeURIComponent(ipInput.value.trim()));
+        });
+    })();
+    </script>
+</body>
+</html>
