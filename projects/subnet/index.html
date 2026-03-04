@@ -109,6 +109,35 @@
             opacity: 0.5;
         }
 
+        .version-toggle {
+            display: inline-flex;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid var(--color-border);
+            margin-bottom: 0.75rem;
+        }
+
+        .version-toggle button {
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            font-weight: 600;
+            padding: 0.5rem 1.2rem;
+            border: none;
+            background: var(--color-bg);
+            color: var(--color-text-muted);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .version-toggle button.active {
+            background: var(--color-accent-dim);
+            color: var(--color-accent);
+        }
+
+        .version-toggle button:hover:not(.active) {
+            color: var(--color-text);
+        }
+
         .cidr-slider {
             display: flex;
             align-items: center;
@@ -131,7 +160,7 @@
             font-family: var(--font-mono);
             font-size: 1.1rem;
             color: var(--color-accent);
-            min-width: 40px;
+            min-width: 50px;
             text-align: center;
         }
 
@@ -140,6 +169,15 @@
             display: flex;
             flex-wrap: wrap;
             gap: 0.5rem;
+        }
+
+        .preset-group-label {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--color-text-muted);
+            width: 100%;
+            margin-top: 0.25rem;
         }
 
         .presets button {
@@ -292,6 +330,7 @@
         .class-c { background: rgba(196, 162, 78, 0.2); color: #c4a24e; }
         .class-d { background: rgba(196, 94, 78, 0.2); color: #c45e4e; }
         .class-e { background: rgba(150, 150, 150, 0.2); color: #999; }
+        .scope-badge { background: rgba(196, 162, 78, 0.2); color: #c4a24e; }
 
         .error-message {
             color: var(--color-error);
@@ -326,6 +365,9 @@
             .ip-input-row input {
                 font-size: 1rem;
             }
+            .binary-display {
+                font-size: 0.7rem;
+            }
         }
     </style>
 </head>
@@ -333,10 +375,14 @@
     <div class="container">
         <header>
             <h1>Subnet <span class="accent">Calculator</span></h1>
-            <p>Enter an IP address and CIDR prefix to visualize and analyze the subnet.</p>
+            <p>Enter an IPv4 or IPv6 address with CIDR prefix to visualize and analyze the subnet.</p>
         </header>
 
         <div class="input-section">
+            <div class="version-toggle" id="version-toggle">
+                <button class="active" data-version="4">IPv4</button>
+                <button data-version="6">IPv6</button>
+            </div>
             <label for="ip-input">IP Address / CIDR</label>
             <div class="ip-input-row">
                 <input type="text" id="ip-input" placeholder="192.168.1.0/24" spellcheck="false" autocomplete="off">
@@ -346,13 +392,20 @@
                 <input type="range" id="cidr-slider" min="0" max="32" value="24">
                 <span class="cidr-value" id="cidr-display">/24</span>
             </div>
-            <div class="presets">
+            <div class="presets" id="presets-v4">
                 <button data-ip="10.0.0.0/8">10.0.0.0/8</button>
                 <button data-ip="172.16.0.0/12">172.16.0.0/12</button>
                 <button data-ip="192.168.1.0/24">192.168.1.0/24</button>
                 <button data-ip="192.168.0.0/16">192.168.0.0/16</button>
                 <button data-ip="10.10.0.0/20">10.10.0.0/20</button>
-                <button data-ip="255.255.255.0/32">255.255.255.0/32</button>
+            </div>
+            <div class="presets" id="presets-v6" style="display:none;">
+                <button data-ip="2001:db8::/32">2001:db8::/32</button>
+                <button data-ip="fe80::/10">fe80::/10</button>
+                <button data-ip="fc00::/7">fc00::/7</button>
+                <button data-ip="ff00::/8">ff00::/8</button>
+                <button data-ip="::1/128">::1/128</button>
+                <button data-ip="2001:db8:abcd:1234::/64">::abcd:1234::/64</button>
             </div>
         </div>
 
@@ -365,13 +418,13 @@
                     <div class="info-grid">
                         <span class="info-label">Network</span>
                         <span class="info-value network" id="r-network"></span>
-                        <span class="info-label">Broadcast</span>
+                        <span class="info-label" id="r-last-label">Broadcast</span>
                         <span class="info-value broadcast" id="r-broadcast"></span>
                         <span class="info-label">Netmask</span>
                         <span class="info-value" id="r-netmask"></span>
-                        <span class="info-label">Wildcard</span>
+                        <span class="info-label" id="r-extra-label">Wildcard</span>
                         <span class="info-value" id="r-wildcard"></span>
-                        <span class="info-label">Class</span>
+                        <span class="info-label" id="r-class-label">Class</span>
                         <span class="info-value" id="r-class"></span>
                     </div>
                 </div>
@@ -407,7 +460,7 @@
                 <div class="result-card full-width">
                     <h2>Address Space Visualization</h2>
                     <div class="address-bar" id="address-bar"></div>
-                    <div class="bar-legend">
+                    <div class="bar-legend" id="bar-legend">
                         <span><span class="legend-dot" style="background:var(--color-network)"></span> Network</span>
                         <span><span class="legend-dot" style="background:var(--color-host)"></span> Usable Hosts</span>
                         <span><span class="legend-dot" style="background:var(--color-broadcast)"></span> Broadcast</span>
@@ -417,7 +470,7 @@
         </div>
 
         <footer>
-            <a href="https://slop.zackpollard.pro">← back to slop</a>
+            <a href="https://slop.zackpollard.pro">&larr; back to slop</a>
         </footer>
     </div>
 
@@ -428,8 +481,14 @@
         const cidrDisplay = document.getElementById('cidr-display');
         const resultsContainer = document.getElementById('results-container');
         const errorContainer = document.getElementById('error-container');
+        const versionToggle = document.getElementById('version-toggle');
+        const presetsV4 = document.getElementById('presets-v4');
+        const presetsV6 = document.getElementById('presets-v6');
+        let currentVersion = 4;
 
-        function parseIP(str) {
+        // ─── IPv4 helpers ───
+
+        function parseIPv4(str) {
             const parts = str.split('.');
             if (parts.length !== 4) return null;
             const octets = parts.map(p => {
@@ -440,11 +499,11 @@
             return octets;
         }
 
-        function ipToInt(octets) {
+        function ipv4ToInt(octets) {
             return ((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]) >>> 0;
         }
 
-        function intToIP(num) {
+        function intToIPv4(num) {
             return [
                 (num >>> 24) & 0xFF,
                 (num >>> 16) & 0xFF,
@@ -453,7 +512,7 @@
             ].join('.');
         }
 
-        function toBinary(num) {
+        function toBinary32(num) {
             return num.toString(2).padStart(32, '0');
         }
 
@@ -465,7 +524,7 @@
             return { name: 'E (Reserved)', css: 'class-e' };
         }
 
-        function getType(networkInt, firstOctet, cidr) {
+        function getIPv4Type(networkInt, firstOctet, cidr) {
             if (cidr === 32) return 'Host route';
             if (cidr === 31) return 'Point-to-point link';
             if (firstOctet === 10) return 'Private (RFC 1918)';
@@ -477,22 +536,163 @@
             return 'Public';
         }
 
-        function formatNumber(n) {
-            return n.toLocaleString();
-        }
-
-        function colorBinary(binaryStr, cidr) {
+        function colorBinary32(binaryStr, cidr) {
             let html = '';
             for (let i = 0; i < 32; i++) {
                 if (i > 0 && i % 8 === 0) html += '<span class="separator">.</span>';
-                if (i < cidr) {
-                    html += `<span class="net-bit">${binaryStr[i]}</span>`;
-                } else {
-                    html += `<span class="host-bit">${binaryStr[i]}</span>`;
-                }
+                html += `<span class="${i < cidr ? 'net-bit' : 'host-bit'}">${binaryStr[i]}</span>`;
             }
             return html;
         }
+
+        // ─── IPv6 helpers (BigInt-based) ───
+
+        function parseIPv6(str) {
+            str = str.trim().toLowerCase();
+
+            // Handle :: expansion
+            let halves;
+            if (str.includes('::')) {
+                const parts = str.split('::');
+                if (parts.length > 2) return null;
+                const left = parts[0] ? parts[0].split(':') : [];
+                const right = parts[1] ? parts[1].split(':') : [];
+                const missing = 8 - left.length - right.length;
+                if (missing < 0) return null;
+                halves = [...left, ...Array(missing).fill('0'), ...right];
+            } else {
+                halves = str.split(':');
+            }
+
+            if (halves.length !== 8) return null;
+
+            const groups = halves.map(h => {
+                if (!/^[0-9a-f]{1,4}$/.test(h)) return null;
+                return parseInt(h, 16);
+            });
+            if (groups.includes(null)) return null;
+
+            return groups;
+        }
+
+        function ipv6GroupsToBigInt(groups) {
+            let result = 0n;
+            for (let i = 0; i < 8; i++) {
+                result = (result << 16n) | BigInt(groups[i]);
+            }
+            return result;
+        }
+
+        function bigIntToIPv6Full(num) {
+            const groups = [];
+            for (let i = 7; i >= 0; i--) {
+                groups.unshift(((num >> (BigInt(i) * 16n)) & 0xFFFFn).toString(16));
+            }
+            return groups.join(':');
+        }
+
+        function bigIntToIPv6Short(num) {
+            const groups = [];
+            for (let i = 7; i >= 0; i--) {
+                groups.unshift(((num >> (BigInt(i) * 16n)) & 0xFFFFn).toString(16));
+            }
+            // Find longest run of consecutive '0' groups
+            let bestStart = -1, bestLen = 0, curStart = -1, curLen = 0;
+            for (let i = 0; i < 8; i++) {
+                if (groups[i] === '0') {
+                    if (curStart === -1) curStart = i;
+                    curLen++;
+                    if (curLen > bestLen) { bestStart = curStart; bestLen = curLen; }
+                } else {
+                    curStart = -1; curLen = 0;
+                }
+            }
+            if (bestLen >= 2) {
+                const left = groups.slice(0, bestStart).join(':');
+                const right = groups.slice(bestStart + bestLen).join(':');
+                return left + '::' + right;
+            }
+            return groups.join(':');
+        }
+
+        function toBinary128(num) {
+            let s = num.toString(2);
+            return s.padStart(128, '0');
+        }
+
+        function colorBinary128(binaryStr, cidr) {
+            let html = '';
+            for (let i = 0; i < 128; i++) {
+                if (i > 0 && i % 16 === 0) html += '<span class="separator">:</span>';
+                else if (i > 0 && i % 4 === 0) html += '<span class="separator"> </span>';
+                html += `<span class="${i < cidr ? 'net-bit' : 'host-bit'}">${binaryStr[i]}</span>`;
+            }
+            return html;
+        }
+
+        function getIPv6Scope(networkBigInt, cidr) {
+            const first16 = Number((networkBigInt >> 112n) & 0xFFFFn);
+            if (networkBigInt === 1n && cidr === 128) return { name: 'Loopback', css: 'scope-badge' };
+            if (networkBigInt === 0n && cidr === 128) return { name: 'Unspecified', css: 'scope-badge' };
+            if ((first16 >> 6) === 0x3F6) return { name: 'Link-Local', css: 'scope-badge' }; // fe80::/10
+            if ((first16 >> 9) === 0x7E) return { name: 'Unique Local (ULA)', css: 'scope-badge' }; // fc00::/7
+            if ((first16 >> 8) === 0xFF) return { name: 'Multicast', css: 'scope-badge' }; // ff00::/8
+            if ((first16 >> 13) === 1) return { name: 'Global Unicast', css: 'scope-badge' }; // 2000::/3
+            return { name: 'Reserved', css: 'scope-badge' };
+        }
+
+        function getIPv6Type(networkBigInt, cidr) {
+            const first16 = Number((networkBigInt >> 112n) & 0xFFFFn);
+            if (networkBigInt === 1n && cidr === 128) return 'Loopback (::1)';
+            if (networkBigInt === 0n && cidr === 128) return 'Unspecified (::)';
+            if ((first16 >> 6) === 0x3F6) return 'Link-Local (RFC 4291)';
+            if ((first16 >> 9) === 0x7E) return 'Unique Local Address (RFC 4193)';
+            if ((first16 >> 8) === 0xFF) return 'Multicast (RFC 4291)';
+            if (first16 === 0x2001 && ((networkBigInt >> 96n) & 0xFFFFn) === 0x0DB8n) return 'Documentation (RFC 3849)';
+            if ((first16 >> 13) === 1) return 'Global Unicast (RFC 4291)';
+            if (first16 === 0x0064 && ((networkBigInt >> 96n) & 0xFFFFn) === 0xFF9Bn) return 'NAT64 (RFC 6052)';
+            return 'Reserved';
+        }
+
+        function bigIntToIPv6Mask(cidr) {
+            if (cidr === 0) return 0n;
+            return ((1n << 128n) - 1n) << BigInt(128 - cidr) & ((1n << 128n) - 1n);
+        }
+
+        // ─── Shared helpers ───
+
+        function formatBigNumber(n) {
+            if (typeof n === 'bigint') {
+                if (n < 1000000n) return n.toLocaleString();
+                // For huge numbers, use scientific notation
+                const s = n.toString();
+                if (s.length <= 15) return BigInt(n).toLocaleString();
+                return s[0] + '.' + s.slice(1, 4) + ' × 10^' + (s.length - 1);
+            }
+            return n.toLocaleString();
+        }
+
+        function switchVersion(v) {
+            currentVersion = v;
+            versionToggle.querySelectorAll('button').forEach(b => {
+                b.classList.toggle('active', parseInt(b.dataset.version) === v);
+            });
+            if (v === 4) {
+                cidrSlider.max = 32;
+                if (parseInt(cidrSlider.value) > 32) cidrSlider.value = 24;
+                ipInput.placeholder = '192.168.1.0/24';
+                presetsV4.style.display = '';
+                presetsV6.style.display = 'none';
+            } else {
+                cidrSlider.max = 128;
+                ipInput.placeholder = '2001:db8::/32';
+                presetsV4.style.display = 'none';
+                presetsV6.style.display = '';
+            }
+            cidrDisplay.textContent = '/' + cidrSlider.value;
+        }
+
+        // ─── Main calculate ───
 
         function calculate() {
             const raw = ipInput.value.trim();
@@ -504,59 +704,140 @@
 
             let ipStr, cidr;
             if (raw.includes('/')) {
-                const parts = raw.split('/');
-                ipStr = parts[0];
-                const c = parseInt(parts[1], 10);
-                if (!isNaN(c) && c >= 0 && c <= 32) {
-                    cidr = c;
-                    cidrSlider.value = cidr;
-                    cidrDisplay.textContent = '/' + cidr;
-                }
+                const slashIdx = raw.lastIndexOf('/');
+                ipStr = raw.substring(0, slashIdx);
+                const c = parseInt(raw.substring(slashIdx + 1), 10);
+                if (!isNaN(c)) cidr = c;
             } else {
                 ipStr = raw;
-                cidr = parseInt(cidrSlider.value, 10);
             }
 
-            if (cidr === undefined) cidr = parseInt(cidrSlider.value, 10);
+            const maxCidr = currentVersion === 4 ? 32 : 128;
+            const defaultCidr = currentVersion === 4 ? 24 : 64;
+            if (cidr === undefined || cidr > maxCidr) cidr = parseInt(cidrSlider.value, 10);
+            if (cidr > maxCidr) cidr = defaultCidr;
+            cidrSlider.value = cidr;
+            cidrDisplay.textContent = '/' + cidr;
 
-            const octets = parseIP(ipStr);
+            if (currentVersion === 4) {
+                calculateIPv4(ipStr, cidr);
+            } else {
+                calculateIPv6(ipStr, cidr);
+            }
+        }
+
+        function calculateIPv4(ipStr, cidr) {
+            const octets = parseIPv4(ipStr);
             if (!octets) {
                 resultsContainer.style.display = 'none';
-                errorContainer.innerHTML = '<div class="error-message">Invalid IP address. Enter a valid IPv4 address (e.g., 192.168.1.0).</div>';
+                errorContainer.innerHTML = '<div class="error-message">Invalid IPv4 address. Use dotted-decimal format (e.g., 192.168.1.0).</div>';
                 return;
             }
 
             errorContainer.innerHTML = '';
             resultsContainer.style.display = '';
 
-            const ipInt = ipToInt(octets);
+            const ipInt = ipv4ToInt(octets);
             const maskInt = cidr === 0 ? 0 : (0xFFFFFFFF << (32 - cidr)) >>> 0;
             const wildcardInt = (~maskInt) >>> 0;
             const networkInt = (ipInt & maskInt) >>> 0;
             const broadcastInt = (networkInt | wildcardInt) >>> 0;
             const totalAddrs = Math.pow(2, 32 - cidr);
             const usableHosts = cidr >= 31 ? (cidr === 32 ? 1 : 2) : totalAddrs - 2;
-
             const firstHost = cidr >= 31 ? networkInt : networkInt + 1;
             const lastHost = cidr >= 31 ? broadcastInt : broadcastInt - 1;
-
             const ipClass = getClass(octets[0]);
 
-            document.getElementById('r-network').textContent = intToIP(networkInt);
-            document.getElementById('r-broadcast').textContent = intToIP(broadcastInt);
-            document.getElementById('r-netmask').textContent = intToIP(maskInt);
-            document.getElementById('r-wildcard').textContent = intToIP(wildcardInt);
-            document.getElementById('r-class').innerHTML = `<span class="class-badge ${ipClass.css}">Class ${ipClass.name}</span>`;
-            document.getElementById('r-range').textContent = `${intToIP(firstHost)} — ${intToIP(lastHost)}`;
-            document.getElementById('r-hosts').textContent = formatNumber(usableHosts);
-            document.getElementById('r-total').textContent = formatNumber(totalAddrs);
-            document.getElementById('r-cidr').textContent = `/${cidr}`;
-            document.getElementById('r-type').textContent = getType(networkInt, octets[0], cidr);
+            // Labels for IPv4
+            document.getElementById('r-last-label').textContent = 'Broadcast';
+            document.getElementById('r-extra-label').textContent = 'Wildcard';
+            document.getElementById('r-class-label').textContent = 'Class';
 
-            document.getElementById('r-binary-ip').innerHTML = colorBinary(toBinary(ipInt), cidr);
-            document.getElementById('r-binary-mask').innerHTML = colorBinary(toBinary(maskInt), cidr);
+            document.getElementById('r-network').textContent = intToIPv4(networkInt);
+            document.getElementById('r-broadcast').textContent = intToIPv4(broadcastInt);
+            document.getElementById('r-netmask').textContent = intToIPv4(maskInt);
+            document.getElementById('r-wildcard').textContent = intToIPv4(wildcardInt);
+            document.getElementById('r-class').innerHTML = `<span class="class-badge ${ipClass.css}">Class ${ipClass.name}</span>`;
+            document.getElementById('r-range').textContent = `${intToIPv4(firstHost)} — ${intToIPv4(lastHost)}`;
+            document.getElementById('r-hosts').textContent = formatBigNumber(usableHosts);
+            document.getElementById('r-total').textContent = formatBigNumber(totalAddrs);
+            document.getElementById('r-cidr').textContent = `/${cidr}`;
+            document.getElementById('r-type').textContent = getIPv4Type(networkInt, octets[0], cidr);
+
+            document.getElementById('r-binary-ip').innerHTML = colorBinary32(toBinary32(ipInt), cidr);
+            document.getElementById('r-binary-mask').innerHTML = colorBinary32(toBinary32(maskInt), cidr);
 
             // Address bar
+            renderAddressBarV4(cidr, totalAddrs, usableHosts);
+
+            // Legend
+            document.getElementById('bar-legend').innerHTML = `
+                <span><span class="legend-dot" style="background:var(--color-network)"></span> Network</span>
+                <span><span class="legend-dot" style="background:var(--color-host)"></span> Usable Hosts</span>
+                <span><span class="legend-dot" style="background:var(--color-broadcast)"></span> Broadcast</span>`;
+        }
+
+        function calculateIPv6(ipStr, cidr) {
+            const groups = parseIPv6(ipStr);
+            if (!groups) {
+                resultsContainer.style.display = 'none';
+                errorContainer.innerHTML = '<div class="error-message">Invalid IPv6 address. Use colon-hex format (e.g., 2001:db8::1).</div>';
+                return;
+            }
+
+            errorContainer.innerHTML = '';
+            resultsContainer.style.display = '';
+
+            const ipBigInt = ipv6GroupsToBigInt(groups);
+            const maskBigInt = bigIntToIPv6Mask(cidr);
+            const networkBigInt = ipBigInt & maskBigInt;
+            const hostBits = 128 - cidr;
+            const hostMask = hostBits === 0 ? 0n : (1n << BigInt(hostBits)) - 1n;
+            const lastAddrBigInt = networkBigInt | hostMask;
+            const totalAddrs = hostBits >= 64 ? 'Huge (2^' + hostBits + ')' : (1n << BigInt(hostBits));
+
+            const firstHost = networkBigInt;
+            const lastHost = lastAddrBigInt;
+
+            const scope = getIPv6Scope(networkBigInt, cidr);
+
+            // Labels for IPv6
+            document.getElementById('r-last-label').textContent = 'Last Addr';
+            document.getElementById('r-extra-label').textContent = 'Full Form';
+            document.getElementById('r-class-label').textContent = 'Scope';
+
+            document.getElementById('r-network').textContent = bigIntToIPv6Short(networkBigInt) + '/' + cidr;
+            document.getElementById('r-broadcast').textContent = bigIntToIPv6Short(lastAddrBigInt);
+            document.getElementById('r-netmask').textContent = bigIntToIPv6Short(maskBigInt);
+            document.getElementById('r-wildcard').textContent = bigIntToIPv6Full(ipBigInt);
+            document.getElementById('r-class').innerHTML = `<span class="class-badge ${scope.css}">${scope.name}</span>`;
+            document.getElementById('r-range').textContent = `${bigIntToIPv6Short(firstHost)} — ${bigIntToIPv6Short(lastHost)}`;
+
+            if (typeof totalAddrs === 'string') {
+                document.getElementById('r-hosts').textContent = totalAddrs;
+                document.getElementById('r-total').textContent = totalAddrs;
+            } else {
+                const usable = cidr === 128 ? 1n : totalAddrs;
+                document.getElementById('r-hosts').textContent = formatBigNumber(usable);
+                document.getElementById('r-total').textContent = formatBigNumber(totalAddrs);
+            }
+
+            document.getElementById('r-cidr').textContent = `/${cidr}`;
+            document.getElementById('r-type').textContent = getIPv6Type(networkBigInt, cidr);
+
+            document.getElementById('r-binary-ip').innerHTML = colorBinary128(toBinary128(ipBigInt), cidr);
+            document.getElementById('r-binary-mask').innerHTML = colorBinary128(toBinary128(maskBigInt), cidr);
+
+            // Address bar for IPv6
+            renderAddressBarV6(cidr);
+
+            // Legend (no broadcast in IPv6)
+            document.getElementById('bar-legend').innerHTML = `
+                <span><span class="legend-dot" style="background:var(--color-network)"></span> Network Prefix (/${cidr})</span>
+                <span><span class="legend-dot" style="background:var(--color-host)"></span> Host / Interface ID</span>`;
+        }
+
+        function renderAddressBarV4(cidr, totalAddrs, usableHosts) {
             const bar = document.getElementById('address-bar');
             bar.innerHTML = '';
             if (cidr >= 31) {
@@ -574,7 +855,7 @@
                 const usableSeg = document.createElement('div');
                 usableSeg.className = 'bar-segment bar-usable';
                 usableSeg.style.width = `${Math.max((totalAddrs-2)/totalAddrs*100, 10)}%`;
-                usableSeg.textContent = `${formatNumber(usableHosts)} hosts`;
+                usableSeg.textContent = `${formatBigNumber(usableHosts)} hosts`;
 
                 const bcSeg = document.createElement('div');
                 bcSeg.className = 'bar-segment bar-broadcast';
@@ -587,13 +868,50 @@
             }
         }
 
+        function renderAddressBarV6(cidr) {
+            const bar = document.getElementById('address-bar');
+            bar.innerHTML = '';
+
+            const prefixPct = (cidr / 128) * 100;
+            const hostPct = 100 - prefixPct;
+
+            const netSeg = document.createElement('div');
+            netSeg.className = 'bar-segment bar-network';
+            netSeg.style.width = `${Math.max(prefixPct, 3)}%`;
+            netSeg.textContent = `/${cidr} prefix`;
+
+            const hostSeg = document.createElement('div');
+            hostSeg.className = 'bar-segment bar-usable';
+            hostSeg.style.width = `${Math.max(hostPct, 3)}%`;
+            const hostBits = 128 - cidr;
+            hostSeg.textContent = hostBits > 0 ? `${hostBits}-bit host` : '';
+
+            bar.appendChild(netSeg);
+            if (hostBits > 0) bar.appendChild(hostSeg);
+        }
+
+        // ─── Event listeners ───
+
+        versionToggle.addEventListener('click', e => {
+            const btn = e.target.closest('button[data-version]');
+            if (!btn) return;
+            const v = parseInt(btn.dataset.version);
+            if (v === currentVersion) return;
+            switchVersion(v);
+            ipInput.value = '';
+            resultsContainer.style.display = 'none';
+            errorContainer.innerHTML = '';
+            ipInput.focus();
+        });
+
         ipInput.addEventListener('input', calculate);
+
         cidrSlider.addEventListener('input', () => {
             cidrDisplay.textContent = '/' + cidrSlider.value;
-            // Update the input if it has a CIDR
             const raw = ipInput.value.trim();
             if (raw.includes('/')) {
-                ipInput.value = raw.split('/')[0] + '/' + cidrSlider.value;
+                const slashIdx = raw.lastIndexOf('/');
+                ipInput.value = raw.substring(0, slashIdx) + '/' + cidrSlider.value;
             }
             calculate();
         });
@@ -601,6 +919,12 @@
         document.querySelectorAll('.presets button').forEach(btn => {
             btn.addEventListener('click', () => {
                 ipInput.value = btn.dataset.ip;
+                // Auto-detect version from preset
+                if (btn.dataset.ip.includes(':')) {
+                    switchVersion(6);
+                } else {
+                    switchVersion(4);
+                }
                 calculate();
                 ipInput.focus();
             });
@@ -608,7 +932,9 @@
 
         // Init
         if (location.hash) {
-            ipInput.value = decodeURIComponent(location.hash.slice(1));
+            const hashVal = decodeURIComponent(location.hash.slice(1));
+            ipInput.value = hashVal;
+            if (hashVal.includes(':')) switchVersion(6);
         } else {
             ipInput.value = '192.168.1.0/24';
         }
