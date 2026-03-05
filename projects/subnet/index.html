@@ -339,7 +339,7 @@
             padding: 2rem;
         }
 
-        #results-container { display: none; }
+        /* initially hidden, shown via JS */
 
         footer {
             text-align: center;
@@ -411,7 +411,7 @@
 
         <div id="error-container"></div>
 
-        <div id="results-container">
+        <div id="results-container" style="display:none">
             <div class="results">
                 <div class="result-card">
                     <h2>Network Info</h2>
@@ -656,7 +656,7 @@
 
         function bigIntToIPv6Mask(cidr) {
             if (cidr === 0) return 0n;
-            return ((1n << 128n) - 1n) << BigInt(128 - cidr) & ((1n << 128n) - 1n);
+            return (((1n << 128n) - 1n) << BigInt(128 - cidr)) & ((1n << 128n) - 1n);
         }
 
         // ─── Shared helpers ───
