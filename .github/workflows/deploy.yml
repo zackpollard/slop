@@ -32,6 +32,15 @@ jobs:
           - name: dnd-encounter-generator
             pages-project: slop-dnd-encounter-generator
             directory: projects/dnd-encounter-generator
+          - name: cron
+            pages-project: slop-cron
+            directory: projects/cron
+          - name: subnet
+            pages-project: slop-subnet
+            directory: projects/subnet
+          - name: json
+            pages-project: slop-json
+            directory: projects/json
     steps:
       - name: Checkout
         uses: actions/checkout@v4

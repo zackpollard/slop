@@ -1,0 +1,816 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JSON — slop</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --color-bg: #0f0f0c;
+            --color-surface: #1a1a16;
+            --color-surface-hover: #222218;
+            --color-border: #2e2e24;
+            --color-text: #e8e4d4;
+            --color-text-muted: #9a9686;
+            --color-accent: #c4a24e;
+            --color-accent-dim: rgba(196, 162, 78, 0.15);
+            --color-error: #c45e4e;
+            --color-success: #4a9e6e;
+            --color-string: #98c379;
+            --color-number: #d19a66;
+            --color-boolean: #c678dd;
+            --color-null: #c45e4e;
+            --color-key: #5b8fd4;
+            --color-added: rgba(74, 158, 110, 0.2);
+            --color-removed: rgba(196, 94, 78, 0.2);
+            --color-changed: rgba(196, 162, 78, 0.2);
+            --font-body: 'Inter', sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+        }
+
+        body {
+            font-family: var(--font-body);
+            background: var(--color-bg);
+            color: var(--color-text);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem 1.5rem;
+        }
+
+        header {
+            margin-bottom: 1.5rem;
+            text-align: center;
+        }
+
+        header h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+        }
+
+        header h1 .accent { color: var(--color-accent); }
+
+        header p {
+            color: var(--color-text-muted);
+            margin-top: 0.25rem;
+            font-size: 0.95rem;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 0;
+            margin-bottom: 1.5rem;
+            border-bottom: 1px solid var(--color-border);
+        }
+
+        .tab {
+            padding: 0.6rem 1.2rem;
+            font-size: 0.85rem;
+            font-weight: 600;
+            background: none;
+            border: none;
+            color: var(--color-text-muted);
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -1px;
+            transition: all 0.2s;
+        }
+
+        .tab:hover { color: var(--color-text); }
+        .tab.active {
+            color: var(--color-accent);
+            border-bottom-color: var(--color-accent);
+        }
+
+        .panel { display: none; }
+        .panel.active { display: block; }
+
+        /* Format panel */
+        .editor-area {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            min-height: 500px;
+        }
+
+        .editor-pane {
+            display: flex;
+            flex-direction: column;
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .pane-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--color-border);
+            background: var(--color-surface);
+        }
+
+        .pane-title {
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--color-text-muted);
+        }
+
+        .pane-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .btn {
+            font-family: var(--font-body);
+            font-size: 0.75rem;
+            padding: 0.3rem 0.6rem;
+            border-radius: 6px;
+            border: 1px solid var(--color-border);
+            background: var(--color-bg);
+            color: var(--color-text-muted);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn:hover {
+            color: var(--color-accent);
+            border-color: var(--color-accent);
+        }
+
+        .btn-accent {
+            background: var(--color-accent-dim);
+            color: var(--color-accent);
+            border-color: transparent;
+        }
+
+        .btn-accent:hover {
+            border-color: var(--color-accent);
+        }
+
+        textarea {
+            flex: 1;
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            line-height: 1.6;
+            padding: 1rem;
+            background: var(--color-bg);
+            border: none;
+            color: var(--color-text);
+            resize: none;
+            outline: none;
+            tab-size: 2;
+        }
+
+        textarea::placeholder {
+            color: var(--color-text-muted);
+            opacity: 0.5;
+        }
+
+        .output-display {
+            flex: 1;
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            line-height: 1.6;
+            padding: 1rem;
+            background: var(--color-bg);
+            overflow: auto;
+            white-space: pre;
+        }
+
+        /* Syntax highlighting */
+        .json-key { color: var(--color-key); }
+        .json-string { color: var(--color-string); }
+        .json-number { color: var(--color-number); }
+        .json-boolean { color: var(--color-boolean); }
+        .json-null { color: var(--color-null); }
+        .json-bracket { color: var(--color-text-muted); }
+        .json-punct { color: var(--color-text-muted); }
+
+        .error-banner {
+            padding: 0.75rem 1rem;
+            background: rgba(196, 94, 78, 0.15);
+            border-top: 1px solid rgba(196, 94, 78, 0.3);
+            color: var(--color-error);
+            font-size: 0.8rem;
+            font-family: var(--font-mono);
+        }
+
+        .status-bar {
+            padding: 0.5rem 1rem;
+            border-top: 1px solid var(--color-border);
+            font-size: 0.75rem;
+            color: var(--color-text-muted);
+            display: flex;
+            justify-content: space-between;
+        }
+
+        /* Tree view */
+        .tree-view {
+            flex: 1;
+            padding: 1rem;
+            background: var(--color-bg);
+            overflow: auto;
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+        }
+
+        .tree-node {
+            padding-left: 1.5rem;
+        }
+
+        .tree-key {
+            color: var(--color-key);
+            cursor: default;
+        }
+
+        .tree-toggle {
+            cursor: pointer;
+            user-select: none;
+            color: var(--color-text-muted);
+            display: inline-block;
+            width: 1rem;
+            text-align: center;
+        }
+
+        .tree-toggle:hover { color: var(--color-accent); }
+
+        .tree-value-string { color: var(--color-string); }
+        .tree-value-number { color: var(--color-number); }
+        .tree-value-boolean { color: var(--color-boolean); }
+        .tree-value-null { color: var(--color-null); }
+
+        .tree-path {
+            font-size: 0.7rem;
+            color: var(--color-text-muted);
+            cursor: pointer;
+            margin-left: 0.5rem;
+            opacity: 0;
+            transition: opacity 0.15s;
+        }
+
+        .tree-line:hover .tree-path { opacity: 1; }
+
+        .tree-line {
+            line-height: 1.8;
+            white-space: nowrap;
+        }
+
+        .copied-toast {
+            position: fixed;
+            bottom: 2rem;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--color-surface);
+            border: 1px solid var(--color-accent);
+            color: var(--color-accent);
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            font-family: var(--font-mono);
+            z-index: 1000;
+            opacity: 0;
+            transition: opacity 0.2s;
+            pointer-events: none;
+        }
+
+        .copied-toast.show { opacity: 1; }
+
+        /* Diff panel */
+        .diff-area {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            min-height: 400px;
+        }
+
+        .diff-output {
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: 12px;
+            overflow: hidden;
+            margin-top: 1rem;
+        }
+
+        .diff-line {
+            padding: 0.15rem 1rem;
+            font-family: var(--font-mono);
+            font-size: 0.8rem;
+            white-space: pre;
+        }
+
+        .diff-added { background: var(--color-added); }
+        .diff-removed { background: var(--color-removed); }
+        .diff-changed { background: var(--color-changed); }
+        .diff-header {
+            color: var(--color-text-muted);
+            font-weight: 600;
+            padding: 0.5rem 1rem;
+            border-bottom: 1px solid var(--color-border);
+            font-size: 0.8rem;
+        }
+
+        .diff-stats {
+            padding: 0.75rem 1rem;
+            font-size: 0.8rem;
+            color: var(--color-text-muted);
+            display: flex;
+            gap: 1rem;
+        }
+
+        .diff-stat-added { color: var(--color-success); }
+        .diff-stat-removed { color: var(--color-error); }
+        .diff-stat-changed { color: var(--color-accent); }
+
+        footer {
+            text-align: center;
+            margin-top: 3rem;
+            padding-top: 1.5rem;
+            border-top: 1px solid var(--color-border);
+        }
+
+        footer a {
+            color: var(--color-text-muted);
+            text-decoration: none;
+            font-size: 0.85rem;
+        }
+
+        footer a:hover { color: var(--color-accent); }
+
+        @media (max-width: 768px) {
+            .editor-area, .diff-area {
+                grid-template-columns: 1fr;
+                min-height: auto;
+            }
+            .editor-pane {
+                min-height: 300px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>JSON <span class="accent">Carpenter</span></h1>
+            <p>Format, visualize, and diff JSON with syntax highlighting and path copying.</p>
+        </header>
+
+        <div class="tabs">
+            <button class="tab active" data-tab="format">Format &amp; Tree</button>
+            <button class="tab" data-tab="diff">Diff</button>
+        </div>
+
+        <!-- Format Panel -->
+        <div class="panel active" id="panel-format">
+            <div class="editor-area">
+                <div class="editor-pane">
+                    <div class="pane-header">
+                        <span class="pane-title">Input</span>
+                        <div class="pane-actions">
+                            <button class="btn" id="btn-paste">Paste</button>
+                            <button class="btn" id="btn-sample">Sample</button>
+                            <button class="btn" id="btn-clear">Clear</button>
+                        </div>
+                    </div>
+                    <textarea id="json-input" placeholder="Paste your JSON here..." spellcheck="false"></textarea>
+                    <div id="input-error" class="error-banner" style="display:none;"></div>
+                    <div class="status-bar">
+                        <span id="input-stats">0 bytes</span>
+                        <span id="input-valid"></span>
+                    </div>
+                </div>
+
+                <div class="editor-pane">
+                    <div class="pane-header">
+                        <span class="pane-title" id="output-title">Formatted</span>
+                        <div class="pane-actions">
+                            <button class="btn btn-accent" id="btn-copy">Copy</button>
+                            <button class="btn" id="btn-minify">Minify</button>
+                            <button class="btn" id="btn-tree-toggle">Tree View</button>
+                        </div>
+                    </div>
+                    <div class="output-display" id="json-output"></div>
+                    <div class="tree-view" id="json-tree" style="display:none;"></div>
+                    <div class="status-bar">
+                        <span id="output-stats">0 bytes</span>
+                        <span id="output-depth">Depth: 0</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Diff Panel -->
+        <div class="panel" id="panel-diff">
+            <div class="diff-area">
+                <div class="editor-pane">
+                    <div class="pane-header">
+                        <span class="pane-title">JSON A (Left)</span>
+                        <div class="pane-actions"><button class="btn btn-paste-a">Paste</button></div>
+                    </div>
+                    <textarea id="diff-input-a" placeholder="Paste first JSON..." spellcheck="false"></textarea>
+                </div>
+                <div class="editor-pane">
+                    <div class="pane-header">
+                        <span class="pane-title">JSON B (Right)</span>
+                        <div class="pane-actions"><button class="btn btn-paste-b">Paste</button></div>
+                    </div>
+                    <textarea id="diff-input-b" placeholder="Paste second JSON..." spellcheck="false"></textarea>
+                </div>
+            </div>
+            <button class="btn btn-accent" id="btn-diff" style="margin-top:1rem;">Compare</button>
+            <div class="diff-output" id="diff-output" style="display:none;">
+                <div class="diff-header">Differences</div>
+                <div class="diff-stats" id="diff-stats"></div>
+                <div id="diff-lines"></div>
+            </div>
+        </div>
+
+        <div class="copied-toast" id="toast">Copied!</div>
+
+        <footer>
+            <a href="https://slop.zackpollard.pro">← back to slop</a>
+        </footer>
+    </div>
+
+    <script>
+    (function() {
+        // --- Tabs ---
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+                tab.classList.add('active');
+                document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
+            });
+        });
+
+        // --- Toast ---
+        function showToast(msg) {
+            const toast = document.getElementById('toast');
+            toast.textContent = msg || 'Copied!';
+            toast.classList.add('show');
+            setTimeout(() => toast.classList.remove('show'), 1500);
+        }
+
+        // --- Syntax Highlight ---
+        function highlightJSON(json, indent) {
+            try {
+                const obj = typeof json === 'string' ? JSON.parse(json) : json;
+                return syntaxHighlight(JSON.stringify(obj, null, indent || 2));
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function syntaxHighlight(str) {
+            return str.replace(/("(?:\\.|[^"\\])*")\s*:/g, '<span class="json-key">$1</span>:')
+                      .replace(/:(\s*)("(?:\\.|[^"\\])*")/g, ':<span class="json-punct">$1</span><span class="json-string">$2</span>')
+                      .replace(/:\s*(true|false)/g, ': <span class="json-boolean">$1</span>')
+                      .replace(/:\s*(null)/g, ': <span class="json-null">$1</span>')
+                      .replace(/:\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g, ': <span class="json-number">$1</span>')
+                      .replace(/[\[\]{}]/g, '<span class="json-bracket">$&</span>')
+                      // Handle values in arrays (not after colon)
+                      .replace(/(?<=[\[,]\s*)("(?:\\.|[^"\\])*")(?=\s*[,\]])/g, '<span class="json-string">$1</span>')
+                      .replace(/(?<=[\[,]\s*)(true|false)(?=\s*[,\]])/g, '<span class="json-boolean">$1</span>')
+                      .replace(/(?<=[\[,]\s*)(null)(?=\s*[,\]])/g, '<span class="json-null">$1</span>')
+                      .replace(/(?<=[\[,]\s*)(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)(?=\s*[,\]])/g, '<span class="json-number">$1</span>');
+        }
+
+        function getDepth(obj, d) {
+            d = d || 0;
+            if (obj === null || typeof obj !== 'object') return d;
+            let max = d;
+            for (const v of Object.values(obj)) {
+                max = Math.max(max, getDepth(v, d + 1));
+            }
+            return max;
+        }
+
+        // --- Format Panel ---
+        const jsonInput = document.getElementById('json-input');
+        const jsonOutput = document.getElementById('json-output');
+        const jsonTree = document.getElementById('json-tree');
+        const inputError = document.getElementById('input-error');
+        const inputStats = document.getElementById('input-stats');
+        const inputValid = document.getElementById('input-valid');
+        const outputStats = document.getElementById('output-stats');
+        const outputDepth = document.getElementById('output-depth');
+        const outputTitle = document.getElementById('output-title');
+        let showTree = false;
+        let lastParsed = null;
+        let minified = false;
+
+        function formatInput() {
+            const raw = jsonInput.value;
+            inputStats.textContent = `${new Blob([raw]).size.toLocaleString()} bytes`;
+
+            if (!raw.trim()) {
+                jsonOutput.innerHTML = '';
+                jsonTree.innerHTML = '';
+                inputError.style.display = 'none';
+                inputValid.textContent = '';
+                outputStats.textContent = '0 bytes';
+                outputDepth.textContent = 'Depth: 0';
+                lastParsed = null;
+                return;
+            }
+
+            try {
+                const obj = JSON.parse(raw);
+                lastParsed = obj;
+                inputError.style.display = 'none';
+                inputValid.innerHTML = '<span style="color:var(--color-success)">Valid JSON</span>';
+
+                const formatted = JSON.stringify(obj, null, minified ? undefined : 2);
+                outputStats.textContent = `${new Blob([formatted]).size.toLocaleString()} bytes`;
+                outputDepth.textContent = `Depth: ${getDepth(obj)}`;
+
+                if (showTree) {
+                    jsonOutput.style.display = 'none';
+                    jsonTree.style.display = '';
+                    renderTree(obj);
+                } else {
+                    jsonOutput.style.display = '';
+                    jsonTree.style.display = 'none';
+                    jsonOutput.innerHTML = highlightJSON(obj, minified ? undefined : 2) || '';
+                }
+            } catch (e) {
+                lastParsed = null;
+                inputValid.innerHTML = '<span style="color:var(--color-error)">Invalid</span>';
+                inputError.style.display = '';
+                inputError.textContent = e.message;
+                jsonOutput.innerHTML = '';
+                jsonTree.innerHTML = '';
+            }
+        }
+
+        // --- Tree View ---
+        function renderTree(obj) {
+            jsonTree.innerHTML = '';
+            jsonTree.appendChild(buildTreeNode(obj, '', true));
+        }
+
+        function buildTreeNode(value, path, expanded) {
+            const frag = document.createDocumentFragment();
+
+            if (value === null) {
+                const line = makeLine(path);
+                line.insertAdjacentHTML('beforeend', '<span class="tree-value-null">null</span>');
+                frag.appendChild(line);
+            } else if (typeof value === 'object') {
+                const isArray = Array.isArray(value);
+                const entries = isArray ? value.map((v, i) => [i, v]) : Object.entries(value);
+                const bracket = isArray ? ['[', ']'] : ['{', '}'];
+
+                const wrapper = document.createElement('div');
+
+                const header = makeLine(path);
+                const toggle = document.createElement('span');
+                toggle.className = 'tree-toggle';
+                toggle.textContent = expanded ? '▾' : '▸';
+                header.insertBefore(toggle, header.firstChild);
+                header.insertAdjacentHTML('beforeend',
+                    `<span class="json-bracket">${bracket[0]}</span> <span style="color:var(--color-text-muted);font-size:0.75rem">${entries.length} ${isArray ? 'items' : 'keys'}</span>`
+                );
+                wrapper.appendChild(header);
+
+                const children = document.createElement('div');
+                children.className = 'tree-node';
+                children.style.display = expanded ? '' : 'none';
+
+                entries.forEach(([key, val]) => {
+                    const childPath = isArray ? `${path}[${key}]` : (path ? `${path}.${key}` : key);
+                    const childContainer = document.createElement('div');
+
+                    if (val !== null && typeof val === 'object') {
+                        const subtree = buildTreeNode(val, childPath, false);
+                        // Prepend key label
+                        const firstLine = subtree.querySelector('.tree-line');
+                        if (firstLine) {
+                            const keySpan = document.createElement('span');
+                            keySpan.className = 'tree-key';
+                            keySpan.textContent = isArray ? `${key}: ` : `"${key}": `;
+                            const toggle = firstLine.querySelector('.tree-toggle');
+                            if (toggle) {
+                                firstLine.insertBefore(keySpan, toggle.nextSibling);
+                            }
+                        }
+                        childContainer.appendChild(subtree);
+                    } else {
+                        const line = makeLine(childPath);
+                        line.innerHTML += `<span class="tree-key">${isArray ? key : '"' + key + '"'}</span><span class="json-punct">: </span>${valueSpan(val)}`;
+                        childContainer.appendChild(line);
+                    }
+                    children.appendChild(childContainer);
+                });
+
+                const closeLine = document.createElement('div');
+                closeLine.className = 'tree-line';
+                closeLine.innerHTML = `<span class="json-bracket">${bracket[1]}</span>`;
+                children.appendChild(closeLine);
+
+                wrapper.appendChild(children);
+
+                toggle.addEventListener('click', () => {
+                    const open = children.style.display !== 'none';
+                    children.style.display = open ? 'none' : '';
+                    toggle.textContent = open ? '▸' : '▾';
+                });
+
+                frag.appendChild(wrapper);
+            } else {
+                const line = makeLine(path);
+                line.insertAdjacentHTML('beforeend', valueSpan(value));
+                frag.appendChild(line);
+            }
+
+            return frag;
+        }
+
+        function makeLine(path) {
+            const line = document.createElement('div');
+            line.className = 'tree-line';
+            if (path) {
+                const pathEl = document.createElement('span');
+                pathEl.className = 'tree-path';
+                pathEl.textContent = path;
+                pathEl.title = 'Click to copy path';
+                pathEl.addEventListener('click', () => {
+                    navigator.clipboard.writeText(path);
+                    showToast(`Copied: ${path}`);
+                });
+                line.appendChild(pathEl);
+            }
+            return line;
+        }
+
+        function valueSpan(v) {
+            if (v === null) return '<span class="tree-value-null">null</span>';
+            if (typeof v === 'string') return `<span class="tree-value-string">"${escapeHtml(v)}"</span>`;
+            if (typeof v === 'number') return `<span class="tree-value-number">${v}</span>`;
+            if (typeof v === 'boolean') return `<span class="tree-value-boolean">${v}</span>`;
+            return escapeHtml(String(v));
+        }
+
+        function escapeHtml(s) {
+            return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        // --- Buttons ---
+        document.getElementById('btn-paste').addEventListener('click', async () => {
+            try {
+                jsonInput.value = await navigator.clipboard.readText();
+                formatInput();
+            } catch (e) { /* clipboard not available */ }
+        });
+
+        document.getElementById('btn-clear').addEventListener('click', () => {
+            jsonInput.value = '';
+            formatInput();
+        });
+
+        document.getElementById('btn-sample').addEventListener('click', () => {
+            jsonInput.value = JSON.stringify({
+                name: "JSON Carpenter",
+                version: "1.0.0",
+                features: ["format", "tree view", "diff", "syntax highlighting"],
+                config: {
+                    theme: "dark",
+                    accent: "#c4a24e",
+                    fonts: { body: "Inter", mono: "JetBrains Mono" }
+                },
+                stats: { lines: 42, depth: 3, valid: true },
+                metadata: null
+            }, null, 2);
+            formatInput();
+        });
+
+        document.getElementById('btn-copy').addEventListener('click', () => {
+            if (!lastParsed) return;
+            const text = JSON.stringify(lastParsed, null, minified ? undefined : 2);
+            navigator.clipboard.writeText(text);
+            showToast('Copied formatted JSON!');
+        });
+
+        document.getElementById('btn-minify').addEventListener('click', () => {
+            minified = !minified;
+            document.getElementById('btn-minify').textContent = minified ? 'Pretty' : 'Minify';
+            formatInput();
+        });
+
+        document.getElementById('btn-tree-toggle').addEventListener('click', () => {
+            showTree = !showTree;
+            document.getElementById('btn-tree-toggle').textContent = showTree ? 'Text View' : 'Tree View';
+            outputTitle.textContent = showTree ? 'Tree' : 'Formatted';
+            formatInput();
+        });
+
+        jsonInput.addEventListener('input', formatInput);
+
+        // Tab key inserts spaces
+        jsonInput.addEventListener('keydown', e => {
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                const start = jsonInput.selectionStart;
+                jsonInput.value = jsonInput.value.substring(0, start) + '  ' + jsonInput.value.substring(jsonInput.selectionEnd);
+                jsonInput.selectionStart = jsonInput.selectionEnd = start + 2;
+            }
+        });
+
+        // --- Diff Panel ---
+        const diffA = document.getElementById('diff-input-a');
+        const diffB = document.getElementById('diff-input-b');
+
+        document.querySelector('.btn-paste-a').addEventListener('click', async () => {
+            try { diffA.value = await navigator.clipboard.readText(); } catch(e) {}
+        });
+        document.querySelector('.btn-paste-b').addEventListener('click', async () => {
+            try { diffB.value = await navigator.clipboard.readText(); } catch(e) {}
+        });
+
+        document.getElementById('btn-diff').addEventListener('click', () => {
+            const output = document.getElementById('diff-output');
+            const lines = document.getElementById('diff-lines');
+            const stats = document.getElementById('diff-stats');
+
+            let objA, objB;
+            try { objA = JSON.parse(diffA.value); } catch(e) {
+                output.style.display = '';
+                stats.innerHTML = '<span style="color:var(--color-error)">JSON A is invalid</span>';
+                lines.innerHTML = '';
+                return;
+            }
+            try { objB = JSON.parse(diffB.value); } catch(e) {
+                output.style.display = '';
+                stats.innerHTML = '<span style="color:var(--color-error)">JSON B is invalid</span>';
+                lines.innerHTML = '';
+                return;
+            }
+
+            output.style.display = '';
+            const diffs = diffObjects(objA, objB, '');
+            if (diffs.length === 0) {
+                stats.innerHTML = '<span style="color:var(--color-success)">No differences found — JSON objects are identical.</span>';
+                lines.innerHTML = '';
+                return;
+            }
+
+            let added = 0, removed = 0, changed = 0;
+            let html = '';
+            diffs.forEach(d => {
+                if (d.type === 'added') { added++; html += `<div class="diff-line diff-added">+ ${escapeHtml(d.path)}: ${escapeHtml(JSON.stringify(d.value))}</div>`; }
+                else if (d.type === 'removed') { removed++; html += `<div class="diff-line diff-removed">- ${escapeHtml(d.path)}: ${escapeHtml(JSON.stringify(d.value))}</div>`; }
+                else { changed++; html += `<div class="diff-line diff-changed">~ ${escapeHtml(d.path)}: ${escapeHtml(JSON.stringify(d.oldValue))} → ${escapeHtml(JSON.stringify(d.newValue))}</div>`; }
+            });
+
+            stats.innerHTML = [
+                added ? `<span class="diff-stat-added">+${added} added</span>` : '',
+                removed ? `<span class="diff-stat-removed">-${removed} removed</span>` : '',
+                changed ? `<span class="diff-stat-changed">~${changed} changed</span>` : '',
+            ].filter(Boolean).join('');
+            lines.innerHTML = html;
+        });
+
+        function diffObjects(a, b, prefix) {
+            const diffs = [];
+            const aKeys = a !== null && typeof a === 'object' ? Object.keys(a) : [];
+            const bKeys = b !== null && typeof b === 'object' ? Object.keys(b) : [];
+
+            if (typeof a !== typeof b || Array.isArray(a) !== Array.isArray(b) ||
+                (typeof a !== 'object' || a === null)) {
+                if (JSON.stringify(a) !== JSON.stringify(b)) {
+                    diffs.push({ type: 'changed', path: prefix || '(root)', oldValue: a, newValue: b });
+                }
+                return diffs;
+            }
+
+            const allKeys = new Set([...aKeys, ...bKeys]);
+            allKeys.forEach(key => {
+                const path = Array.isArray(a) ? `${prefix}[${key}]` : (prefix ? `${prefix}.${key}` : key);
+                if (!(key in a)) {
+                    diffs.push({ type: 'added', path, value: b[key] });
+                } else if (!(key in b)) {
+                    diffs.push({ type: 'removed', path, value: a[key] });
+                } else {
+                    diffs.push(...diffObjects(a[key], b[key], path));
+                }
+            });
+            return diffs;
+        }
+    })();
+    </script>
+</body>
+</html>
