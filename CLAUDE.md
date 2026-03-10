@@ -61,8 +61,8 @@ tofu/                  # OpenTofu infrastructure (Cloudflare Pages + DNS)
 - **Platform:** Cloudflare Pages (one Pages project per project in this repo)
 - **Infrastructure:** OpenTofu manages Cloudflare Pages projects, custom domains, and DNS CNAME records. State is stored in Cloudflare R2 (`tofu-state` bucket, key prefix `slop/`).
 - **Workflows:**
-  - `.github/workflows/infra.yml` — Runs `tofu plan` on PRs and `tofu apply` on push to `main` (triggered by changes to `tofu/**`)
-  - `.github/workflows/deploy.yml` — Production deploys: pushes each project to its own Cloudflare Pages project on merge to `main`
+  - `.github/workflows/infra.yml` — Runs `tofu plan` on PRs and comments the plan (triggered by changes to `tofu/**`)
+  - `.github/workflows/deploy.yml` — Production deploys: runs `tofu apply` first to ensure infrastructure exists, then deploys each project to its own Cloudflare Pages project on merge to `main`
   - `.github/workflows/preview.yml` — Preview deploys: assembles all projects under subpaths into a single `slop-preview` Pages project on PRs. No per-project Pages project needed for previews.
 - **Preview deployments:** PRs automatically get a combined preview deployment to a single `slop-preview` Cloudflare Pages project. All projects are served under subpaths (e.g. `/homepage/`, `/roof-calculator/`). Preview URLs are posted as PR comments. This avoids needing to create per-project Pages infrastructure before previews work.
 - **Domains:**
