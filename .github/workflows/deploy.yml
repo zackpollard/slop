@@ -41,6 +41,9 @@ jobs:
           - name: json
             pages-project: slop-json
             directory: projects/json
+          - name: flip-7
+            pages-project: slop-flip-7
+            directory: projects/flip-7
     steps:
       - name: Checkout
         uses: actions/checkout@v4
