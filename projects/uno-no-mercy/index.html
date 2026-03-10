@@ -1082,6 +1082,9 @@
                             onclick="window._toggleWinner('${esc(name)}')">Hand Winner</button>
                         <button class="toggle-btn ko-toggle ${state.isKnockedOut ? 'active' : ''}"
                             onclick="window._toggleKO('${esc(name)}')">Knocked Out (${mercyLimit}+ cards)</button>
+                        ${!state.isWinner && !state.isKnockedOut && Object.keys(state.cardCounts).length > 0 ?
+                            `<button class="toggle-btn" style="margin-left:auto;"
+                                onclick="window._clearCards('${esc(name)}')">Clear Cards</button>` : ''}
                     </div>
                 </div>`;
             }).join('');
@@ -1120,6 +1123,11 @@
                 handState[name].isWinner = false;
                 handState[name].cardCounts = {};
             }
+            renderHandScoring();
+        };
+
+        window._clearCards = function(name) {
+            handState[name].cardCounts = {};
             renderHandScoring();
         };
 
