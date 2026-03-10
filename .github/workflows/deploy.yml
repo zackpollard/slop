@@ -47,6 +47,9 @@ jobs:
           - name: uno-no-mercy
             pages-project: slop-uno-no-mercy
             directory: projects/uno-no-mercy
+          - name: exploding-kittens
+            pages-project: slop-exploding-kittens
+            directory: projects/exploding-kittens
     steps:
       - name: Checkout
         uses: actions/checkout@v4

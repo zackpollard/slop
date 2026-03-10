@@ -45,5 +45,8 @@ variable "projects" {
     uno-no-mercy = {
       subdomain = "uno-no-mercy.slop"
     }
+    exploding-kittens = {
+      subdomain = "exploding-kittens.slop"
+    }
   }
 }
