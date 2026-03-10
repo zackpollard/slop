@@ -39,5 +39,8 @@ variable "projects" {
     json = {
       subdomain = "json.slop"
     }
+    flip-7 = {
+      subdomain = "flip-7.slop"
+    }
   }
 }

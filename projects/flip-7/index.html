@@ -1,0 +1,1115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flip 7 Scoreboard — slop</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --color-bg: #0f0f0c;
+            --color-surface: #1a1a16;
+            --color-surface-hover: #222218;
+            --color-border: #2e2e24;
+            --color-text: #e8e4d4;
+            --color-text-muted: #9a9686;
+            --color-accent: #c4a24e;
+            --color-accent-dim: rgba(196, 162, 78, 0.15);
+            --color-error: #c45e4e;
+            --color-success: #4a9e6e;
+            --color-bust: #c45e4e;
+            --font-body: 'Inter', sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+        }
+
+        body {
+            font-family: var(--font-body);
+            background: var(--color-bg);
+            color: var(--color-text);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 2rem 1.5rem;
+        }
+
+        header {
+            margin-bottom: 2rem;
+            text-align: center;
+        }
+
+        header h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+        }
+
+        header h1 .accent { color: var(--color-accent); }
+
+        header p {
+            color: var(--color-text-muted);
+            margin-top: 0.25rem;
+            font-size: 0.95rem;
+        }
+
+        .section {
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .section h2 {
+            font-size: 0.85rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--color-text-muted);
+            margin-bottom: 0.75rem;
+        }
+
+        /* Setup */
+        .setup-row {
+            display: flex;
+            gap: 0.75rem;
+            align-items: flex-end;
+            flex-wrap: wrap;
+        }
+
+        .setup-row .field {
+            flex: 1;
+            min-width: 150px;
+        }
+
+        .setup-row label {
+            display: block;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--color-text-muted);
+            margin-bottom: 0.35rem;
+        }
+
+        .setup-row input {
+            width: 100%;
+            font-family: var(--font-body);
+            font-size: 0.95rem;
+            padding: 0.6rem 0.75rem;
+            background: var(--color-bg);
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            color: var(--color-text);
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .setup-row input:focus {
+            border-color: var(--color-accent);
+        }
+
+        .player-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-top: 0.75rem;
+        }
+
+        .player-tag {
+            display: flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0.35rem 0.65rem;
+            background: var(--color-accent-dim);
+            border: 1px solid var(--color-accent);
+            border-radius: 6px;
+            font-size: 0.85rem;
+            color: var(--color-accent);
+        }
+
+        .player-tag button {
+            background: none;
+            border: none;
+            color: var(--color-accent);
+            cursor: pointer;
+            font-size: 1rem;
+            line-height: 1;
+            padding: 0;
+            opacity: 0.7;
+        }
+
+        .player-tag button:hover { opacity: 1; }
+
+        /* Buttons */
+        .btn {
+            font-family: var(--font-body);
+            font-size: 0.85rem;
+            font-weight: 600;
+            padding: 0.6rem 1.2rem;
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: var(--color-surface);
+            color: var(--color-text);
+        }
+
+        .btn:hover {
+            background: var(--color-surface-hover);
+            border-color: var(--color-accent);
+        }
+
+        .btn-primary {
+            background: var(--color-accent);
+            color: var(--color-bg);
+            border-color: var(--color-accent);
+        }
+
+        .btn-primary:hover {
+            background: #d4b25e;
+            border-color: #d4b25e;
+        }
+
+        .btn-danger {
+            color: var(--color-error);
+            border-color: var(--color-error);
+        }
+
+        .btn-danger:hover {
+            background: rgba(196, 94, 78, 0.15);
+        }
+
+        .btn-sm {
+            font-size: 0.75rem;
+            padding: 0.35rem 0.65rem;
+        }
+
+        /* Standings */
+        .standings-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .standings-table th,
+        .standings-table td {
+            padding: 0.6rem 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid var(--color-border);
+        }
+
+        .standings-table th {
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--color-text-muted);
+        }
+
+        .standings-table td {
+            font-size: 0.95rem;
+        }
+
+        .standings-table .player-name {
+            font-weight: 600;
+        }
+
+        .standings-table .total-score {
+            font-family: var(--font-mono);
+            font-weight: 700;
+            color: var(--color-accent);
+            font-size: 1.1rem;
+        }
+
+        .standings-table .round-scores {
+            font-family: var(--font-mono);
+            font-size: 0.8rem;
+            color: var(--color-text-muted);
+        }
+
+        .standings-table .round-score-chip {
+            display: inline-block;
+            padding: 0.15rem 0.4rem;
+            border-radius: 4px;
+            margin: 0.1rem;
+            background: var(--color-bg);
+            border: 1px solid var(--color-border);
+        }
+
+        .standings-table .round-score-chip.bust {
+            color: var(--color-bust);
+            border-color: var(--color-bust);
+            background: rgba(196, 94, 78, 0.1);
+        }
+
+        .standings-table .round-score-chip.flip7 {
+            color: var(--color-success);
+            border-color: var(--color-success);
+            background: rgba(74, 158, 110, 0.1);
+        }
+
+        .standings-table .rank {
+            font-weight: 700;
+            color: var(--color-text-muted);
+            width: 2rem;
+        }
+
+        .standings-table .rank.first { color: var(--color-accent); }
+
+        .winner-row td {
+            background: var(--color-accent-dim);
+        }
+
+        .progress-bar-container {
+            width: 100%;
+            height: 6px;
+            background: var(--color-bg);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-top: 0.25rem;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: var(--color-accent);
+            border-radius: 3px;
+            transition: width 0.3s ease;
+        }
+
+        .progress-bar.complete {
+            background: var(--color-success);
+        }
+
+        /* Round scoring */
+        .round-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .round-header h2 {
+            margin-bottom: 0;
+        }
+
+        .round-dealer {
+            font-size: 0.85rem;
+            color: var(--color-text-muted);
+        }
+
+        .round-dealer strong {
+            color: var(--color-accent);
+        }
+
+        .scoring-grid {
+            display: grid;
+            gap: 1rem;
+        }
+
+        .player-score-card {
+            background: var(--color-bg);
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            padding: 1rem;
+        }
+
+        .player-score-card.bust {
+            border-color: var(--color-bust);
+            opacity: 0.7;
+        }
+
+        .player-score-card.frozen {
+            border-color: var(--color-text-muted);
+            opacity: 0.8;
+        }
+
+        .player-score-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.75rem;
+        }
+
+        .player-score-header .name {
+            font-weight: 600;
+            font-size: 1rem;
+        }
+
+        .player-score-header .round-total {
+            font-family: var(--font-mono);
+            font-weight: 700;
+            font-size: 1.2rem;
+            color: var(--color-accent);
+        }
+
+        .player-score-header .round-total.bust-text {
+            color: var(--color-bust);
+        }
+
+        .card-input-area {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            align-items: center;
+        }
+
+        .number-cards-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.35rem;
+        }
+
+        .card-btn {
+            width: 2.5rem;
+            height: 2.5rem;
+            font-family: var(--font-mono);
+            font-size: 0.9rem;
+            font-weight: 600;
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: 6px;
+            color: var(--color-text);
+            cursor: pointer;
+            transition: all 0.15s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .card-btn:hover {
+            border-color: var(--color-accent);
+            background: var(--color-surface-hover);
+        }
+
+        .card-btn.selected {
+            background: var(--color-accent-dim);
+            border-color: var(--color-accent);
+            color: var(--color-accent);
+        }
+
+        .card-btn.modifier {
+            font-size: 0.75rem;
+        }
+
+        .card-btn.modifier.selected {
+            background: rgba(74, 158, 110, 0.15);
+            border-color: var(--color-success);
+            color: var(--color-success);
+        }
+
+        .score-toggles {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        .toggle-btn {
+            font-family: var(--font-body);
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 0.35rem 0.65rem;
+            border: 1px solid var(--color-border);
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.15s;
+            background: var(--color-surface);
+            color: var(--color-text-muted);
+        }
+
+        .toggle-btn:hover {
+            border-color: var(--color-accent);
+        }
+
+        .toggle-btn.active {
+            background: var(--color-accent-dim);
+            border-color: var(--color-accent);
+            color: var(--color-accent);
+        }
+
+        .toggle-btn.bust-toggle.active {
+            background: rgba(196, 94, 78, 0.15);
+            border-color: var(--color-bust);
+            color: var(--color-bust);
+        }
+
+        .score-breakdown {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--color-text-muted);
+            margin-top: 0.5rem;
+        }
+
+        /* Actions row */
+        .actions-row {
+            display: flex;
+            gap: 0.75rem;
+            justify-content: flex-end;
+            margin-top: 1rem;
+            flex-wrap: wrap;
+        }
+
+        /* Winner banner */
+        .winner-banner {
+            background: var(--color-accent-dim);
+            border: 2px solid var(--color-accent);
+            border-radius: 12px;
+            padding: 1.5rem;
+            text-align: center;
+            margin-bottom: 1.5rem;
+        }
+
+        .winner-banner h2 {
+            color: var(--color-accent);
+            font-size: 1.5rem;
+            margin-bottom: 0.25rem;
+            text-transform: none;
+            letter-spacing: normal;
+        }
+
+        .winner-banner p {
+            color: var(--color-text-muted);
+            font-size: 0.95rem;
+        }
+
+        .winner-banner .winner-score {
+            font-family: var(--font-mono);
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--color-accent);
+        }
+
+        /* Rules */
+        details {
+            margin-top: 0.5rem;
+        }
+
+        details summary {
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--color-text-muted);
+            user-select: none;
+        }
+
+        details summary:hover {
+            color: var(--color-accent);
+        }
+
+        .rules-content {
+            margin-top: 0.75rem;
+            font-size: 0.9rem;
+            line-height: 1.7;
+            color: var(--color-text-muted);
+        }
+
+        .rules-content h3 {
+            color: var(--color-text);
+            font-size: 0.9rem;
+            margin-top: 1rem;
+            margin-bottom: 0.25rem;
+        }
+
+        .rules-content h3:first-child { margin-top: 0; }
+
+        .rules-content ul {
+            padding-left: 1.25rem;
+            margin: 0.25rem 0;
+        }
+
+        .rules-content strong {
+            color: var(--color-accent);
+        }
+
+        footer {
+            text-align: center;
+            margin-top: 3rem;
+            padding-top: 1.5rem;
+            border-top: 1px solid var(--color-border);
+        }
+
+        footer a {
+            color: var(--color-text-muted);
+            text-decoration: none;
+            font-size: 0.85rem;
+        }
+
+        footer a:hover {
+            color: var(--color-accent);
+        }
+
+        .hidden { display: none !important; }
+
+        @media (max-width: 600px) {
+            .container { padding: 1rem; }
+            header h1 { font-size: 1.5rem; }
+            .setup-row { flex-direction: column; }
+            .setup-row .field { min-width: unset; }
+            .card-btn { width: 2.2rem; height: 2.2rem; font-size: 0.8rem; }
+            .standings-table { font-size: 0.85rem; }
+            .standings-table th, .standings-table td { padding: 0.4rem 0.5rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Flip 7 <span class="accent">Scoreboard</span></h1>
+            <p>Track scores for the press-your-luck card game. First to 200 points wins.</p>
+        </header>
+
+        <!-- Setup Phase -->
+        <div id="setup-phase">
+            <div class="section">
+                <h2>Players</h2>
+                <div class="setup-row">
+                    <div class="field">
+                        <label for="player-name-input">Add Player</label>
+                        <input type="text" id="player-name-input" placeholder="Enter player name" maxlength="20">
+                    </div>
+                    <button class="btn btn-primary" id="add-player-btn" style="margin-bottom:1px;">Add</button>
+                </div>
+                <div class="player-tags" id="player-tags"></div>
+                <div class="actions-row" style="margin-top:1.25rem;">
+                    <button class="btn btn-primary" id="start-game-btn" disabled>Start Game</button>
+                </div>
+            </div>
+
+            <div class="section">
+                <details>
+                    <summary>Quick Rules Reference</summary>
+                    <div class="rules-content">
+                        <h3>Goal</h3>
+                        <p>Be the first player to reach <strong>200 points</strong>.</p>
+
+                        <h3>Each Round</h3>
+                        <ul>
+                            <li>Players are dealt cards one at a time. On your turn, <strong>Hit</strong> (draw another card) or <strong>Stay</strong> (bank your points).</li>
+                            <li>If you draw a <strong>duplicate number</strong>, you <strong>bust</strong> and score 0 for the round.</li>
+                            <li>If you collect <strong>7 unique number cards</strong>, you get a <strong>+15 Flip 7 bonus</strong>.</li>
+                        </ul>
+
+                        <h3>Special Cards</h3>
+                        <ul>
+                            <li><strong>Freeze</strong> &mdash; Force a player out of the round (they keep their current score).</li>
+                            <li><strong>Flip Three</strong> &mdash; Force a player to draw 3 cards.</li>
+                            <li><strong>Second Chance</strong> &mdash; Prevents one bust (discards the duplicate).</li>
+                        </ul>
+
+                        <h3>Scoring</h3>
+                        <ul>
+                            <li>Sum your number cards (0&ndash;12).</li>
+                            <li><strong>x2</strong> doubles only the number card total.</li>
+                            <li><strong>+2, +4, +6, +8, +10</strong> are added after the multiplier.</li>
+                            <li><strong>Flip 7 bonus (+15)</strong> is added last.</li>
+                        </ul>
+                        <p>Formula: <strong>(Number cards &times; multiplier) + modifiers + Flip 7 bonus</strong></p>
+                    </div>
+                </details>
+            </div>
+        </div>
+
+        <!-- Game Phase -->
+        <div id="game-phase" class="hidden">
+            <!-- Winner Banner -->
+            <div id="winner-banner" class="winner-banner hidden">
+                <h2 id="winner-name"></h2>
+                <div class="winner-score" id="winner-score"></div>
+                <p>wins the game!</p>
+                <div class="actions-row" style="justify-content:center; margin-top:1rem;">
+                    <button class="btn btn-primary" id="new-game-btn">New Game</button>
+                </div>
+            </div>
+
+            <!-- Standings -->
+            <div class="section" id="standings-section">
+                <h2>Standings</h2>
+                <table class="standings-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Player</th>
+                            <th>Total</th>
+                            <th>Progress</th>
+                            <th>Rounds</th>
+                        </tr>
+                    </thead>
+                    <tbody id="standings-body"></tbody>
+                </table>
+            </div>
+
+            <!-- Round Scoring -->
+            <div class="section" id="round-section">
+                <div class="round-header">
+                    <h2 id="round-title">Round 1</h2>
+                    <div class="round-dealer">Dealer: <strong id="round-dealer"></strong></div>
+                </div>
+                <div class="scoring-grid" id="scoring-grid"></div>
+                <div class="actions-row">
+                    <button class="btn btn-danger btn-sm" id="undo-round-btn" class="hidden">Undo Last Round</button>
+                    <button class="btn btn-primary" id="submit-round-btn">Submit Round</button>
+                </div>
+            </div>
+
+            <div class="section">
+                <details>
+                    <summary>Quick Rules Reference</summary>
+                    <div class="rules-content">
+                        <h3>Scoring</h3>
+                        <ul>
+                            <li>Select the number cards each player has. Sum is calculated automatically.</li>
+                            <li><strong>x2</strong> doubles only the number card total.</li>
+                            <li><strong>+2, +4, +6, +8, +10</strong> are added after the multiplier.</li>
+                            <li>Toggle <strong>Flip 7</strong> if a player collected 7 unique number cards (+15 bonus).</li>
+                            <li>Toggle <strong>Bust</strong> if a player drew a duplicate (score = 0).</li>
+                        </ul>
+                    </div>
+                </details>
+            </div>
+
+            <div class="actions-row">
+                <button class="btn btn-danger" id="reset-game-btn">Reset Game</button>
+            </div>
+        </div>
+
+        <footer>
+            <a href="https://slop.zackpollard.pro">&larr; back to slop</a>
+        </footer>
+    </div>
+
+    <script>
+    (function() {
+        // State
+        let players = [];
+        let rounds = []; // Array of round results: [{playerName: {cards:[], modifiers:[], x2:bool, flip7:bool, bust:bool, score:number}}]
+        let currentRound = 1;
+        let gameStarted = false;
+        let gameOver = false;
+
+        // DOM refs
+        const setupPhase = document.getElementById('setup-phase');
+        const gamePhase = document.getElementById('game-phase');
+        const playerInput = document.getElementById('player-name-input');
+        const addPlayerBtn = document.getElementById('add-player-btn');
+        const playerTags = document.getElementById('player-tags');
+        const startGameBtn = document.getElementById('start-game-btn');
+        const standingsBody = document.getElementById('standings-body');
+        const roundTitle = document.getElementById('round-title');
+        const roundDealer = document.getElementById('round-dealer');
+        const scoringGrid = document.getElementById('scoring-grid');
+        const submitRoundBtn = document.getElementById('submit-round-btn');
+        const undoRoundBtn = document.getElementById('undo-round-btn');
+        const resetGameBtn = document.getElementById('reset-game-btn');
+        const winnerBanner = document.getElementById('winner-banner');
+        const winnerName = document.getElementById('winner-name');
+        const winnerScore = document.getElementById('winner-score');
+        const newGameBtn = document.getElementById('new-game-btn');
+        const roundSection = document.getElementById('round-section');
+
+        const NUMBER_CARDS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+        const MODIFIER_CARDS = ['+2', '+4', '+6', '+8', '+10'];
+
+        // Save/load state from localStorage
+        function saveState() {
+            const state = { players, rounds, currentRound, gameStarted, gameOver };
+            localStorage.setItem('flip7-state', JSON.stringify(state));
+        }
+
+        function loadState() {
+            try {
+                const saved = localStorage.getItem('flip7-state');
+                if (!saved) return false;
+                const state = JSON.parse(saved);
+                players = state.players || [];
+                rounds = state.rounds || [];
+                currentRound = state.currentRound || 1;
+                gameStarted = state.gameStarted || false;
+                gameOver = state.gameOver || false;
+                return gameStarted;
+            } catch (e) {
+                return false;
+            }
+        }
+
+        // Setup phase
+        function addPlayer(name) {
+            name = name.trim();
+            if (!name || players.includes(name)) return;
+            if (players.length >= 10) return;
+            players.push(name);
+            renderPlayerTags();
+            playerInput.value = '';
+            playerInput.focus();
+            startGameBtn.disabled = players.length < 2;
+        }
+
+        function removePlayer(name) {
+            players = players.filter(p => p !== name);
+            renderPlayerTags();
+            startGameBtn.disabled = players.length < 2;
+        }
+
+        function renderPlayerTags() {
+            playerTags.innerHTML = players.map(name =>
+                `<span class="player-tag">${esc(name)}<button onclick="window._removePlayer('${esc(name)}')">&times;</button></span>`
+            ).join('');
+        }
+
+        window._removePlayer = removePlayer;
+
+        playerInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                addPlayer(playerInput.value);
+            }
+        });
+
+        addPlayerBtn.addEventListener('click', () => addPlayer(playerInput.value));
+
+        startGameBtn.addEventListener('click', () => {
+            if (players.length < 2) return;
+            gameStarted = true;
+            setupPhase.classList.add('hidden');
+            gamePhase.classList.remove('hidden');
+            renderGame();
+            saveState();
+        });
+
+        // Game logic
+        function getPlayerTotal(playerName) {
+            let total = 0;
+            for (const round of rounds) {
+                if (round[playerName]) {
+                    total += round[playerName].score;
+                }
+            }
+            return total;
+        }
+
+        function calculateRoundScore(data) {
+            if (data.bust) return 0;
+            let numberSum = data.cards.reduce((a, b) => a + b, 0);
+            if (data.x2) numberSum *= 2;
+            let modifierSum = data.modifiers.reduce((a, b) => a + b, 0);
+            let bonus = data.flip7 ? 15 : 0;
+            return numberSum + modifierSum + bonus;
+        }
+
+        function getDealerIndex() {
+            return (currentRound - 1) % players.length;
+        }
+
+        function renderGame() {
+            renderStandings();
+            renderRoundScoring();
+            checkWinner();
+        }
+
+        function renderStandings() {
+            const sorted = players.map(name => ({
+                name,
+                total: getPlayerTotal(name)
+            })).sort((a, b) => b.total - a.total);
+
+            standingsBody.innerHTML = sorted.map((p, i) => {
+                const pct = Math.min(100, (p.total / 200) * 100);
+                const isWinner = gameOver && p.total >= 200 && i === 0;
+                const roundScores = rounds.map((round, ri) => {
+                    const rd = round[p.name];
+                    if (!rd) return `<span class="round-score-chip">-</span>`;
+                    if (rd.bust) return `<span class="round-score-chip bust">0</span>`;
+                    if (rd.flip7) return `<span class="round-score-chip flip7">${rd.score}</span>`;
+                    return `<span class="round-score-chip">${rd.score}</span>`;
+                }).join('');
+
+                return `<tr class="${isWinner ? 'winner-row' : ''}">
+                    <td class="rank ${i === 0 ? 'first' : ''}">${i + 1}</td>
+                    <td class="player-name">${esc(p.name)}</td>
+                    <td class="total-score">${p.total}</td>
+                    <td>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar ${pct >= 100 ? 'complete' : ''}" style="width:${pct}%"></div>
+                        </div>
+                    </td>
+                    <td class="round-scores">${roundScores || '—'}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        function renderRoundScoring() {
+            if (gameOver) {
+                roundSection.classList.add('hidden');
+                return;
+            }
+            roundSection.classList.remove('hidden');
+
+            roundTitle.textContent = `Round ${currentRound}`;
+            roundDealer.textContent = players[getDealerIndex()];
+
+            undoRoundBtn.classList.toggle('hidden', rounds.length === 0);
+
+            scoringGrid.innerHTML = players.map(name => {
+                const id = nameToId(name);
+                return `<div class="player-score-card" id="card-${id}">
+                    <div class="player-score-header">
+                        <span class="name">${esc(name)}</span>
+                        <span class="round-total" id="total-${id}">0</span>
+                    </div>
+                    <div class="card-input-area">
+                        <div class="number-cards-grid" id="numbers-${id}">
+                            ${NUMBER_CARDS.map(n =>
+                                `<button class="card-btn" data-player="${id}" data-card="${n}" onclick="window._toggleCard('${id}', ${n})">${n}</button>`
+                            ).join('')}
+                        </div>
+                    </div>
+                    <div class="card-input-area" style="margin-top:0.5rem;">
+                        <div class="number-cards-grid">
+                            ${MODIFIER_CARDS.map(m =>
+                                `<button class="card-btn modifier" data-player="${id}" data-mod="${m}" onclick="window._toggleMod('${id}', '${m}')">${m}</button>`
+                            ).join('')}
+                            <button class="card-btn modifier" data-player="${id}" data-special="x2" onclick="window._toggleX2('${id}')">x2</button>
+                        </div>
+                    </div>
+                    <div class="score-toggles">
+                        <button class="toggle-btn" id="flip7-${id}" onclick="window._toggleFlip7('${id}')">Flip 7 (+15)</button>
+                        <button class="toggle-btn bust-toggle" id="bust-${id}" onclick="window._toggleBust('${id}')">Bust</button>
+                    </div>
+                    <div class="score-breakdown" id="breakdown-${id}"></div>
+                </div>`;
+            }).join('');
+
+            // Initialize round state for each player
+            players.forEach(name => {
+                const id = nameToId(name);
+                if (!roundState[id]) {
+                    roundState[id] = { cards: [], modifiers: [], x2: false, flip7: false, bust: false };
+                }
+                updatePlayerRoundDisplay(id);
+            });
+        }
+
+        // Round input state
+        let roundState = {};
+
+        function resetRoundState() {
+            roundState = {};
+        }
+
+        window._toggleCard = function(id, num) {
+            const state = roundState[id];
+            const idx = state.cards.indexOf(num);
+            if (idx >= 0) {
+                state.cards.splice(idx, 1);
+            } else {
+                state.cards.push(num);
+            }
+            // Auto-detect Flip 7
+            state.flip7 = state.cards.length >= 7;
+            updatePlayerRoundDisplay(id);
+        };
+
+        window._toggleMod = function(id, mod) {
+            const val = parseInt(mod);
+            const state = roundState[id];
+            const idx = state.modifiers.indexOf(val);
+            if (idx >= 0) {
+                state.modifiers.splice(idx, 1);
+            } else {
+                state.modifiers.push(val);
+            }
+            updatePlayerRoundDisplay(id);
+        };
+
+        window._toggleX2 = function(id) {
+            roundState[id].x2 = !roundState[id].x2;
+            updatePlayerRoundDisplay(id);
+        };
+
+        window._toggleFlip7 = function(id) {
+            roundState[id].flip7 = !roundState[id].flip7;
+            updatePlayerRoundDisplay(id);
+        };
+
+        window._toggleBust = function(id) {
+            roundState[id].bust = !roundState[id].bust;
+            updatePlayerRoundDisplay(id);
+        };
+
+        function updatePlayerRoundDisplay(id) {
+            const state = roundState[id];
+            const score = calculateRoundScore(state);
+
+            // Update total display
+            const totalEl = document.getElementById(`total-${id}`);
+            if (totalEl) {
+                totalEl.textContent = state.bust ? 'BUST' : score;
+                totalEl.classList.toggle('bust-text', state.bust);
+            }
+
+            // Update card highlights
+            const card = document.getElementById(`card-${id}`);
+            if (card) {
+                card.classList.toggle('bust', state.bust);
+
+                card.querySelectorAll('.card-btn[data-card]').forEach(btn => {
+                    btn.classList.toggle('selected', state.cards.includes(parseInt(btn.dataset.card)));
+                });
+
+                card.querySelectorAll('.card-btn[data-mod]').forEach(btn => {
+                    btn.classList.toggle('selected', state.modifiers.includes(parseInt(btn.dataset.mod)));
+                });
+
+                const x2Btn = card.querySelector('.card-btn[data-special="x2"]');
+                if (x2Btn) x2Btn.classList.toggle('selected', state.x2);
+            }
+
+            // Update toggle buttons
+            const flip7Btn = document.getElementById(`flip7-${id}`);
+            if (flip7Btn) flip7Btn.classList.toggle('active', state.flip7);
+
+            const bustBtn = document.getElementById(`bust-${id}`);
+            if (bustBtn) bustBtn.classList.toggle('active', state.bust);
+
+            // Score breakdown
+            const breakdownEl = document.getElementById(`breakdown-${id}`);
+            if (breakdownEl && !state.bust) {
+                const parts = [];
+                const numberSum = state.cards.reduce((a, b) => a + b, 0);
+                if (state.cards.length > 0) {
+                    parts.push(`Cards: ${state.cards.sort((a,b) => a-b).join('+')}`);
+                    if (state.x2) parts.push(`= ${numberSum} x2 = ${numberSum * 2}`);
+                }
+                if (state.modifiers.length > 0) {
+                    parts.push(`Mods: +${state.modifiers.reduce((a,b) => a+b, 0)}`);
+                }
+                if (state.flip7) parts.push('Flip 7: +15');
+                breakdownEl.textContent = parts.join(' | ');
+            } else if (breakdownEl) {
+                breakdownEl.textContent = 'Bust — 0 points';
+            }
+        }
+
+        submitRoundBtn.addEventListener('click', () => {
+            const roundResult = {};
+            players.forEach(name => {
+                const id = nameToId(name);
+                const state = roundState[id];
+                const score = calculateRoundScore(state);
+                roundResult[name] = {
+                    cards: [...state.cards],
+                    modifiers: [...state.modifiers],
+                    x2: state.x2,
+                    flip7: state.flip7,
+                    bust: state.bust,
+                    score
+                };
+            });
+
+            rounds.push(roundResult);
+            currentRound++;
+            resetRoundState();
+            renderGame();
+            saveState();
+        });
+
+        undoRoundBtn.addEventListener('click', () => {
+            if (rounds.length === 0) return;
+            rounds.pop();
+            currentRound = rounds.length + 1;
+            gameOver = false;
+            winnerBanner.classList.add('hidden');
+            resetRoundState();
+            renderGame();
+            saveState();
+        });
+
+        function checkWinner() {
+            if (rounds.length === 0) return;
+
+            // Check if any player reached 200+ in the last completed round
+            const lastRound = rounds[rounds.length - 1];
+            let anyReached200 = false;
+
+            for (const name of players) {
+                const total = getPlayerTotal(name);
+                // Player must have reached 200 and not busted in the final round
+                if (total >= 200 && lastRound[name] && !lastRound[name].bust) {
+                    anyReached200 = true;
+                }
+            }
+
+            if (anyReached200) {
+                // Find the winner (highest total)
+                let winner = null;
+                let highScore = -1;
+                for (const name of players) {
+                    const total = getPlayerTotal(name);
+                    if (total > highScore) {
+                        highScore = total;
+                        winner = name;
+                    }
+                }
+
+                gameOver = true;
+                winnerName.textContent = winner;
+                winnerScore.textContent = `${highScore} points`;
+                winnerBanner.classList.remove('hidden');
+                roundSection.classList.add('hidden');
+                saveState();
+            }
+        }
+
+        resetGameBtn.addEventListener('click', () => {
+            if (!confirm('Are you sure you want to reset the game? All scores will be lost.')) return;
+            resetAll();
+        });
+
+        newGameBtn.addEventListener('click', () => {
+            resetAll();
+        });
+
+        function resetAll() {
+            players = [];
+            rounds = [];
+            currentRound = 1;
+            gameStarted = false;
+            gameOver = false;
+            resetRoundState();
+            localStorage.removeItem('flip7-state');
+            setupPhase.classList.remove('hidden');
+            gamePhase.classList.add('hidden');
+            winnerBanner.classList.add('hidden');
+            renderPlayerTags();
+            startGameBtn.disabled = true;
+        }
+
+        // Utilities
+        function nameToId(name) {
+            return name.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
+        }
+
+        function esc(str) {
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
+        // Init: try to restore saved game
+        if (loadState() && gameStarted) {
+            setupPhase.classList.add('hidden');
+            gamePhase.classList.remove('hidden');
+            renderGame();
+        }
+    })();
+    </script>
+</body>
+</html>
