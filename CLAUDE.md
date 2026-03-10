@@ -17,7 +17,8 @@ projects/
 ├── subnet/                    # IPv4 subnet calculator with binary breakdown
 ├── json/                      # JSON formatter, tree viewer, and diff tool
 ├── flip-7/                    # Flip 7 card game scoreboard
-└── uno-no-mercy/              # UNO No Mercy scoreboard
+├── uno-no-mercy/              # UNO No Mercy scoreboard
+└── exploding-kittens/         # Exploding Kittens game assistant
 tofu/                  # OpenTofu infrastructure (Cloudflare Pages + DNS)
 .github/workflows/
 ├── infra.yml          # OpenTofu plan/apply
@@ -37,6 +38,7 @@ tofu/                  # OpenTofu infrastructure (Cloudflare Pages + DNS)
 | json | `projects/json/` | Static HTML/CSS/JS | JSON formatter, tree viewer, and diff tool |
 | flip-7 | `projects/flip-7/` | Static HTML/CSS/JS | Flip 7 card game scoreboard |
 | uno-no-mercy | `projects/uno-no-mercy/` | Static HTML/CSS/JS | UNO No Mercy scoreboard |
+| exploding-kittens | `projects/exploding-kittens/` | Static HTML/CSS/JS | Exploding Kittens game assistant with card reference and probability calculator |
 
 **When adding a new project:**
 1. Create `projects/<project-name>/` with a `README.md`

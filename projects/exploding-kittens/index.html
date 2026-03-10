@@ -1,0 +1,1127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Exploding Kittens Assistant</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --color-bg:#0f0f0c;--color-surface:#1a1a16;--color-surface-alt:#22221c;
+  --color-border:#2e2e26;--color-accent:#c4a24e;--color-accent-dim:#8a7235;
+  --color-text:#e8e4d4;--color-text-muted:#9a9686;
+  --color-error:#d94545;--color-success:#45a85a;--color-warning:#d9a045;
+  --color-explode:#ff4136;--color-defuse:#2ecc40;--color-nope:#ff851b;
+  --color-attack:#e74c3c;--color-skip:#3498db;--color-shuffle:#9b59b6;
+  --color-future:#1abc9c;--color-favor:#f39c12;
+  --color-implode:#c0392b;--color-streak:#e67e22;--color-bark:#8e44ad;
+  --color-zombie:#6ab04c;--color-party:#e056a0;
+  --radius:10px;--radius-sm:6px;
+}
+html{font-size:16px}
+body{font-family:'Inter',sans-serif;background:var(--color-bg);color:var(--color-text);line-height:1.6;min-height:100vh}
+.container{max-width:960px;margin:0 auto;padding:1.5rem 1rem 3rem}
+a{color:var(--color-accent);text-decoration:none}
+a:hover{text-decoration:underline}
+header{text-align:center;padding:2rem 0 1.5rem;border-bottom:1px solid var(--color-border);margin-bottom:2rem}
+header h1{font-size:2rem;font-weight:800;letter-spacing:-0.5px;margin-bottom:.25rem}
+header h1 .bomb{display:inline-block;animation:wobble 2s ease-in-out infinite}
+@keyframes wobble{0%,100%{transform:rotate(0)}25%{transform:rotate(-8deg)}75%{transform:rotate(8deg)}}
+header .subtitle{color:var(--color-text-muted);font-size:.95rem}
+.tabs{display:flex;gap:.5rem;margin-bottom:1.5rem;flex-wrap:wrap}
+.tab{padding:.5rem 1rem;background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-sm);cursor:pointer;font-size:.85rem;font-weight:600;color:var(--color-text-muted);transition:all .15s}
+.tab:hover{color:var(--color-text);border-color:var(--color-accent-dim)}
+.tab.active{background:var(--color-accent);color:#0f0f0c;border-color:var(--color-accent)}
+.tab-content{display:none}
+.tab-content.active{display:block}
+.section{background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius);padding:1.25rem;margin-bottom:1rem}
+.section-title{font-size:1.05rem;font-weight:700;margin-bottom:.75rem;display:flex;align-items:center;gap:.5rem}
+.section-title .icon{font-size:1.2rem}
+.btn{display:inline-flex;align-items:center;gap:.4rem;padding:.5rem 1rem;border:1px solid var(--color-border);border-radius:var(--radius-sm);background:var(--color-surface-alt);color:var(--color-text);font-family:inherit;font-size:.85rem;font-weight:600;cursor:pointer;transition:all .15s;white-space:nowrap}
+.btn:hover{border-color:var(--color-accent-dim);background:var(--color-border)}
+.btn-primary{background:var(--color-accent);color:#0f0f0c;border-color:var(--color-accent)}
+.btn-primary:hover{background:#d4b25e;border-color:#d4b25e}
+.btn-danger{background:var(--color-error);color:#fff;border-color:var(--color-error)}
+.btn-danger:hover{background:#c93030;border-color:#c93030}
+.btn-success{background:var(--color-success);color:#fff;border-color:var(--color-success)}
+.btn-success:hover{background:#38944a}
+.btn-sm{padding:.35rem .7rem;font-size:.8rem}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn-group{display:flex;gap:.5rem;flex-wrap:wrap}
+input[type="text"],input[type="number"],select{padding:.5rem .75rem;background:var(--color-bg);border:1px solid var(--color-border);border-radius:var(--radius-sm);color:var(--color-text);font-family:inherit;font-size:.9rem;width:100%}
+input:focus,select:focus{outline:none;border-color:var(--color-accent)}
+label{font-size:.85rem;font-weight:600;color:var(--color-text-muted);display:block;margin-bottom:.25rem}
+.checkbox-group{display:flex;flex-wrap:wrap;gap:.75rem}
+.checkbox-item{display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.85rem}
+.checkbox-item input{accent-color:var(--color-accent);width:16px;height:16px}
+.player-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:.75rem}
+.player-card{background:var(--color-bg);border:1px solid var(--color-border);border-radius:var(--radius-sm);padding:.75rem;position:relative;transition:all .2s}
+.player-card.current-turn{border-color:var(--color-accent);box-shadow:0 0 12px rgba(196,162,78,.25)}
+.player-card.eliminated{opacity:.45;border-style:dashed}
+.player-card.dead-zombie{opacity:.7;border-color:var(--color-zombie);border-style:dotted}
+.player-card .player-name{font-weight:700;font-size:.95rem;margin-bottom:.25rem}
+.player-card .player-status{font-size:.8rem;font-weight:600;display:inline-block;padding:.1rem .5rem;border-radius:99px}
+.player-card .player-status.alive{background:rgba(69,168,90,.15);color:var(--color-success)}
+.player-card .player-status.eliminated{background:rgba(217,69,69,.15);color:var(--color-error)}
+.player-card .player-status.dead{background:rgba(106,176,76,.15);color:var(--color-zombie)}
+.player-card .player-info{font-size:.8rem;color:var(--color-text-muted);margin-top:.35rem}
+.player-card .player-actions{display:flex;gap:.35rem;margin-top:.5rem;flex-wrap:wrap}
+.player-card .remove-btn{position:absolute;top:.4rem;right:.5rem;background:none;border:none;color:var(--color-text-muted);cursor:pointer;font-size:1rem;line-height:1;padding:2px}
+.player-card .remove-btn:hover{color:var(--color-error)}
+.turn-banner{background:linear-gradient(135deg,var(--color-surface),var(--color-surface-alt));border:2px solid var(--color-accent);border-radius:var(--radius);padding:1.25rem;text-align:center;margin-bottom:1rem}
+.turn-banner .turn-label{font-size:.8rem;text-transform:uppercase;letter-spacing:1px;color:var(--color-accent);font-weight:700}
+.turn-banner .turn-name{font-size:1.5rem;font-weight:800;margin:.25rem 0}
+.turn-banner .turn-extra{font-size:.85rem;color:var(--color-text-muted)}
+.turn-controls{display:flex;gap:.5rem;justify-content:center;margin-top:.75rem;flex-wrap:wrap}
+.prob-bar{background:var(--color-bg);border-radius:99px;height:24px;overflow:hidden;position:relative;margin:.5rem 0}
+.prob-bar .fill{height:100%;border-radius:99px;transition:width .4s ease}
+.prob-bar .fill.safe{background:linear-gradient(90deg,var(--color-success),#2ecc40)}
+.prob-bar .fill.risky{background:linear-gradient(90deg,var(--color-warning),#e6a832)}
+.prob-bar .fill.danger{background:linear-gradient(90deg,var(--color-error),var(--color-explode))}
+.prob-label{font-family:'JetBrains Mono',monospace;font-size:.85rem;font-weight:600}
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:.75rem;margin-top:.75rem}
+.stat-card{background:var(--color-bg);border-radius:var(--radius-sm);padding:.75rem;text-align:center}
+.stat-card .stat-value{font-family:'JetBrains Mono',monospace;font-size:1.4rem;font-weight:700}
+.stat-card .stat-label{font-size:.75rem;color:var(--color-text-muted);margin-top:.15rem}
+.card-filters{display:flex;gap:.5rem;margin-bottom:1rem;flex-wrap:wrap}
+.card-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:.75rem}
+.card-entry{background:var(--color-bg);border:1px solid var(--color-border);border-radius:var(--radius-sm);padding:.75rem;transition:border-color .15s}
+.card-entry:hover{border-color:var(--color-accent-dim)}
+.card-entry .card-header{display:flex;align-items:center;gap:.5rem;margin-bottom:.35rem;flex-wrap:wrap}
+.card-entry .card-icon{font-size:1.3rem;flex-shrink:0}
+.card-entry .card-name{font-weight:700;font-size:.9rem}
+.card-entry .card-set{font-size:.7rem;padding:.1rem .4rem;border-radius:99px;background:var(--color-surface-alt);color:var(--color-text-muted);font-weight:600}
+.card-entry .card-desc{font-size:.8rem;color:var(--color-text-muted);line-height:1.5}
+.card-entry .card-count{font-size:.75rem;color:var(--color-accent);font-family:'JetBrains Mono',monospace;margin-top:.35rem}
+.event-log{max-height:240px;overflow-y:auto;font-size:.8rem;font-family:'JetBrains Mono',monospace;background:var(--color-bg);border-radius:var(--radius-sm);padding:.75rem}
+.event-log::-webkit-scrollbar{width:6px}
+.event-log::-webkit-scrollbar-thumb{background:var(--color-border);border-radius:3px}
+.event-entry{padding:.25rem 0;border-bottom:1px solid var(--color-border);color:var(--color-text-muted)}
+.event-entry:last-child{border:none}
+.event-entry .event-time{color:var(--color-accent-dim)}
+.direction{display:flex;align-items:center;justify-content:center;gap:.5rem;font-size:.85rem;color:var(--color-text-muted);margin-bottom:.5rem}
+.direction .arrow{font-size:1.5rem;color:var(--color-accent);transition:transform .3s}
+.setup-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+.expansion-note{font-size:.75rem;color:var(--color-text-muted);font-style:italic;margin-top:.15rem;font-weight:400}
+@media(max-width:600px){
+  .setup-grid{grid-template-columns:1fr}
+  .player-grid{grid-template-columns:1fr}
+  .stat-grid{grid-template-columns:repeat(2,1fr)}
+  .card-list{grid-template-columns:1fr}
+  .tabs{gap:.35rem}
+  .tab{padding:.4rem .7rem;font-size:.8rem}
+}
+footer{text-align:center;padding:2rem 0 1rem;color:var(--color-text-muted);font-size:.8rem;border-top:1px solid var(--color-border);margin-top:2rem}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.fade-in{animation:fadeIn .3s ease}
+.toast-container{position:fixed;top:1rem;right:1rem;z-index:1000;display:flex;flex-direction:column;gap:.5rem}
+.toast{padding:.6rem 1rem;border-radius:var(--radius-sm);font-size:.85rem;font-weight:600;animation:fadeIn .3s ease;max-width:320px;box-shadow:0 4px 12px rgba(0,0,0,.4)}
+.toast.info{background:var(--color-surface);border:1px solid var(--color-accent);color:var(--color-accent)}
+.toast.danger{background:#2a1010;border:1px solid var(--color-error);color:var(--color-error)}
+.toast.success{background:#102a14;border:1px solid var(--color-success);color:var(--color-success)}
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1><span class="bomb">💣</span> Exploding Kittens Assistant</h1>
+    <p class="subtitle">Game tracker, card reference &amp; probability calculator &mdash; base game + all expansions</p>
+  </header>
+  <div class="tabs" id="mainTabs">
+    <div class="tab active" data-tab="setup">Setup</div>
+    <div class="tab" data-tab="game">Game Tracker</div>
+    <div class="tab" data-tab="cards">Card Reference</div>
+    <div class="tab" data-tab="probabilities">Probabilities</div>
+  </div>
+  <main>
+    <div class="tab-content active" id="tab-setup">
+      <div class="section">
+        <div class="section-title"><span class="icon">🎮</span> Game Setup</div>
+        <div class="setup-grid">
+          <div>
+            <label>Expansions</label>
+            <div class="checkbox-group" style="margin-top:.35rem;flex-direction:column">
+              <label class="checkbox-item"><input type="checkbox" id="exp-base" checked disabled> Base Game</label>
+              <label class="checkbox-item"><input type="checkbox" id="exp-imploding"> Imploding Kittens
+                <span class="expansion-note">&mdash; adds Imploding Kitten, Reverse, Feral Cat</span></label>
+              <label class="checkbox-item"><input type="checkbox" id="exp-streaking"> Streaking Kittens
+                <span class="expansion-note">&mdash; adds Streaking Kitten, Catomic Bomb, Super Skip</span></label>
+              <label class="checkbox-item"><input type="checkbox" id="exp-barking"> Barking Kittens
+                <span class="expansion-note">&mdash; adds Barking Kittens, Personal Attack, Bury</span></label>
+              <label class="checkbox-item"><input type="checkbox" id="exp-zombie"> Zombie Kittens
+                <span class="expansion-note">&mdash; dead players stay in! Adds Zombie Kitten, Clone</span></label>
+              <label class="checkbox-item"><input type="checkbox" id="exp-party"> Party Pack
+                <span class="expansion-note">&mdash; replaces Attack with Double/Triple Slap</span></label>
+            </div>
+          </div>
+          <div>
+            <label for="playerCount">Number of Players</label>
+            <select id="playerCount" style="margin-top:.35rem">
+              <option value="2">2 Players</option>
+              <option value="3">3 Players</option>
+              <option value="4" selected>4 Players</option>
+              <option value="5">5 Players</option>
+              <option value="6">6 Players</option>
+              <option value="7">7 Players</option>
+              <option value="8">8 Players</option>
+              <option value="9">9 Players</option>
+              <option value="10">10 Players</option>
+            </select>
+            <div id="expansionWarnings" style="margin-top:.5rem"></div>
+          </div>
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-title"><span class="icon">👥</span> Players</div>
+        <div style="display:flex;gap:.5rem;margin-bottom:.75rem">
+          <input type="text" id="playerNameInput" placeholder="Enter player name..." style="flex:1" maxlength="20">
+          <button class="btn btn-primary" onclick="addPlayer()">Add</button>
+        </div>
+        <div class="player-grid" id="setupPlayers"></div>
+      </div>
+      <div class="section">
+        <div class="section-title"><span class="icon">📊</span> Deck Composition</div>
+        <p style="font-size:.85rem;color:var(--color-text-muted);margin-bottom:.5rem">Based on your selected expansions and player count:</p>
+        <div class="stat-grid" id="deckStats"></div>
+        <div id="deckBreakdown" style="margin-top:.75rem;font-size:.8rem;color:var(--color-text-muted)"></div>
+      </div>
+      <div style="text-align:center;margin-top:1rem">
+        <button class="btn btn-primary" style="padding:.75rem 2rem;font-size:1rem" onclick="startGame()">💣 Start Game</button>
+      </div>
+    </div>
+    <div class="tab-content" id="tab-game">
+      <div id="gameNotStarted" style="text-align:center;padding:3rem 1rem;color:var(--color-text-muted)">
+        <p style="font-size:1.2rem;margin-bottom:.5rem">No game in progress</p>
+        <p style="font-size:.85rem">Head to the Setup tab to configure and start a game.</p>
+      </div>
+      <div id="gameActive" style="display:none">
+        <div class="direction" id="playDirection">
+          <span>Play Direction:</span>
+          <span class="arrow" id="directionArrow">➡️</span>
+          <span id="directionLabel">Clockwise</span>
+        </div>
+        <div class="turn-banner" id="turnBanner">
+          <div class="turn-label">Current Turn</div>
+          <div class="turn-name" id="currentPlayerName">&mdash;</div>
+          <div class="turn-extra" id="turnExtra"></div>
+          <div class="turn-controls">
+            <button class="btn btn-success btn-sm" onclick="endTurn()">✓ Safe Draw</button>
+            <button class="btn btn-danger btn-sm" onclick="drewExploding()">💣 Exploding Kitten</button>
+            <button class="btn btn-sm" onclick="drewImploding()" id="btnImploding" style="display:none">💥 Imploding Kitten</button>
+          </div>
+        </div>
+        <div class="section">
+          <div class="section-title"><span class="icon">⚡</span> Quick Actions</div>
+          <div class="btn-group" id="actionButtons"></div>
+        </div>
+        <div class="section">
+          <div class="section-title"><span class="icon">👥</span> Players</div>
+          <div class="player-grid" id="gamePlayers"></div>
+        </div>
+        <div class="section">
+          <div class="section-title"><span class="icon">📜</span> Event Log</div>
+          <button class="btn btn-sm" onclick="resetGame()" style="float:right;margin-top:-2rem">🔄 Reset Game</button>
+          <div class="event-log" id="eventLog">
+            <div class="event-entry" style="text-align:center;padding:1rem">Game events will appear here...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="tab-content" id="tab-cards">
+      <div class="section">
+        <div class="section-title"><span class="icon">📖</span> Card Reference</div>
+        <div class="card-filters" id="cardFilters">
+          <button class="btn btn-sm active" data-filter="all" onclick="filterCards('all',this)">All</button>
+          <button class="btn btn-sm" data-filter="base" onclick="filterCards('base',this)">Base</button>
+          <button class="btn btn-sm" data-filter="imploding" onclick="filterCards('imploding',this)">Imploding</button>
+          <button class="btn btn-sm" data-filter="streaking" onclick="filterCards('streaking',this)">Streaking</button>
+          <button class="btn btn-sm" data-filter="barking" onclick="filterCards('barking',this)">Barking</button>
+          <button class="btn btn-sm" data-filter="zombie" onclick="filterCards('zombie',this)">Zombie</button>
+          <button class="btn btn-sm" data-filter="party" onclick="filterCards('party',this)">Party Pack</button>
+        </div>
+        <input type="text" id="cardSearch" placeholder="Search cards..." style="margin-bottom:1rem" oninput="renderCardReference()">
+        <div class="card-list" id="cardList"></div>
+      </div>
+    </div>
+    <div class="tab-content" id="tab-probabilities">
+      <div id="probNotStarted" style="text-align:center;padding:3rem 1rem;color:var(--color-text-muted)">
+        <p style="font-size:1.2rem;margin-bottom:.5rem">Start a game to see probabilities</p>
+        <p style="font-size:.85rem">Probabilities are calculated in real-time based on known card information.</p>
+      </div>
+      <div id="probActive" style="display:none">
+        <div class="section">
+          <div class="section-title"><span class="icon">💣</span> Exploding Kitten Draw Probability</div>
+          <div id="explodeProb"></div>
+        </div>
+        <div class="section" id="implodeProbSection" style="display:none">
+          <div class="section-title"><span class="icon">💥</span> Imploding Kitten Draw Probability</div>
+          <div id="implodeProb"></div>
+        </div>
+        <div class="section">
+          <div class="section-title"><span class="icon">📊</span> Deck Statistics</div>
+          <div class="stat-grid" id="probStats"></div>
+        </div>
+        <div class="section">
+          <div class="section-title"><span class="icon">🎲</span> Survival Odds</div>
+          <p style="font-size:.85rem;color:var(--color-text-muted);margin-bottom:.75rem">Probability of drawing safely for N consecutive draws:</p>
+          <div id="survivalOdds"></div>
+        </div>
+      </div>
+    </div>
+  </main>
+  <footer>
+    <a href="https://slop.zackpollard.pro">&larr; Back to slop.zackpollard.pro</a>
+  </footer>
+</div>
+<div class="toast-container" id="toastContainer"></div>
+
+<script>
+(function() {
+'use strict';
+
+var CARDS = [
+  // ── Base Game ──
+  {name:'Exploding Kitten',icon:'💣',set:'base',type:'exploding',desc:'You must play a Defuse card or you are eliminated! If defused, secretly insert it back into the draw pile anywhere you choose.',count:function(p){return Math.max(1,p-1)}},
+  {name:'Defuse',icon:'🛡️',set:'base',type:'defuse',desc:'Play this when you draw an Exploding Kitten to stay alive. Place the Exploding Kitten back in the draw pile anywhere you want.',count:function(p){return p<=3?2:6}},
+  {name:'Attack',icon:'🗡️',set:'base',type:'action',desc:'End your turn without drawing. The next player must take 2 turns. Attacks stack: if attacked, play Attack to pass remaining turns +2 to the next player.',count:function(){return 4}},
+  {name:'Skip',icon:'🚫',set:'base',type:'action',desc:'End your turn without drawing a card. If you were attacked, this only ends one of your turns.',count:function(){return 4}},
+  {name:'Favor',icon:'🤲',set:'base',type:'action',desc:'Force another player to give you a card of their choice from their hand.',count:function(){return 4}},
+  {name:'Shuffle',icon:'🔀',set:'base',type:'action',desc:'Shuffle the draw pile. Useful after See the Future or placing an Exploding Kitten.',count:function(){return 4}},
+  {name:'See the Future',icon:'🔮',set:'base',type:'action',desc:'Privately view the top 3 cards of the draw pile without rearranging them.',count:function(){return 5}},
+  {name:'Nope',icon:'✋',set:'base',type:'action',desc:'Stop any action card except Exploding Kitten and Defuse. Can be played at any time, even on other players\' turns. A Nope on a Nope cancels it out.',count:function(){return 5}},
+  {name:'Taco Cat',icon:'🌮',set:'base',type:'cat',desc:'Cat card \u2014 collect pairs (2), triples (3), or five different cats to steal cards from other players.',count:function(){return 4}},
+  {name:'Hairy Potato Cat',icon:'🥔',set:'base',type:'cat',desc:'Cat card \u2014 collect pairs, triples, or five different cats to steal cards.',count:function(){return 4}},
+  {name:'Cattermelon',icon:'🍉',set:'base',type:'cat',desc:'Cat card \u2014 collect pairs, triples, or five different cats to steal cards.',count:function(){return 4}},
+  {name:'Rainbow Ralphing Cat',icon:'🌈',set:'base',type:'cat',desc:'Cat card \u2014 collect pairs, triples, or five different cats to steal cards.',count:function(){return 4}},
+  {name:'Beard Cat',icon:'🧔',set:'base',type:'cat',desc:'Cat card \u2014 collect pairs, triples, or five different cats to steal cards.',count:function(){return 4}},
+
+  // ── Imploding Kittens ──
+  {name:'Imploding Kitten',icon:'💥',set:'imploding',type:'imploding',desc:'When drawn face-down, place it face-up on top of the draw pile (you survive). When drawn face-up, you are eliminated \u2014 it CANNOT be defused or Noped!',count:function(){return 1}},
+  {name:'Reverse',icon:'🔄',set:'imploding',type:'action',desc:'Reverses the direction of play AND ends your turn without drawing. Like a Skip that also changes direction.',count:function(){return 4}},
+  {name:'Draw from Bottom',icon:'⬇️',set:'imploding',type:'action',desc:'End your turn by drawing from the bottom of the draw pile instead of the top.',count:function(){return 4}},
+  {name:'Feral Cat',icon:'🐱',set:'imploding',type:'cat',desc:'A wild cat card! Use as any cat card when making pairs, triples, or five-different combos. Cannot be played alone.',count:function(){return 4}},
+  {name:'Alter the Future',icon:'🔮',set:'imploding',type:'action',desc:'View the top 3 cards of the draw pile and rearrange them in any order you choose.',count:function(){return 4}},
+
+  // ── Streaking Kittens ──
+  {name:'Streaking Kitten',icon:'🏃',set:'streaking',type:'special',desc:'Hold in your hand to secretly keep an Exploding Kitten without it eliminating you. If you lose this card while holding an Exploding Kitten, you explode!',count:function(){return 1}},
+  {name:'Super Skip',icon:'⏭️',set:'streaking',type:'action',desc:'End your turn without drawing, even if you have multiple turns remaining (e.g. from an Attack). Skips ALL remaining turns at once.',count:function(){return 3}},
+  {name:'See the Future x5',icon:'🔮',set:'streaking',type:'action',desc:'Privately view the top 5 cards of the draw pile instead of just 3.',count:function(){return 3}},
+  {name:'Swap Top and Bottom',icon:'↕️',set:'streaking',type:'action',desc:'Swap the top card of the draw pile with the bottom card.',count:function(){return 3}},
+  {name:'Garbage Collection',icon:'🗑️',set:'streaking',type:'action',desc:'Every player must choose one card from their hand and insert it randomly into the draw pile. Then shuffle.',count:function(){return 3}},
+  {name:'Catomic Bomb',icon:'☢️',set:'streaking',type:'action',desc:'Remove ALL Exploding Kittens from the draw pile, shuffle, then place them on top. End your turn without drawing.',count:function(){return 1}},
+  {name:'Mark',icon:'👁️',set:'streaking',type:'action',desc:'Pick a player, secretly look at their hand, choose one card. That card is placed face-up in front of them.',count:function(){return 3}},
+
+  // ── Barking Kittens ──
+  {name:'Barking Kitten',icon:'🐕',set:'barking',type:'special',desc:'Play it face-up. If another player has the other Barking Kitten, they must reveal it. The player who played theirs first takes a random card from the other.',count:function(){return 2}},
+  {name:'Alter the Future x5',icon:'🔮',set:'barking',type:'action',desc:'View the top 5 cards AND rearrange them in any order. The most powerful future-seeing card!',count:function(){return 3}},
+  {name:'Bury',icon:'⬇️',set:'barking',type:'action',desc:'End your turn by drawing a card, then immediately insert it back anywhere in the draw pile without looking. You still "draw" but can bury it.',count:function(){return 3}},
+  {name:'Personal Attack',icon:'🎯',set:'barking',type:'action',desc:'Pick any player \u2014 they must take 3 turns in a row. Your turn ends without drawing.',count:function(){return 3}},
+  {name:'Super Skip (Barking)',icon:'⏭️',set:'barking',type:'action',desc:'End your turn without drawing, skipping ALL remaining turns. Same as Streaking Kittens version.',count:function(){return 2}},
+  {name:"I'll Take That",icon:'🤏',set:'barking',type:'action',desc:'Instead of drawing from the draw pile, steal the top card of the discard pile to end your turn.',count:function(){return 4}},
+  {name:'Share the Future',icon:'👀',set:'barking',type:'action',desc:'View the top 3 cards, rearrange them, then show them to the next player (they see but cannot rearrange).',count:function(){return 3}},
+
+  // ── Zombie Kittens ──
+  {name:'Zombie Kitten',icon:'🧟',set:'zombie',type:'special',desc:'Play instead of being eliminated when you draw an Exploding Kitten. Choose a Dead player to resurrect. Reinsert the Exploding Kitten secretly. Cannot be Noped.',count:function(){return 5}},
+  {name:'Clone',icon:'🧬',set:'zombie',type:'action',desc:'Becomes a copy of whatever card is on top of the discard pile and adopts that card\'s rules. Cannot be played on top of another Clone.',count:function(){return 3}},
+  {name:'Feed the Dead',icon:'🍖',set:'zombie',type:'action',desc:'Pick a Dead player. All other Living players must give that Dead player one card of their choice.',count:function(){return 2}},
+  {name:'Grave Robber',icon:'⚰️',set:'zombie',type:'action',desc:'All Dead players with cards must choose one card from their hand to shuffle into the draw pile.',count:function(){return 1}},
+  {name:'Shuffle NOW',icon:'🔀',set:'zombie',type:'action',desc:'Shuffle the draw pile at any time, even on another player\'s turn. Cannot be Noped.',count:function(){return 2}},
+  {name:'Dig Deeper',icon:'⛏️',set:'zombie',type:'action',desc:'Instead of drawing from the top, draw from deeper in the deck (choose a position).',count:function(){return 4}},
+
+  // ── Party Pack ──
+  {name:'Double Slap',icon:'👋',set:'party',type:'action',desc:'End your turn without drawing. Choose ANY player to take 2 turns. If they Slap back, the new target takes all accumulated turns + their Slap value.',count:function(){return 4}},
+  {name:'Triple Slap',icon:'🫱',set:'party',type:'action',desc:'End your turn without drawing. Choose ANY player to take 3 turns. Slaps stack just like Double Slap.',count:function(){return 3}},
+];
+
+var COMBOS = [
+  {name:'Two of a Kind (Pair)',desc:'Play 2 matching cat cards to steal a random card from any player\'s hand.'},
+  {name:'Three of a Kind',desc:'Play 3 matching cat cards to name a specific card and steal it from any player. If they don\'t have it, you get nothing.'},
+  {name:'Five Different Cards',desc:'Play 5 different cat cards to take any single card from the discard pile.'},
+];
+
+var SET_LABELS = {base:'Base',imploding:'Imploding',streaking:'Streaking',barking:'Barking',zombie:'Zombie',party:'Party'};
+
+// ── State ──
+var state = loadState() || defaultState();
+
+function defaultState(){
+  return {
+    phase:'setup',
+    expansions:{imploding:false,streaking:false,barking:false,zombie:false,party:false},
+    players:[],
+    currentPlayerIndex:0,
+    direction:1,
+    turnsRemaining:1,
+    cardsInDeck:0,
+    explodingInDeck:0,
+    implodingInDeck:0,
+    implodingFaceUp:false,
+    events:[],
+    history:[],
+    zombieMode:false
+  };
+}
+
+function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML}
+function saveState(){try{localStorage.setItem('ek-assistant',JSON.stringify(state))}catch(e){}}
+function loadState(){try{var s=localStorage.getItem('ek-assistant');return s?JSON.parse(s):null}catch(e){return null}}
+function timestamp(){return new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'})}
+function toast(msg,type){
+  type=type||'info';
+  var c=document.getElementById('toastContainer');
+  var t=document.createElement('div');t.className='toast '+type;t.textContent=msg;
+  c.appendChild(t);setTimeout(function(){t.remove()},3000);
+}
+function addEvent(msg){
+  state.events.unshift({time:timestamp(),msg:msg});
+  if(state.events.length>200)state.events.length=200;
+  saveState();renderEventLog();
+}
+function alivePlayers(){return state.players.filter(function(p){return !p.eliminated})}
+function activePlayers(){return state.players.filter(function(p){return !p.eliminated||p.dead})}
+function currentPlayer(){return state.players[state.currentPlayerIndex]}
+
+// ── Tabs ──
+document.querySelectorAll('.tab').forEach(function(tab){
+  tab.addEventListener('click',function(){
+    document.querySelectorAll('.tab').forEach(function(t){t.classList.remove('active')});
+    document.querySelectorAll('.tab-content').forEach(function(tc){tc.classList.remove('active')});
+    this.classList.add('active');
+    document.getElementById('tab-'+this.dataset.tab).classList.add('active');
+  });
+});
+
+// ── Setup Events ──
+document.getElementById('playerNameInput').addEventListener('keydown',function(e){
+  if(e.key==='Enter')addPlayer();
+});
+
+['imploding','streaking','barking','zombie','party'].forEach(function(id){
+  document.getElementById('exp-'+id).addEventListener('change',function(){
+    state.expansions[id]=this.checked;
+    // Party pack conflicts: warn about Attack replacement
+    saveState();renderDeckStats();renderExpansionWarnings();
+  });
+});
+
+document.getElementById('playerCount').addEventListener('change',function(){saveState();renderDeckStats()});
+
+function renderExpansionWarnings(){
+  var el=document.getElementById('expansionWarnings');
+  var warns=[];
+  if(state.expansions.party&&!state.expansions.imploding){
+    warns.push('Party Pack includes Imploding Kittens mechanics (Reverse, etc.).');
+  }
+  if(state.expansions.party){
+    warns.push('Party Pack replaces Attack cards with Slap cards.');
+  }
+  if(state.expansions.zombie){
+    warns.push('Zombie mode: eliminated players become "Dead" and can be resurrected!');
+  }
+  el.innerHTML=warns.map(function(w){return '<p style="font-size:.8rem;color:var(--color-warning);margin-top:.35rem">⚠️ '+w+'</p>'}).join('');
+}
+
+window.addPlayer = function(){
+  var input=document.getElementById('playerNameInput');
+  var name=input.value.trim();
+  if(!name){toast('Enter a name!','danger');return}
+  var max=parseInt(document.getElementById('playerCount').value);
+  if(state.players.length>=max){toast('Max players reached!','danger');return}
+  if(state.players.some(function(p){return p.name.toLowerCase()===name.toLowerCase()})){toast('Name already used!','danger');return}
+  state.players.push({name:name,eliminated:false,dead:false,cardsInHand:0});
+  input.value='';input.focus();
+  saveState();renderSetupPlayers();renderDeckStats();
+};
+
+window.removePlayer = function(i){
+  state.players.splice(i,1);saveState();renderSetupPlayers();renderDeckStats();
+};
+
+function renderSetupPlayers(){
+  var el=document.getElementById('setupPlayers');
+  if(!state.players.length){el.innerHTML='<p style="color:var(--color-text-muted);font-size:.85rem;grid-column:1/-1">No players added yet.</p>';return}
+  el.innerHTML=state.players.map(function(p,i){
+    return '<div class="player-card fade-in"><button class="remove-btn" onclick="removePlayer('+i+')" title="Remove">&times;</button><div class="player-name">'+esc(p.name)+'</div><div class="player-info">Player '+(i+1)+'</div></div>';
+  }).join('');
+}
+
+function getActiveCards(){
+  var exp=state.expansions;
+  return CARDS.filter(function(c){
+    if(c.set==='base'){
+      // Party pack replaces Attack with Slap cards
+      if(exp.party&&c.name==='Attack')return false;
+      return true;
+    }
+    return exp[c.set]||false;
+  });
+}
+
+function renderDeckStats(){
+  var numPlayers=parseInt(document.getElementById('playerCount').value);
+  var activeCards=getActiveCards();
+  var totalCards=0;var breakdown=[];
+  activeCards.forEach(function(c){
+    var n=typeof c.count==='function'?c.count(numPlayers):c.count;
+    totalCards+=n;
+    breakdown.push({name:c.name,count:n,icon:c.icon});
+  });
+  var exploding=Math.max(1,numPlayers-1);
+  var defuse=numPlayers<=3?2:6;
+  var handSize=numPlayers*5;
+  var deckAfterDeal=totalCards-handSize;
+  var exp=state.expansions;
+
+  var el=document.getElementById('deckStats');
+  var html='<div class="stat-card"><div class="stat-value">'+totalCards+'</div><div class="stat-label">Total Cards</div></div>';
+  html+='<div class="stat-card"><div class="stat-value">'+deckAfterDeal+'</div><div class="stat-label">Draw Pile</div></div>';
+  html+='<div class="stat-card"><div class="stat-value" style="color:var(--color-explode)">'+exploding+'</div><div class="stat-label">Exploding Kittens</div></div>';
+  html+='<div class="stat-card"><div class="stat-value" style="color:var(--color-defuse)">'+defuse+'</div><div class="stat-label">Defuse Cards</div></div>';
+  if(exp.imploding)html+='<div class="stat-card"><div class="stat-value" style="color:var(--color-implode)">1</div><div class="stat-label">Imploding Kitten</div></div>';
+  if(exp.streaking)html+='<div class="stat-card"><div class="stat-value" style="color:var(--color-streak)">1</div><div class="stat-label">Streaking Kitten</div></div>';
+  if(exp.barking)html+='<div class="stat-card"><div class="stat-value" style="color:var(--color-bark)">2</div><div class="stat-label">Barking Kittens</div></div>';
+  if(exp.zombie)html+='<div class="stat-card"><div class="stat-value" style="color:var(--color-zombie)">5</div><div class="stat-label">Zombie Kittens</div></div>';
+  el.innerHTML=html;
+
+  var bd=document.getElementById('deckBreakdown');
+  bd.innerHTML='<details><summary style="cursor:pointer;color:var(--color-accent);font-weight:600">Full deck breakdown</summary><div style="margin-top:.5rem;columns:2;column-gap:1.5rem">'+
+    breakdown.map(function(b){return '<div style="break-inside:avoid;padding:.15rem 0">'+b.icon+' '+esc(b.name)+': <span style="color:var(--color-accent);font-family:JetBrains Mono,monospace">'+b.count+'</span></div>'}).join('')+
+    '</div></details>';
+}
+
+// ── Start Game ──
+window.startGame = function(){
+  var numPlayers=parseInt(document.getElementById('playerCount').value);
+  if(state.players.length<2){toast('Add at least 2 players!','danger');return}
+  if(state.players.length!==numPlayers){toast('Player count mismatch! Add or remove players.','danger');return}
+
+  var activeCards=getActiveCards();
+  var totalCards=0;
+  activeCards.forEach(function(c){totalCards+=typeof c.count==='function'?c.count(numPlayers):c.count});
+  var handSize=numPlayers*5;
+  var exp=state.expansions;
+
+  state.phase='playing';
+  state.currentPlayerIndex=0;
+  state.direction=1;
+  state.turnsRemaining=1;
+  state.cardsInDeck=totalCards-handSize;
+  state.explodingInDeck=Math.max(1,numPlayers-1);
+  state.implodingInDeck=exp.imploding?1:0;
+  state.implodingFaceUp=false;
+  state.zombieMode=exp.zombie;
+  state.events=[];
+  state.history=[];
+  state.players.forEach(function(p){p.eliminated=false;p.dead=false;p.cardsInHand=5});
+
+  saveState();
+  var expList=[];
+  if(exp.imploding)expList.push('Imploding');
+  if(exp.streaking)expList.push('Streaking');
+  if(exp.barking)expList.push('Barking');
+  if(exp.zombie)expList.push('Zombie');
+  if(exp.party)expList.push('Party Pack');
+  addEvent('🎮 Game started with '+numPlayers+' players'+(expList.length?' + '+expList.join(', '):''));
+
+  document.querySelectorAll('.tab').forEach(function(t){t.classList.remove('active')});
+  document.querySelectorAll('.tab-content').forEach(function(tc){tc.classList.remove('active')});
+  document.querySelector('[data-tab="game"]').classList.add('active');
+  document.getElementById('tab-game').classList.add('active');
+
+  renderGame();
+  toast('Game started! Good luck... 💣','success');
+};
+
+// ── Game Rendering ──
+function renderGame(){
+  var playing=state.phase==='playing';
+  document.getElementById('gameNotStarted').style.display=playing?'none':'block';
+  document.getElementById('gameActive').style.display=playing?'block':'none';
+  document.getElementById('probNotStarted').style.display=playing?'none':'block';
+  document.getElementById('probActive').style.display=playing?'block':'none';
+  if(!playing)return;
+
+  var exp=state.expansions;
+  document.getElementById('btnImploding').style.display=exp.imploding?'inline-flex':'none';
+
+  // Direction
+  document.getElementById('directionArrow').textContent=state.direction===1?'➡️':'⬅️';
+  document.getElementById('directionLabel').textContent=state.direction===1?'Clockwise':'Counter-clockwise';
+
+  // Turn banner
+  var cp=currentPlayer();
+  document.getElementById('currentPlayerName').textContent=cp?cp.name:'\u2014';
+  var parts=[];
+  if(state.turnsRemaining>1)parts.push('\u26A1 '+state.turnsRemaining+' turns remaining');
+  parts.push('\uD83D\uDCE6 '+state.cardsInDeck+' cards in draw pile');
+  document.getElementById('turnExtra').textContent=parts.join('  \u2022  ');
+
+  renderActionButtons();
+  renderGamePlayers();
+  renderProbabilities();
+  renderEventLog();
+}
+
+function renderActionButtons(){
+  var exp=state.expansions;
+  var btns=[];
+
+  // Attack or Slap
+  if(exp.party){
+    btns.push('<button class="btn btn-sm" onclick="playDoubleSlap()">👋 Double Slap</button>');
+    btns.push('<button class="btn btn-sm" onclick="playTripleSlap()">🫱 Triple Slap</button>');
+  } else {
+    btns.push('<button class="btn btn-sm" onclick="playAttack()">🗡️ Attack</button>');
+  }
+
+  btns.push('<button class="btn btn-sm" onclick="playSkip()">🚫 Skip</button>');
+
+  if(exp.imploding||exp.party){
+    btns.push('<button class="btn btn-sm" onclick="playReverse()">🔄 Reverse</button>');
+  }
+  if(exp.barking){
+    btns.push('<button class="btn btn-sm" onclick="playTargetedAttack()">🎯 Personal Attack</button>');
+  }
+  if(exp.streaking||exp.barking){
+    btns.push('<button class="btn btn-sm" onclick="playSuperSkip()">⏭️ Super Skip</button>');
+  }
+
+  btns.push('<button class="btn btn-sm" onclick="playShuffle()">🔀 Shuffle</button>');
+  btns.push('<button class="btn btn-sm" onclick="playSeeTheFuture()">🔮 See the Future</button>');
+
+  if(exp.streaking){
+    btns.push('<button class="btn btn-sm" onclick="playSwapTopBottom()">↕️ Swap Top/Bottom</button>');
+    btns.push('<button class="btn btn-sm" onclick="playCatomicBomb()">☢️ Catomic Bomb</button>');
+  }
+  if(exp.imploding){
+    btns.push('<button class="btn btn-sm" onclick="playDrawFromBottom()">⬇️ Draw from Bottom</button>');
+  }
+  if(exp.barking){
+    btns.push('<button class="btn btn-sm" onclick="playBury()">⬇️ Bury</button>');
+  }
+  if(exp.zombie){
+    btns.push('<button class="btn btn-sm" onclick="playZombieKitten()">🧟 Zombie Kitten</button>');
+    btns.push('<button class="btn btn-sm" onclick="playClone()">🧬 Clone</button>');
+  }
+
+  btns.push('<button class="btn btn-sm" onclick="playNope()">✋ Nope</button>');
+  btns.push('<button class="btn btn-sm" onclick="undoAction()">↩️ Undo</button>');
+
+  document.getElementById('actionButtons').innerHTML=btns.join('');
+}
+
+function renderGamePlayers(){
+  var el=document.getElementById('gamePlayers');
+  el.innerHTML=state.players.map(function(p,i){
+    var isCurrent=i===state.currentPlayerIndex&&!p.eliminated;
+    var statusClass=p.eliminated?(p.dead?'dead':'eliminated'):'alive';
+    var statusText=p.eliminated?(p.dead?'🧟 Dead':'💀 Eliminated'):'❤️ Alive';
+    var cardClass=p.eliminated?(p.dead?'dead-zombie':'eliminated'):'';
+    if(isCurrent)cardClass='current-turn';
+    return '<div class="player-card '+cardClass+' fade-in">'+
+      '<div class="player-name">'+esc(p.name)+(isCurrent?' 👈':'')+'</div>'+
+      '<span class="player-status '+statusClass+'">'+statusText+'</span>'+
+      '<div class="player-info">🃏 '+p.cardsInHand+' cards in hand</div>'+
+      (!p.eliminated||p.dead?
+        '<div class="player-actions">'+
+        '<button class="btn btn-sm" onclick="adjustCards('+i+',1)" title="Add card">🃏+</button>'+
+        '<button class="btn btn-sm" onclick="adjustCards('+i+',-1)" title="Remove card">🃏-</button>'+
+        (p.dead&&state.zombieMode?'<button class="btn btn-sm btn-success" onclick="resurrectPlayer('+i+')" title="Resurrect">🧟 Resurrect</button>':'')+
+        '</div>':'')+
+      '</div>';
+  }).join('');
+}
+
+function renderEventLog(){
+  var el=document.getElementById('eventLog');
+  if(!state.events.length){el.innerHTML='<div class="event-entry" style="text-align:center;padding:1rem;color:var(--color-text-muted)">Game events will appear here...</div>';return}
+  el.innerHTML=state.events.slice(0,100).map(function(e){
+    return '<div class="event-entry"><span class="event-time">['+e.time+']</span> '+e.msg+'</div>';
+  }).join('');
+}
+
+// ── Game Actions ──
+function pushHistory(){
+  state.history.push(JSON.stringify({
+    currentPlayerIndex:state.currentPlayerIndex,
+    direction:state.direction,
+    turnsRemaining:state.turnsRemaining,
+    cardsInDeck:state.cardsInDeck,
+    explodingInDeck:state.explodingInDeck,
+    implodingInDeck:state.implodingInDeck,
+    implodingFaceUp:state.implodingFaceUp,
+    players:state.players.map(function(p){return {name:p.name,eliminated:p.eliminated,dead:p.dead,cardsInHand:p.cardsInHand}})
+  }));
+  if(state.history.length>50)state.history.shift();
+}
+
+function nextAliveIndex(fromIndex,dir){
+  dir=dir||state.direction;
+  var idx=fromIndex;
+  var n=state.players.length;
+  for(var tries=0;tries<n;tries++){
+    idx=(idx+dir+n)%n;
+    if(!state.players[idx].eliminated)return idx;
+  }
+  return fromIndex;
+}
+
+function advanceTurn(){
+  if(state.turnsRemaining>1){
+    state.turnsRemaining--;
+  } else {
+    state.turnsRemaining=1;
+    state.currentPlayerIndex=nextAliveIndex(state.currentPlayerIndex);
+  }
+  saveState();renderGame();
+}
+
+function checkWin(){
+  var alive=alivePlayers();
+  if(alive.length===1){
+    state.phase='finished';
+    addEvent('🏆 '+esc(alive[0].name)+' WINS THE GAME!');
+    toast(alive[0].name+' wins! 🏆','success');
+    saveState();renderGame();
+    return true;
+  }
+  return false;
+}
+
+function eliminatePlayer(p){
+  if(state.zombieMode){
+    p.eliminated=true;
+    p.dead=true;
+    addEvent('🧟 '+esc(p.name)+' is now DEAD (zombie mode \u2014 can still be resurrected)');
+    toast(p.name+' is dead! Can be resurrected...','danger');
+  } else {
+    p.eliminated=true;
+    p.dead=false;
+    addEvent('💀 '+esc(p.name)+' has been ELIMINATED!');
+    toast(p.name+' exploded! 💥','danger');
+  }
+}
+
+window.endTurn = function(){
+  pushHistory();
+  var cp=currentPlayer();
+  state.cardsInDeck=Math.max(0,state.cardsInDeck-1);
+  cp.cardsInHand++;
+  addEvent('✓ '+esc(cp.name)+' drew a card safely ('+state.cardsInDeck+' left)');
+  advanceTurn();
+  toast(cp.name+' drew safely','success');
+};
+
+window.drewExploding = function(){
+  pushHistory();
+  var cp=currentPlayer();
+  addEvent('💣 '+esc(cp.name)+' drew an EXPLODING KITTEN!');
+  state.cardsInDeck=Math.max(0,state.cardsInDeck-1);
+
+  if(confirm(cp.name+' drew an Exploding Kitten!\n\nDo they have a Defuse card?\n\nOK = Yes (defuse)\nCancel = No (eliminated)')){
+    addEvent('🛡️ '+esc(cp.name)+' played Defuse! Exploding Kitten placed back in the deck.');
+    cp.cardsInHand=Math.max(0,cp.cardsInHand-1);
+    toast(cp.name+' defused the bomb!','success');
+    advanceTurn();
+  } else if(state.zombieMode&&confirm('Play a Zombie Kitten card to survive?\n\nOK = Yes (use Zombie Kitten)\nCancel = No (become Dead)')){
+    cp.cardsInHand=Math.max(0,cp.cardsInHand-1);
+    addEvent('🧟 '+esc(cp.name)+' played Zombie Kitten! Choose a Dead player to resurrect.');
+    toast(cp.name+' used Zombie Kitten!','success');
+    advanceTurn();
+  } else {
+    eliminatePlayer(cp);
+    state.explodingInDeck=Math.max(0,state.explodingInDeck-1);
+    if(checkWin())return;
+    state.turnsRemaining=1;
+    state.currentPlayerIndex=nextAliveIndex(state.currentPlayerIndex);
+    saveState();renderGame();
+  }
+};
+
+window.drewImploding = function(){
+  pushHistory();
+  var cp=currentPlayer();
+  state.cardsInDeck=Math.max(0,state.cardsInDeck-1);
+  if(!state.implodingFaceUp){
+    state.implodingFaceUp=true;
+    addEvent('💥 '+esc(cp.name)+' drew the Imploding Kitten face-down \u2014 placed face-up on top!');
+    toast('Imploding Kitten is now face-up on top!','info');
+    advanceTurn();
+  } else {
+    eliminatePlayer(cp);
+    state.implodingInDeck=0;
+    addEvent('💥 '+esc(cp.name)+' drew the Imploding Kitten FACE-UP \u2014 cannot be defused!');
+    if(checkWin())return;
+    state.turnsRemaining=1;
+    state.currentPlayerIndex=nextAliveIndex(state.currentPlayerIndex);
+    saveState();renderGame();
+  }
+};
+
+window.playAttack = function(){
+  pushHistory();
+  var cp=currentPlayer();
+  var nextIdx=nextAliveIndex(state.currentPlayerIndex);
+  var target=state.players[nextIdx];
+  var newTurns=state.turnsRemaining+1;
+  addEvent('🗡️ '+esc(cp.name)+' played Attack! '+esc(target.name)+' must take '+newTurns+' turns.');
+  cp.cardsInHand=Math.max(0,cp.cardsInHand-1);
+  state.turnsRemaining=newTurns;
+  state.currentPlayerIndex=nextIdx;
+  saveState();renderGame();
+  toast(target.name+' is under attack!','danger');
+};
+
+function promptAliveTarget(msg){
+  var cp=currentPlayer();
+  var alive=alivePlayers().filter(function(p){return p.name!==cp.name});
+  if(!alive.length)return null;
+  var targetName=prompt(msg+'\n\n'+alive.map(function(p){return p.name}).join(', '));
+  if(!targetName)return null;
+  var idx=state.players.findIndex(function(p){return p.name.toLowerCase()===targetName.toLowerCase()&&!p.eliminated});
+  if(idx===-1){toast('Player not found!','danger');return null}
+  return idx;
+}
+
+window.playDoubleSlap = function(){
+  var targetIdx=promptAliveTarget('Double Slap! Choose ANY player to take 2 turns:');
+  if(targetIdx===null)return;
+  pushHistory();
+  var cp=currentPlayer();
+  var target=state.players[targetIdx];
+  var newTurns=state.turnsRemaining+1;
+  addEvent('👋 '+esc(cp.name)+' Double Slapped '+esc(target.name)+'! '+newTurns+' turns.');
+  cp.cardsInHand=Math.max(0,cp.cardsInHand-1);
+  state.turnsRemaining=newTurns;
+  state.currentPlayerIndex=targetIdx;
+  saveState();renderGame();
+  toast(target.name+' got slapped!','danger');
+};
+
+window.playTripleSlap = function(){
+  var targetIdx=promptAliveTarget('Triple Slap! Choose ANY player to take 3 turns:');
+  if(targetIdx===null)return;
+  pushHistory();
+  var cp=currentPlayer();
+  var target=state.players[targetIdx];
+  var newTurns=state.turnsRemaining+2;
+  addEvent('🫱 '+esc(cp.name)+' Triple Slapped '+esc(target.name)+'! '+newTurns+' turns.');
+  cp.cardsInHand=Math.max(0,cp.cardsInHand-1);
+  state.turnsRemaining=newTurns;
+  state.currentPlayerIndex=targetIdx;
+  saveState();renderGame();
+  toast(target.name+' got triple slapped!','danger');
+};
+
+window.playTargetedAttack = function(){
+  var targetIdx=promptAliveTarget('Personal Attack! Choose ANY player to take 3 turns:');
+  if(targetIdx===null)return;
+  pushHistory();
+  var cp=currentPlayer();
+  var target=state.players[targetIdx];
+  addEvent('🎯 '+esc(cp.name)+' played Personal Attack on '+esc(target.name)+'! 3 turns.');
+  cp.cardsInHand=Math.max(0,cp.cardsInHand-1);
+  state.turnsRemaining=3;
+  state.currentPlayerIndex=targetIdx;
+  saveState();renderGame();
+  toast(target.name+' must take 3 turns!','danger');
+};
+
+window.playSkip = function(){
+  pushHistory();
+  var cp=currentPlayer();
+  cp.cardsInHand=Math.max(0,cp.cardsInHand-1);
+  if(state.turnsRemaining>1){
+    state.turnsRemaining--;
+    addEvent('🚫 '+esc(cp.name)+' played Skip ('+state.turnsRemaining+' turns left)');
+    toast('Skip! '+state.turnsRemaining+' turn(s) left','info');
+  } else {
+    addEvent('🚫 '+esc(cp.name)+' played Skip');
+    state.turnsRemaining=1;
+    state.currentPlayerIndex=nextAliveIndex(state.currentPlayerIndex);
+    toast(cp.name+' skipped','info');
+  }
+  saveState();renderGame();
+};
+
+window.playSuperSkip = function(){
+  pushHistory();
+  var cp=currentPlayer();
+  cp.cardsInHand=Math.max(0,cp.cardsInHand-1);
+  addEvent('⏭️ '+esc(cp.name)+' played Super Skip! All remaining turns skipped.');
+  state.turnsRemaining=1;
+  state.currentPlayerIndex=nextAliveIndex(state.currentPlayerIndex);
+  saveState();renderGame();
+  toast(cp.name+' super skipped all turns!','info');
+};
+
+window.playReverse = function(){
+  pushHistory();
+  var cp=currentPlayer();
+  cp.cardsInHand=Math.max(0,cp.cardsInHand-1);
+  state.direction*=-1;
+  addEvent('🔄 '+esc(cp.name)+' played Reverse! Direction: '+(state.direction===1?'clockwise':'counter-clockwise'));
+  state.turnsRemaining=1;
+  state.currentPlayerIndex=nextAliveIndex(state.currentPlayerIndex);
+  saveState();renderGame();
+  toast('Direction reversed!','info');
+};
+
+window.playShuffle = function(){
+  pushHistory();
+  var cp=currentPlayer();
+  cp.cardsInHand=Math.max(0,cp.cardsInHand-1);
+  state.implodingFaceUp=false;
+  addEvent('🔀 '+esc(cp.name)+' shuffled the draw pile');
+  saveState();renderGame();
+  toast('Deck shuffled!','info');
+};
+
+window.playSeeTheFuture = function(){
+  pushHistory();
+  var cp=currentPlayer();
+  cp.cardsInHand=Math.max(0,cp.cardsInHand-1);
+  addEvent('🔮 '+esc(cp.name)+' looked at the future...');
+  saveState();renderGame();
+  toast(cp.name+' sees the future!','info');
+};
+
+window.playSwapTopBottom = function(){
+  pushHistory();
+  var cp=currentPlayer();
+  cp.cardsInHand=Math.max(0,cp.cardsInHand-1);
+  addEvent('↕️ '+esc(cp.name)+' swapped the top and bottom cards');
+  saveState();renderGame();
+  toast('Top and bottom swapped!','info');
+};
+
+window.playCatomicBomb = function(){
+  pushHistory();
+  var cp=currentPlayer();
+  cp.cardsInHand=Math.max(0,cp.cardsInHand-1);
+  state.implodingFaceUp=false;
+  addEvent('☢️ '+esc(cp.name)+' played Catomic Bomb! All Exploding Kittens are now on top of the deck.');
+  advanceTurn();
+  toast('CATOMIC BOMB! Exploding Kittens on top!','danger');
+};
+
+window.playDrawFromBottom = function(){
+  pushHistory();
+  var cp=currentPlayer();
+  state.cardsInDeck=Math.max(0,state.cardsInDeck-1);
+  cp.cardsInHand++;
+  addEvent('⬇️ '+esc(cp.name)+' drew from the bottom of the deck');
+  advanceTurn();
+  toast(cp.name+' drew from bottom','info');
+};
+
+window.playBury = function(){
+  pushHistory();
+  var cp=currentPlayer();
+  addEvent('⬇️ '+esc(cp.name)+' played Bury \u2014 drew a card and buried it back in the deck');
+  cp.cardsInHand=Math.max(0,cp.cardsInHand-1);
+  advanceTurn();
+  toast(cp.name+' buried a card','info');
+};
+
+window.playZombieKitten = function(){
+  var cp=currentPlayer();
+  cp.cardsInHand=Math.max(0,cp.cardsInHand-1);
+  addEvent('🧟 '+esc(cp.name)+' played a Zombie Kitten card');
+  saveState();renderGame();
+  toast('Zombie Kitten played! Resurrect a dead player.','success');
+};
+
+window.playClone = function(){
+  pushHistory();
+  var cp=currentPlayer();
+  cp.cardsInHand=Math.max(0,cp.cardsInHand-1);
+  addEvent('🧬 '+esc(cp.name)+' played Clone (copies top of discard pile)');
+  saveState();renderGame();
+  toast('Clone played!','info');
+};
+
+window.playNope = function(){
+  var alive=alivePlayers();
+  var who=prompt('Who played Nope?\n\n'+alive.map(function(p){return p.name}).join(', '));
+  if(!who)return;
+  var idx=state.players.findIndex(function(p){return p.name.toLowerCase()===who.toLowerCase()&&!p.eliminated});
+  if(idx===-1){toast('Player not found!','danger');return}
+  pushHistory();
+  state.players[idx].cardsInHand=Math.max(0,state.players[idx].cardsInHand-1);
+  addEvent('✋ '+esc(state.players[idx].name)+' played NOPE!');
+  saveState();renderGame();
+  toast('NOPED!','info');
+};
+
+window.adjustCards = function(i,delta){
+  state.players[i].cardsInHand=Math.max(0,state.players[i].cardsInHand+delta);
+  if(delta>0)state.cardsInDeck=Math.max(0,state.cardsInDeck-1);
+  if(delta<0)state.cardsInDeck++;
+  saveState();renderGame();
+};
+
+window.resurrectPlayer = function(i){
+  pushHistory();
+  var p=state.players[i];
+  p.eliminated=false;
+  p.dead=false;
+  addEvent('🧟 '+esc(p.name)+' has been RESURRECTED!');
+  saveState();renderGame();
+  toast(p.name+' is back from the dead!','success');
+};
+
+window.undoAction = function(){
+  if(!state.history.length){toast('Nothing to undo!','info');return}
+  var prev=JSON.parse(state.history.pop());
+  state.currentPlayerIndex=prev.currentPlayerIndex;
+  state.direction=prev.direction;
+  state.turnsRemaining=prev.turnsRemaining;
+  state.cardsInDeck=prev.cardsInDeck;
+  state.explodingInDeck=prev.explodingInDeck;
+  state.implodingInDeck=prev.implodingInDeck;
+  state.implodingFaceUp=prev.implodingFaceUp;
+  state.players=prev.players;
+  addEvent('↩️ Action undone');
+  saveState();renderGame();
+  toast('Undone!','info');
+};
+
+window.resetGame = function(){
+  if(!confirm('Reset the current game? This cannot be undone.'))return;
+  state.phase='setup';state.events=[];state.history=[];
+  saveState();renderGame();
+  document.querySelectorAll('.tab').forEach(function(t){t.classList.remove('active')});
+  document.querySelectorAll('.tab-content').forEach(function(tc){tc.classList.remove('active')});
+  document.querySelector('[data-tab="setup"]').classList.add('active');
+  document.getElementById('tab-setup').classList.add('active');
+  toast('Game reset','info');
+};
+
+// ── Probabilities ──
+function renderProbabilities(){
+  if(state.phase!=='playing')return;
+  var deck=state.cardsInDeck;
+  var exploding=state.explodingInDeck;
+  var imploding=state.implodingInDeck;
+  var safe=deck-exploding-imploding;
+
+  var explodeChance=deck>0?(exploding/deck*100):0;
+  var el=document.getElementById('explodeProb');
+  var dc=explodeChance>40?'danger':explodeChance>20?'risky':'safe';
+  el.innerHTML='<div style="display:flex;justify-content:space-between;align-items:baseline">'+
+    '<span class="prob-label" style="color:var(--color-explode)">'+explodeChance.toFixed(1)+'% chance</span>'+
+    '<span style="font-size:.8rem;color:var(--color-text-muted)">'+exploding+' of '+deck+' cards</span></div>'+
+    '<div class="prob-bar"><div class="fill '+dc+'" style="width:'+Math.min(100,explodeChance)+'%"></div></div>';
+
+  if(state.expansions.imploding){
+    document.getElementById('implodeProbSection').style.display='block';
+    var iel=document.getElementById('implodeProb');
+    if(state.implodingFaceUp&&imploding>0){
+      iel.innerHTML='<div class="prob-label" style="color:var(--color-implode)">⚠️ Imploding Kitten is FACE-UP on top of the deck!</div>';
+    } else if(imploding>0){
+      var ic=deck>0?(imploding/deck*100):0;
+      var dc2=ic>40?'danger':ic>20?'risky':'safe';
+      iel.innerHTML='<div style="display:flex;justify-content:space-between"><span class="prob-label" style="color:var(--color-implode)">'+ic.toFixed(1)+'%</span><span style="font-size:.8rem;color:var(--color-text-muted)">'+imploding+' of '+deck+'</span></div>'+
+        '<div class="prob-bar"><div class="fill '+dc2+'" style="width:'+Math.min(100,ic)+'%"></div></div>';
+    } else {
+      iel.innerHTML='<p style="font-size:.85rem;color:var(--color-text-muted)">Imploding Kitten has been drawn.</p>';
+    }
+  } else {
+    document.getElementById('implodeProbSection').style.display='none';
+  }
+
+  var statsEl=document.getElementById('probStats');
+  var deadCount=state.players.filter(function(p){return p.dead}).length;
+  statsEl.innerHTML='<div class="stat-card"><div class="stat-value">'+deck+'</div><div class="stat-label">Cards in Deck</div></div>'+
+    '<div class="stat-card"><div class="stat-value" style="color:var(--color-explode)">'+exploding+'</div><div class="stat-label">Exploding Kittens</div></div>'+
+    '<div class="stat-card"><div class="stat-value" style="color:var(--color-success)">'+safe+'</div><div class="stat-label">Safe Cards</div></div>'+
+    '<div class="stat-card"><div class="stat-value">'+alivePlayers().length+'</div><div class="stat-label">Players Alive</div></div>'+
+    (state.zombieMode?'<div class="stat-card"><div class="stat-value" style="color:var(--color-zombie)">'+deadCount+'</div><div class="stat-label">Dead (Zombie)</div></div>':'');
+
+  var survEl=document.getElementById('survivalOdds');
+  var html='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:.5rem">';
+  for(var draws=1;draws<=Math.min(6,deck);draws++){
+    var prob=1;var safeN=safe;var deckN=deck;
+    for(var d=0;d<draws;d++){
+      if(deckN<=0)break;
+      prob*=safeN/deckN;
+      safeN--;deckN--;
+    }
+    var pct=prob*100;
+    var cls=pct<30?'color:var(--color-error)':pct<60?'color:var(--color-warning)':'color:var(--color-success)';
+    html+='<div class="stat-card"><div class="stat-value" style="'+cls+'">'+pct.toFixed(1)+'%</div><div class="stat-label">'+draws+' draw'+(draws>1?'s':'')+' safe</div></div>';
+  }
+  html+='</div>';
+  survEl.innerHTML=html;
+}
+
+// ── Card Reference ──
+var currentFilter='all';
+window.filterCards = function(filter,btn){
+  currentFilter=filter;
+  document.querySelectorAll('#cardFilters .btn').forEach(function(b){b.classList.remove('active')});
+  btn.classList.add('active');
+  renderCardReference();
+};
+
+function renderCardReference(){
+  var search=(document.getElementById('cardSearch').value||'').toLowerCase();
+  var el=document.getElementById('cardList');
+  var filtered=CARDS.filter(function(c){
+    if(currentFilter!=='all'&&c.set!==currentFilter)return false;
+    if(search&&c.name.toLowerCase().indexOf(search)===-1&&c.desc.toLowerCase().indexOf(search)===-1)return false;
+    return true;
+  });
+  el.innerHTML=filtered.map(function(c){
+    var countStr=typeof c.count==='function'?'Varies':''+c.count()+'x';
+    if(typeof c.count==='function'){
+      try{var ex=c.count(4);countStr=ex+'x (4p)'}catch(e){}
+    }
+    return '<div class="card-entry">'+
+      '<div class="card-header"><span class="card-icon">'+c.icon+'</span><span class="card-name">'+esc(c.name)+'</span><span class="card-set">'+SET_LABELS[c.set]+'</span></div>'+
+      '<div class="card-desc">'+esc(c.desc)+'</div>'+
+      '<div class="card-count">Qty: '+countStr+'</div></div>';
+  }).join('');
+
+  if(!filtered.length){
+    el.innerHTML='<p style="color:var(--color-text-muted);font-size:.85rem;grid-column:1/-1">No cards match your search.</p>';
+  }
+
+  if(currentFilter==='all'||currentFilter==='base'){
+    el.innerHTML+='<div class="card-entry" style="grid-column:1/-1;border-color:var(--color-accent-dim)">'+
+      '<div class="card-header"><span class="card-icon">🃏</span><span class="card-name">Cat Card Combos</span></div>'+
+      '<div class="card-desc" style="margin-top:.35rem">'+
+      COMBOS.map(function(c){return '<div style="margin-bottom:.35rem"><strong style="color:var(--color-accent)">'+esc(c.name)+':</strong> '+esc(c.desc)+'</div>'}).join('')+
+      '</div></div>';
+  }
+}
+
+// ── Init ──
+function init(){
+  document.getElementById('exp-imploding').checked=state.expansions.imploding;
+  document.getElementById('exp-streaking').checked=state.expansions.streaking;
+  document.getElementById('exp-barking').checked=state.expansions.barking;
+  document.getElementById('exp-zombie').checked=state.expansions.zombie||false;
+  document.getElementById('exp-party').checked=state.expansions.party||false;
+  renderSetupPlayers();
+  renderDeckStats();
+  renderCardReference();
+  renderExpansionWarnings();
+  renderGame();
+  if(state.phase==='playing'){
+    document.querySelectorAll('.tab').forEach(function(t){t.classList.remove('active')});
+    document.querySelectorAll('.tab-content').forEach(function(tc){tc.classList.remove('active')});
+    document.querySelector('[data-tab="game"]').classList.add('active');
+    document.getElementById('tab-game').classList.add('active');
+  }
+}
+init();
+
+})();
+</script>
+</body>
+</html>
