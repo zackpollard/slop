@@ -1,0 +1,1239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UNO No Mercy Scoreboard — slop</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --color-bg: #0f0f0c;
+            --color-surface: #1a1a16;
+            --color-surface-hover: #222218;
+            --color-border: #2e2e24;
+            --color-text: #e8e4d4;
+            --color-text-muted: #9a9686;
+            --color-accent: #c4a24e;
+            --color-accent-dim: rgba(196, 162, 78, 0.15);
+            --color-error: #c45e4e;
+            --color-success: #4a9e6e;
+            --color-red: #e74c3c;
+            --color-blue: #3498db;
+            --color-green: #2ecc71;
+            --color-yellow: #f1c40f;
+            --font-body: 'Inter', sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+        }
+
+        body {
+            font-family: var(--font-body);
+            background: var(--color-bg);
+            color: var(--color-text);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 2rem 1.5rem;
+        }
+
+        header {
+            margin-bottom: 2rem;
+            text-align: center;
+        }
+
+        header h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+        }
+
+        header h1 .accent { color: var(--color-accent); }
+
+        header p {
+            color: var(--color-text-muted);
+            margin-top: 0.25rem;
+            font-size: 0.95rem;
+        }
+
+        .section {
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .section h2 {
+            font-size: 0.85rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--color-text-muted);
+            margin-bottom: 0.75rem;
+        }
+
+        /* Setup */
+        .setup-row {
+            display: flex;
+            gap: 0.75rem;
+            align-items: flex-end;
+            flex-wrap: wrap;
+        }
+
+        .setup-row .field {
+            flex: 1;
+            min-width: 150px;
+        }
+
+        .setup-row label {
+            display: block;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--color-text-muted);
+            margin-bottom: 0.35rem;
+        }
+
+        .setup-row input, .setup-row select {
+            width: 100%;
+            font-family: var(--font-body);
+            font-size: 0.95rem;
+            padding: 0.6rem 0.75rem;
+            background: var(--color-bg);
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            color: var(--color-text);
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .setup-row input:focus, .setup-row select:focus {
+            border-color: var(--color-accent);
+        }
+
+        .player-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-top: 0.75rem;
+        }
+
+        .player-tag {
+            display: flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0.35rem 0.65rem;
+            background: var(--color-accent-dim);
+            border: 1px solid var(--color-accent);
+            border-radius: 6px;
+            font-size: 0.85rem;
+            color: var(--color-accent);
+        }
+
+        .player-tag button {
+            background: none;
+            border: none;
+            color: var(--color-accent);
+            cursor: pointer;
+            font-size: 1rem;
+            line-height: 1;
+            padding: 0;
+            opacity: 0.7;
+        }
+
+        .player-tag button:hover { opacity: 1; }
+
+        /* Buttons */
+        .btn {
+            font-family: var(--font-body);
+            font-size: 0.85rem;
+            font-weight: 600;
+            padding: 0.6rem 1.2rem;
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: var(--color-surface);
+            color: var(--color-text);
+        }
+
+        .btn:hover {
+            background: var(--color-surface-hover);
+            border-color: var(--color-accent);
+        }
+
+        .btn-primary {
+            background: var(--color-accent);
+            color: var(--color-bg);
+            border-color: var(--color-accent);
+        }
+
+        .btn-primary:hover {
+            background: #d4b25e;
+            border-color: #d4b25e;
+        }
+
+        .btn-danger {
+            color: var(--color-error);
+            border-color: var(--color-error);
+        }
+
+        .btn-danger:hover {
+            background: rgba(196, 94, 78, 0.15);
+        }
+
+        .btn-sm {
+            font-size: 0.75rem;
+            padding: 0.35rem 0.65rem;
+        }
+
+        /* Standings */
+        .standings-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .standings-table th,
+        .standings-table td {
+            padding: 0.6rem 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid var(--color-border);
+        }
+
+        .standings-table th {
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--color-text-muted);
+        }
+
+        .standings-table td {
+            font-size: 0.95rem;
+        }
+
+        .standings-table .player-name {
+            font-weight: 600;
+        }
+
+        .standings-table .player-name .eliminated-badge {
+            font-size: 0.7rem;
+            font-weight: 600;
+            color: var(--color-error);
+            margin-left: 0.5rem;
+            text-transform: uppercase;
+        }
+
+        .standings-table .total-score {
+            font-family: var(--font-mono);
+            font-weight: 700;
+            color: var(--color-accent);
+            font-size: 1.1rem;
+        }
+
+        .standings-table .round-scores {
+            font-family: var(--font-mono);
+            font-size: 0.8rem;
+            color: var(--color-text-muted);
+        }
+
+        .standings-table .round-score-chip {
+            display: inline-block;
+            padding: 0.15rem 0.4rem;
+            border-radius: 4px;
+            margin: 0.1rem;
+            background: var(--color-bg);
+            border: 1px solid var(--color-border);
+        }
+
+        .standings-table .round-score-chip.winner {
+            color: var(--color-success);
+            border-color: var(--color-success);
+            background: rgba(74, 158, 110, 0.1);
+        }
+
+        .standings-table .round-score-chip.knockout {
+            color: var(--color-error);
+            border-color: var(--color-error);
+            background: rgba(196, 94, 78, 0.1);
+        }
+
+        .standings-table .rank {
+            font-weight: 700;
+            color: var(--color-text-muted);
+            width: 2rem;
+        }
+
+        .standings-table .rank.first { color: var(--color-accent); }
+
+        .standings-table .eliminated-row td {
+            opacity: 0.5;
+        }
+
+        .winner-row td {
+            background: var(--color-accent-dim);
+        }
+
+        .progress-bar-container {
+            width: 100%;
+            height: 6px;
+            background: var(--color-bg);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-top: 0.25rem;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: var(--color-accent);
+            border-radius: 3px;
+            transition: width 0.3s ease;
+        }
+
+        .progress-bar.complete {
+            background: var(--color-success);
+        }
+
+        /* Round scoring */
+        .round-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .round-header h2 {
+            margin-bottom: 0;
+        }
+
+        .round-dealer {
+            font-size: 0.85rem;
+            color: var(--color-text-muted);
+        }
+
+        .round-dealer strong {
+            color: var(--color-accent);
+        }
+
+        .scoring-grid {
+            display: grid;
+            gap: 1rem;
+        }
+
+        .player-score-card {
+            background: var(--color-bg);
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            padding: 1rem;
+        }
+
+        .player-score-card.round-winner {
+            border-color: var(--color-success);
+            background: rgba(74, 158, 110, 0.05);
+        }
+
+        .player-score-card.eliminated {
+            border-color: var(--color-error);
+            opacity: 0.6;
+        }
+
+        .player-score-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.75rem;
+        }
+
+        .player-score-header .name {
+            font-weight: 600;
+            font-size: 1rem;
+        }
+
+        .player-score-header .round-total {
+            font-family: var(--font-mono);
+            font-weight: 700;
+            font-size: 1.2rem;
+            color: var(--color-accent);
+        }
+
+        .player-score-header .round-total.winner-text {
+            color: var(--color-success);
+        }
+
+        .score-input-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            align-items: center;
+            margin-bottom: 0.5rem;
+        }
+
+        .score-input-group label {
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--color-text-muted);
+            min-width: 100px;
+        }
+
+        .score-input-group input {
+            width: 90px;
+            font-family: var(--font-mono);
+            font-size: 0.95rem;
+            padding: 0.4rem 0.6rem;
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: 6px;
+            color: var(--color-text);
+            outline: none;
+            text-align: right;
+        }
+
+        .score-input-group input:focus {
+            border-color: var(--color-accent);
+        }
+
+        .score-input-group .hint {
+            font-size: 0.75rem;
+            color: var(--color-text-muted);
+        }
+
+        .score-toggles {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        .toggle-btn {
+            font-family: var(--font-body);
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 0.35rem 0.65rem;
+            border: 1px solid var(--color-border);
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.15s;
+            background: var(--color-surface);
+            color: var(--color-text-muted);
+        }
+
+        .toggle-btn:hover {
+            border-color: var(--color-accent);
+        }
+
+        .toggle-btn.active {
+            background: var(--color-accent-dim);
+            border-color: var(--color-accent);
+            color: var(--color-accent);
+        }
+
+        .toggle-btn.winner-toggle.active {
+            background: rgba(74, 158, 110, 0.15);
+            border-color: var(--color-success);
+            color: var(--color-success);
+        }
+
+        .toggle-btn.ko-toggle.active {
+            background: rgba(196, 94, 78, 0.15);
+            border-color: var(--color-error);
+            color: var(--color-error);
+        }
+
+        .card-count-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.35rem;
+            margin-top: 0.5rem;
+        }
+
+        .card-type-btn {
+            font-family: var(--font-mono);
+            font-size: 0.7rem;
+            font-weight: 600;
+            padding: 0.3rem 0.5rem;
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: 5px;
+            color: var(--color-text-muted);
+            cursor: pointer;
+            transition: all 0.15s;
+            min-width: 2.4rem;
+            text-align: center;
+        }
+
+        .card-type-btn:hover {
+            border-color: var(--color-accent);
+        }
+
+        .card-type-btn.active {
+            background: var(--color-accent-dim);
+            border-color: var(--color-accent);
+            color: var(--color-accent);
+        }
+
+        .score-breakdown {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--color-text-muted);
+            margin-top: 0.5rem;
+        }
+
+        /* Actions row */
+        .actions-row {
+            display: flex;
+            gap: 0.75rem;
+            justify-content: flex-end;
+            margin-top: 1rem;
+            flex-wrap: wrap;
+        }
+
+        /* Winner banner */
+        .winner-banner {
+            background: var(--color-accent-dim);
+            border: 2px solid var(--color-accent);
+            border-radius: 12px;
+            padding: 1.5rem;
+            text-align: center;
+            margin-bottom: 1.5rem;
+        }
+
+        .winner-banner h2 {
+            color: var(--color-accent);
+            font-size: 1.5rem;
+            margin-bottom: 0.25rem;
+            text-transform: none;
+            letter-spacing: normal;
+        }
+
+        .winner-banner p {
+            color: var(--color-text-muted);
+            font-size: 0.95rem;
+        }
+
+        .winner-banner .winner-score {
+            font-family: var(--font-mono);
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--color-accent);
+        }
+
+        /* Rules */
+        details {
+            margin-top: 0.5rem;
+        }
+
+        details summary {
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--color-text-muted);
+            user-select: none;
+        }
+
+        details summary:hover {
+            color: var(--color-accent);
+        }
+
+        .rules-content {
+            margin-top: 0.75rem;
+            font-size: 0.9rem;
+            line-height: 1.7;
+            color: var(--color-text-muted);
+        }
+
+        .rules-content h3 {
+            color: var(--color-text);
+            font-size: 0.9rem;
+            margin-top: 1rem;
+            margin-bottom: 0.25rem;
+        }
+
+        .rules-content h3:first-child { margin-top: 0; }
+
+        .rules-content ul {
+            padding-left: 1.25rem;
+            margin: 0.25rem 0;
+        }
+
+        .rules-content strong {
+            color: var(--color-accent);
+        }
+
+        .rules-content .scoring-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 0.5rem 0;
+            font-size: 0.85rem;
+        }
+
+        .rules-content .scoring-table th,
+        .rules-content .scoring-table td {
+            padding: 0.35rem 0.6rem;
+            text-align: left;
+            border-bottom: 1px solid var(--color-border);
+        }
+
+        .rules-content .scoring-table th {
+            color: var(--color-text);
+            font-weight: 600;
+        }
+
+        footer {
+            text-align: center;
+            margin-top: 3rem;
+            padding-top: 1.5rem;
+            border-top: 1px solid var(--color-border);
+        }
+
+        footer a {
+            color: var(--color-text-muted);
+            text-decoration: none;
+            font-size: 0.85rem;
+        }
+
+        footer a:hover {
+            color: var(--color-accent);
+        }
+
+        .hidden { display: none !important; }
+
+        /* Quick score buttons */
+        .quick-score-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.35rem;
+            margin-top: 0.5rem;
+        }
+
+        .quick-score-btn {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 0.25rem 0.5rem;
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: 5px;
+            color: var(--color-text-muted);
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .quick-score-btn:hover {
+            border-color: var(--color-accent);
+            color: var(--color-accent);
+        }
+
+        @media (max-width: 600px) {
+            .container { padding: 1rem; }
+            header h1 { font-size: 1.5rem; }
+            .setup-row { flex-direction: column; }
+            .setup-row .field { min-width: unset; }
+            .standings-table { font-size: 0.85rem; }
+            .standings-table th, .standings-table td { padding: 0.4rem 0.5rem; }
+            .score-input-group label { min-width: 80px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>UNO No Mercy <span class="accent">Scoreboard</span></h1>
+            <p>Track scores across hands. First to the target score wins the game.</p>
+        </header>
+
+        <!-- Setup Phase -->
+        <div id="setup-phase">
+            <div class="section">
+                <h2>Players</h2>
+                <div class="setup-row">
+                    <div class="field">
+                        <label for="player-name-input">Add Player</label>
+                        <input type="text" id="player-name-input" placeholder="Enter player name" maxlength="20">
+                    </div>
+                    <button class="btn btn-primary" id="add-player-btn" style="margin-bottom:1px;">Add</button>
+                </div>
+                <div class="player-tags" id="player-tags"></div>
+            </div>
+
+            <div class="section">
+                <h2>Settings</h2>
+                <div class="setup-row">
+                    <div class="field">
+                        <label for="target-score-input">Target Score</label>
+                        <input type="number" id="target-score-input" value="1000" min="100" step="100">
+                    </div>
+                    <div class="field">
+                        <label for="mercy-limit-input">Mercy Rule (cards)</label>
+                        <input type="number" id="mercy-limit-input" value="25" min="10" max="50">
+                    </div>
+                </div>
+                <div class="actions-row" style="margin-top:1.25rem;">
+                    <button class="btn btn-primary" id="start-game-btn" disabled>Start Game</button>
+                </div>
+            </div>
+
+            <div class="section">
+                <details>
+                    <summary>UNO No Mercy Scoring Rules</summary>
+                    <div class="rules-content">
+                        <h3>How Scoring Works</h3>
+                        <p>When a player goes out (plays all their cards) or is the last player standing, they earn points based on cards remaining in opponents' hands.</p>
+
+                        <h3>Card Point Values</h3>
+                        <table class="scoring-table">
+                            <tr><th>Card</th><th>Points</th></tr>
+                            <tr><td>Number cards (0&ndash;9)</td><td>Face value</td></tr>
+                            <tr><td>Draw 2, Draw 4, Skip, Reverse</td><td>20 each</td></tr>
+                            <tr><td>Skip Everyone, Discard All</td><td>20 each</td></tr>
+                            <tr><td>Wild Draw 6, Wild Draw 10</td><td>50 each</td></tr>
+                            <tr><td>Wild Reverse Draw 4</td><td>50 each</td></tr>
+                            <tr><td>Wild Color Roulette</td><td>50 each</td></tr>
+                        </table>
+
+                        <h3>Mercy Rule Bonus</h3>
+                        <p>If any player reaches <strong>25+ cards</strong>, they are knocked out. The hand winner earns <strong>250 bonus points</strong> per player knocked out during that hand.</p>
+
+                        <h3>Winning</h3>
+                        <p>Keep a running tally across hands. First to <strong>1,000 points</strong> wins the game.</p>
+
+                        <h3>Key No Mercy Rules</h3>
+                        <ul>
+                            <li><strong>Stacking</strong> &mdash; Draw cards (+2, +4, +6, +10) can be stacked. Play a draw card of equal or higher value to pass the penalty on.</li>
+                            <li><strong>7 = Swap hands</strong> &mdash; Playing a 7 lets you swap hands with another player.</li>
+                            <li><strong>0 = Rotate hands</strong> &mdash; Playing a 0 forces all players to pass hands to the left.</li>
+                            <li><strong>Skip Everyone</strong> &mdash; Skip all other players; play again immediately.</li>
+                            <li><strong>Discard All</strong> &mdash; Discard all cards of the matching color from your hand.</li>
+                            <li><strong>Wild Color Roulette</strong> &mdash; Call a color; each opponent reveals their top card. If it matches, they draw 4.</li>
+                        </ul>
+                    </div>
+                </details>
+            </div>
+        </div>
+
+        <!-- Game Phase -->
+        <div id="game-phase" class="hidden">
+            <!-- Winner Banner -->
+            <div id="winner-banner" class="winner-banner hidden">
+                <h2 id="winner-name"></h2>
+                <div class="winner-score" id="winner-score"></div>
+                <p>wins the game!</p>
+                <div class="actions-row" style="justify-content:center; margin-top:1rem;">
+                    <button class="btn btn-primary" id="new-game-btn">New Game</button>
+                </div>
+            </div>
+
+            <!-- Standings -->
+            <div class="section" id="standings-section">
+                <h2>Standings</h2>
+                <table class="standings-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Player</th>
+                            <th>Total</th>
+                            <th>Progress</th>
+                            <th>Hands</th>
+                        </tr>
+                    </thead>
+                    <tbody id="standings-body"></tbody>
+                </table>
+            </div>
+
+            <!-- Hand Scoring -->
+            <div class="section" id="hand-section">
+                <div class="round-header">
+                    <h2 id="hand-title">Hand 1</h2>
+                    <div class="round-dealer">Dealer: <strong id="hand-dealer"></strong></div>
+                </div>
+
+                <p style="font-size:0.85rem; color:var(--color-text-muted); margin-bottom:1rem;">
+                    Select the hand winner, then tally the points from cards left in opponents' hands. Mark any players knocked out by the Mercy Rule.
+                </p>
+
+                <div class="scoring-grid" id="scoring-grid"></div>
+
+                <div class="actions-row">
+                    <button class="btn btn-danger btn-sm hidden" id="undo-hand-btn">Undo Last Hand</button>
+                    <button class="btn btn-primary" id="submit-hand-btn">Submit Hand</button>
+                </div>
+            </div>
+
+            <div class="section">
+                <details>
+                    <summary>Scoring Reference</summary>
+                    <div class="rules-content">
+                        <h3>Card Point Values</h3>
+                        <table class="scoring-table">
+                            <tr><th>Card</th><th>Points</th></tr>
+                            <tr><td>Number cards (0&ndash;9)</td><td>Face value</td></tr>
+                            <tr><td>Action cards (Draw 2, Draw 4, Skip, Reverse, Skip Everyone, Discard All)</td><td>20 each</td></tr>
+                            <tr><td>Wild cards (Wild Draw 6, Wild Draw 10, Wild Reverse Draw 4, Wild Color Roulette)</td><td>50 each</td></tr>
+                        </table>
+                        <p style="margin-top:0.5rem;"><strong>+250 points</strong> for each player knocked out by the Mercy Rule during the hand.</p>
+                    </div>
+                </details>
+            </div>
+
+            <div class="actions-row">
+                <button class="btn btn-danger" id="reset-game-btn">Reset Game</button>
+            </div>
+        </div>
+
+        <footer>
+            <a href="https://slop.zackpollard.pro">&larr; back to slop</a>
+        </footer>
+    </div>
+
+    <script>
+    (function() {
+        // Card point values for quick-add buttons
+        const CARD_POINTS = {
+            // Number cards
+            '0': 0, '1': 1, '2': 2, '3': 3, '4': 4,
+            '5': 5, '6': 6, '7': 7, '8': 8, '9': 9,
+            // Action cards (20 pts each)
+            'Skip': 20, 'Reverse': 20, 'Draw 2': 20, 'Draw 4': 20,
+            'Skip All': 20, 'Discard All': 20,
+            // Wild cards (50 pts each)
+            'W Rev +4': 50, 'W +6': 50, 'W +10': 50, 'W Roulette': 50
+        };
+
+        const ACTION_CARDS = ['Skip', 'Reverse', 'Draw 2', 'Draw 4', 'Skip All', 'Discard All'];
+        const WILD_CARDS = ['W Rev +4', 'W +6', 'W +10', 'W Roulette'];
+
+        // State
+        let players = [];
+        let hands = []; // Array of hand results: {winner, scores: {playerName: points}, knockouts: [playerName]}
+        let currentHand = 1;
+        let gameStarted = false;
+        let gameOver = false;
+        let targetScore = 1000;
+        let mercyLimit = 25;
+
+        // DOM refs
+        const setupPhase = document.getElementById('setup-phase');
+        const gamePhase = document.getElementById('game-phase');
+        const playerInput = document.getElementById('player-name-input');
+        const addPlayerBtn = document.getElementById('add-player-btn');
+        const playerTags = document.getElementById('player-tags');
+        const startGameBtn = document.getElementById('start-game-btn');
+        const targetScoreInput = document.getElementById('target-score-input');
+        const mercyLimitInput = document.getElementById('mercy-limit-input');
+        const standingsBody = document.getElementById('standings-body');
+        const handTitle = document.getElementById('hand-title');
+        const handDealer = document.getElementById('hand-dealer');
+        const scoringGrid = document.getElementById('scoring-grid');
+        const submitHandBtn = document.getElementById('submit-hand-btn');
+        const undoHandBtn = document.getElementById('undo-hand-btn');
+        const resetGameBtn = document.getElementById('reset-game-btn');
+        const winnerBanner = document.getElementById('winner-banner');
+        const winnerNameEl = document.getElementById('winner-name');
+        const winnerScoreEl = document.getElementById('winner-score');
+        const newGameBtn = document.getElementById('new-game-btn');
+        const handSection = document.getElementById('hand-section');
+
+        // Round input state
+        let handState = {}; // {playerName: {score: number, isWinner: bool, isKnockedOut: bool, cardCounts: {}}}
+
+        // Save/load state
+        function saveState() {
+            const state = { players, hands, currentHand, gameStarted, gameOver, targetScore, mercyLimit };
+            localStorage.setItem('uno-no-mercy-state', JSON.stringify(state));
+        }
+
+        function loadState() {
+            try {
+                const saved = localStorage.getItem('uno-no-mercy-state');
+                if (!saved) return false;
+                const state = JSON.parse(saved);
+                players = state.players || [];
+                hands = state.hands || [];
+                currentHand = state.currentHand || 1;
+                gameStarted = state.gameStarted || false;
+                gameOver = state.gameOver || false;
+                targetScore = state.targetScore || 1000;
+                mercyLimit = state.mercyLimit || 25;
+                return gameStarted;
+            } catch (e) {
+                return false;
+            }
+        }
+
+        // Setup
+        function addPlayer(name) {
+            name = name.trim();
+            if (!name || players.includes(name)) return;
+            if (players.length >= 10) return;
+            players.push(name);
+            renderPlayerTags();
+            playerInput.value = '';
+            playerInput.focus();
+            startGameBtn.disabled = players.length < 2;
+        }
+
+        function removePlayer(name) {
+            players = players.filter(p => p !== name);
+            renderPlayerTags();
+            startGameBtn.disabled = players.length < 2;
+        }
+
+        function renderPlayerTags() {
+            playerTags.innerHTML = players.map(name =>
+                `<span class="player-tag">${esc(name)}<button onclick="window._removePlayer('${esc(name)}')">&times;</button></span>`
+            ).join('');
+        }
+
+        window._removePlayer = removePlayer;
+
+        playerInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                addPlayer(playerInput.value);
+            }
+        });
+
+        addPlayerBtn.addEventListener('click', () => addPlayer(playerInput.value));
+
+        startGameBtn.addEventListener('click', () => {
+            if (players.length < 2) return;
+            targetScore = parseInt(targetScoreInput.value) || 1000;
+            mercyLimit = parseInt(mercyLimitInput.value) || 25;
+            gameStarted = true;
+            setupPhase.classList.add('hidden');
+            gamePhase.classList.remove('hidden');
+            resetHandState();
+            renderGame();
+            saveState();
+        });
+
+        // Game logic
+        function getPlayerTotal(playerName) {
+            let total = 0;
+            for (const hand of hands) {
+                if (hand.scores[playerName] !== undefined) {
+                    total += hand.scores[playerName];
+                }
+            }
+            return total;
+        }
+
+        function getDealerIndex() {
+            return (currentHand - 1) % players.length;
+        }
+
+        function resetHandState() {
+            handState = {};
+            players.forEach(name => {
+                handState[name] = {
+                    score: 0,
+                    isWinner: false,
+                    isKnockedOut: false,
+                    cardCounts: {}
+                };
+            });
+        }
+
+        function calculatePlayerHandScore(name) {
+            const state = handState[name];
+            if (state.isWinner) {
+                // Winner's score is the sum of all opponents' card points + knockout bonuses
+                let total = 0;
+                players.forEach(other => {
+                    if (other === name) return;
+                    if (handState[other].isKnockedOut) {
+                        total += 250;
+                    } else {
+                        total += calculateCardPoints(handState[other].cardCounts);
+                    }
+                });
+                return total;
+            }
+            return 0; // Non-winners don't earn points
+        }
+
+        function calculateCardPoints(cardCounts) {
+            let total = 0;
+            for (const [card, count] of Object.entries(cardCounts)) {
+                total += (CARD_POINTS[card] || 0) * count;
+            }
+            return total;
+        }
+
+        function renderGame() {
+            renderStandings();
+            renderHandScoring();
+            checkWinner();
+        }
+
+        function renderStandings() {
+            const sorted = players.map(name => ({
+                name,
+                total: getPlayerTotal(name)
+            })).sort((a, b) => b.total - a.total);
+
+            standingsBody.innerHTML = sorted.map((p, i) => {
+                const pct = Math.min(100, (p.total / targetScore) * 100);
+                const isGameWinner = gameOver && p.total >= targetScore && i === 0;
+                const handScores = hands.map(hand => {
+                    const score = hand.scores[p.name] || 0;
+                    const wasWinner = hand.winner === p.name;
+                    const wasKO = hand.knockouts && hand.knockouts.includes(p.name);
+                    if (wasKO) return `<span class="round-score-chip knockout">KO</span>`;
+                    if (wasWinner && score > 0) return `<span class="round-score-chip winner">${score}</span>`;
+                    return `<span class="round-score-chip">${score}</span>`;
+                }).join('');
+
+                return `<tr class="${isGameWinner ? 'winner-row' : ''}">
+                    <td class="rank ${i === 0 ? 'first' : ''}">${i + 1}</td>
+                    <td class="player-name">${esc(p.name)}</td>
+                    <td class="total-score">${p.total}</td>
+                    <td>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar ${pct >= 100 ? 'complete' : ''}" style="width:${pct}%"></div>
+                        </div>
+                    </td>
+                    <td class="round-scores">${handScores || '—'}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        function renderHandScoring() {
+            if (gameOver) {
+                handSection.classList.add('hidden');
+                return;
+            }
+            handSection.classList.remove('hidden');
+
+            handTitle.textContent = `Hand ${currentHand}`;
+            handDealer.textContent = players[getDealerIndex()];
+            undoHandBtn.classList.toggle('hidden', hands.length === 0);
+
+            scoringGrid.innerHTML = players.map(name => {
+                const id = nameToId(name);
+                const state = handState[name];
+
+                // Number cards row
+                const numberBtns = [];
+                for (let n = 0; n <= 9; n++) {
+                    const count = state.cardCounts[String(n)] || 0;
+                    numberBtns.push(`<button class="card-type-btn ${count > 0 ? 'active' : ''}"
+                        data-player="${esc(name)}" data-card="${n}"
+                        onclick="window._addCard('${esc(name)}', '${n}')"
+                        oncontextmenu="event.preventDefault(); window._removeCard('${esc(name)}', '${n}')"
+                        title="Left click: add, Right click: remove">${n}${count > 1 ? '<small>x' + count + '</small>' : count === 1 ? '' : ''}</button>`);
+                }
+
+                // Action cards row
+                const actionBtns = ACTION_CARDS.map(card => {
+                    const count = state.cardCounts[card] || 0;
+                    return `<button class="card-type-btn ${count > 0 ? 'active' : ''}"
+                        data-player="${esc(name)}" data-card="${card}"
+                        onclick="window._addCard('${esc(name)}', '${card}')"
+                        oncontextmenu="event.preventDefault(); window._removeCard('${esc(name)}', '${card}')"
+                        title="Left click: add, Right click: remove">${card}${count > 1 ? '<small>x' + count + '</small>' : ''}</button>`;
+                }).join('');
+
+                // Wild cards row
+                const wildBtns = WILD_CARDS.map(card => {
+                    const count = state.cardCounts[card] || 0;
+                    return `<button class="card-type-btn ${count > 0 ? 'active' : ''}"
+                        data-player="${esc(name)}" data-card="${card}"
+                        onclick="window._addCard('${esc(name)}', '${card}')"
+                        oncontextmenu="event.preventDefault(); window._removeCard('${esc(name)}', '${card}')"
+                        title="Left click: add, Right click: remove">${card}${count > 1 ? '<small>x' + count + '</small>' : ''}</button>`;
+                }).join('');
+
+                const cardPoints = calculateCardPoints(state.cardCounts);
+
+                return `<div class="player-score-card ${state.isWinner ? 'round-winner' : ''} ${state.isKnockedOut ? 'eliminated' : ''}" id="card-${id}">
+                    <div class="player-score-header">
+                        <span class="name">${esc(name)}</span>
+                        <span class="round-total ${state.isWinner ? 'winner-text' : ''}" id="total-${id}">
+                            ${state.isWinner ? calculatePlayerHandScore(name) : (state.isKnockedOut ? 'KO' : cardPoints)}
+                        </span>
+                    </div>
+                    ${state.isWinner ? '<div class="score-breakdown" style="margin-bottom:0.5rem;">Hand winner — points from opponents\' cards</div>' :
+                      state.isKnockedOut ? '<div class="score-breakdown" style="margin-bottom:0.5rem;">Knocked out (Mercy Rule) — cards ignored, winner gets +250</div>' :
+                      `<div style="margin-bottom:0.35rem;">
+                        <div class="card-count-row">${numberBtns.join('')}</div>
+                      </div>
+                      <div style="margin-bottom:0.35rem;">
+                        <div class="card-count-row">${actionBtns}</div>
+                      </div>
+                      <div>
+                        <div class="card-count-row">${wildBtns}</div>
+                      </div>
+                      <div class="score-breakdown" id="breakdown-${id}">${cardPoints > 0 ? cardPoints + ' pts in hand' : ''}</div>`
+                    }
+                    <div class="score-toggles">
+                        <button class="toggle-btn winner-toggle ${state.isWinner ? 'active' : ''}"
+                            onclick="window._toggleWinner('${esc(name)}')">Hand Winner</button>
+                        <button class="toggle-btn ko-toggle ${state.isKnockedOut ? 'active' : ''}"
+                            onclick="window._toggleKO('${esc(name)}')">Knocked Out (${mercyLimit}+ cards)</button>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        // Input handlers
+        window._addCard = function(name, card) {
+            const state = handState[name];
+            if (state.isWinner || state.isKnockedOut) return;
+            state.cardCounts[card] = (state.cardCounts[card] || 0) + 1;
+            renderHandScoring();
+        };
+
+        window._removeCard = function(name, card) {
+            const state = handState[name];
+            if (state.isWinner || state.isKnockedOut) return;
+            if (state.cardCounts[card] && state.cardCounts[card] > 0) {
+                state.cardCounts[card]--;
+                if (state.cardCounts[card] === 0) delete state.cardCounts[card];
+            }
+            renderHandScoring();
+        };
+
+        window._toggleWinner = function(name) {
+            // Only one winner per hand
+            const wasWinner = handState[name].isWinner;
+            players.forEach(p => { handState[p].isWinner = false; });
+            handState[name].isWinner = !wasWinner;
+            handState[name].isKnockedOut = false;
+            renderHandScoring();
+        };
+
+        window._toggleKO = function(name) {
+            handState[name].isKnockedOut = !handState[name].isKnockedOut;
+            if (handState[name].isKnockedOut) {
+                handState[name].isWinner = false;
+                handState[name].cardCounts = {};
+            }
+            renderHandScoring();
+        };
+
+        // Submit hand
+        submitHandBtn.addEventListener('click', () => {
+            // Validate: must have a winner
+            const winner = players.find(p => handState[p].isWinner);
+            if (!winner) {
+                alert('Please select a hand winner before submitting.');
+                return;
+            }
+
+            const scores = {};
+            const knockouts = [];
+
+            players.forEach(name => {
+                if (handState[name].isKnockedOut) {
+                    knockouts.push(name);
+                    scores[name] = 0;
+                } else if (handState[name].isWinner) {
+                    scores[name] = calculatePlayerHandScore(name);
+                } else {
+                    scores[name] = 0;
+                }
+            });
+
+            hands.push({ winner, scores, knockouts });
+            currentHand++;
+            resetHandState();
+            renderGame();
+            saveState();
+        });
+
+        // Undo hand
+        undoHandBtn.addEventListener('click', () => {
+            if (hands.length === 0) return;
+            hands.pop();
+            currentHand = hands.length + 1;
+            gameOver = false;
+            winnerBanner.classList.add('hidden');
+            resetHandState();
+            renderGame();
+            saveState();
+        });
+
+        // Check for game winner
+        function checkWinner() {
+            if (hands.length === 0) return;
+
+            let highScore = -1;
+            let winner = null;
+
+            for (const name of players) {
+                const total = getPlayerTotal(name);
+                if (total >= targetScore && total > highScore) {
+                    highScore = total;
+                    winner = name;
+                }
+            }
+
+            if (winner) {
+                gameOver = true;
+                winnerNameEl.textContent = winner;
+                winnerScoreEl.textContent = `${highScore} points`;
+                winnerBanner.classList.remove('hidden');
+                handSection.classList.add('hidden');
+                saveState();
+            }
+        }
+
+        // Reset
+        resetGameBtn.addEventListener('click', () => {
+            if (!confirm('Are you sure you want to reset the game? All scores will be lost.')) return;
+            resetAll();
+        });
+
+        newGameBtn.addEventListener('click', () => {
+            resetAll();
+        });
+
+        function resetAll() {
+            players = [];
+            hands = [];
+            currentHand = 1;
+            gameStarted = false;
+            gameOver = false;
+            handState = {};
+            localStorage.removeItem('uno-no-mercy-state');
+            setupPhase.classList.remove('hidden');
+            gamePhase.classList.add('hidden');
+            winnerBanner.classList.add('hidden');
+            renderPlayerTags();
+            startGameBtn.disabled = true;
+        }
+
+        // Utilities
+        function nameToId(name) {
+            return name.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
+        }
+
+        function esc(str) {
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
+        // Init
+        if (loadState() && gameStarted) {
+            setupPhase.classList.add('hidden');
+            gamePhase.classList.remove('hidden');
+            resetHandState();
+            renderGame();
+        }
+    })();
+    </script>
+</body>
+</html>

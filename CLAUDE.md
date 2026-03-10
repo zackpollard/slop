@@ -16,7 +16,8 @@ projects/
 ├── cron/                      # Cron expression translator with timeline
 ├── subnet/                    # IPv4 subnet calculator with binary breakdown
 ├── json/                      # JSON formatter, tree viewer, and diff tool
-└── flip-7/                    # Flip 7 card game scoreboard
+├── flip-7/                    # Flip 7 card game scoreboard
+└── uno-no-mercy/              # UNO No Mercy scoreboard
 tofu/                  # OpenTofu infrastructure (Cloudflare Pages + DNS)
 .github/workflows/
 ├── infra.yml          # OpenTofu plan/apply
@@ -35,6 +36,7 @@ tofu/                  # OpenTofu infrastructure (Cloudflare Pages + DNS)
 | subnet | `projects/subnet/` | Static HTML/CSS/JS | IPv4 subnet calculator with binary breakdown |
 | json | `projects/json/` | Static HTML/CSS/JS | JSON formatter, tree viewer, and diff tool |
 | flip-7 | `projects/flip-7/` | Static HTML/CSS/JS | Flip 7 card game scoreboard |
+| uno-no-mercy | `projects/uno-no-mercy/` | Static HTML/CSS/JS | UNO No Mercy scoreboard |
 
 **When adding a new project:**
 1. Create `projects/<project-name>/` with a `README.md`
