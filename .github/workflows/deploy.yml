@@ -44,6 +44,9 @@ jobs:
           - name: flip-7
             pages-project: slop-flip-7
             directory: projects/flip-7
+          - name: uno-no-mercy
+            pages-project: slop-uno-no-mercy
+            directory: projects/uno-no-mercy
     steps:
       - name: Checkout
         uses: actions/checkout@v4

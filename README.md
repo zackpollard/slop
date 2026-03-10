@@ -23,6 +23,7 @@ projects/
 | [subnet](projects/subnet) | [subnet.slop.zackpollard.pro](https://subnet.slop.zackpollard.pro) | IPv4 subnet calculator with binary breakdown |
 | [json](projects/json) | [json.slop.zackpollard.pro](https://json.slop.zackpollard.pro) | JSON formatter, tree viewer, and diff tool |
 | [flip-7](projects/flip-7) | [flip-7.slop.zackpollard.pro](https://flip-7.slop.zackpollard.pro) | Flip 7 card game scoreboard |
+| [uno-no-mercy](projects/uno-no-mercy) | [uno-no-mercy.slop.zackpollard.pro](https://uno-no-mercy.slop.zackpollard.pro) | UNO No Mercy scoreboard |
 
 ## Adding a new project
 

@@ -42,5 +42,8 @@ variable "projects" {
     flip-7 = {
       subdomain = "flip-7.slop"
     }
+    uno-no-mercy = {
+      subdomain = "uno-no-mercy.slop"
+    }
   }
 }
