@@ -19,7 +19,8 @@ projects/
 ├── flip-7/                    # Flip 7 card game scoreboard
 ├── uno-no-mercy/              # UNO No Mercy scoreboard
 ├── exploding-kittens/         # Exploding Kittens game assistant
-└── herd-mentality/            # Herd Mentality game companion
+├── herd-mentality/            # Herd Mentality game companion
+└── texas-holdem/              # Multiplayer Texas Hold'em poker
 tofu/                  # OpenTofu infrastructure (Cloudflare Pages + DNS)
 .github/workflows/
 ├── deploy.yml         # Infrastructure (tofu plan/apply) + production deployment
@@ -40,6 +41,7 @@ tofu/                  # OpenTofu infrastructure (Cloudflare Pages + DNS)
 | uno-no-mercy | `projects/uno-no-mercy/` | Static HTML/CSS/JS | UNO No Mercy scoreboard |
 | exploding-kittens | `projects/exploding-kittens/` | Static HTML/CSS/JS | Exploding Kittens game assistant with card reference and probability calculator |
 | herd-mentality | `projects/herd-mentality/` | Static HTML/CSS/JS | Herd Mentality game companion with question bank and answer collection |
+| texas-holdem | `projects/texas-holdem/` | Static HTML/CSS/JS, PeerJS | Multiplayer Texas Hold'em poker with peer-to-peer networking |
 
 **When adding a new project:**
 1. Create `projects/<project-name>/` with a `README.md`

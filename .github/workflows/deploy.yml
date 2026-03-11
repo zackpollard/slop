@@ -159,6 +159,9 @@ jobs:
           - name: herd-mentality
             pages-project: slop-herd-mentality
             directory: projects/herd-mentality
+          - name: texas-holdem
+            pages-project: slop-texas-holdem
+            directory: projects/texas-holdem
     steps:
       - name: Checkout
         uses: actions/checkout@v4
