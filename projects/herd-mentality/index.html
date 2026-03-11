@@ -1089,27 +1089,33 @@
             switch (data.type) {
                 case 'join': {
                     const name = data.name.trim();
-                    const isRejoin = data.rejoin && disconnectedPlayers.has(name);
+                    if (!name) {
+                        conn.send({ type: 'error', message: 'Name is required' });
+                        return;
+                    }
 
-                    if (isRejoin) {
+                    // Check if this name belongs to a disconnected player — allow reconnect
+                    const existingMatch = players.find(p => p.toLowerCase() === name.toLowerCase());
+                    if (existingMatch && disconnectedPlayers.has(existingMatch)) {
                         // Reconnecting player — restore them
-                        disconnectedPlayers.delete(name);
-                        hostConns.set(name, conn);
-                        // Send them the current game state so they land on the right screen
+                        disconnectedPlayers.delete(existingMatch);
+                        hostConns.set(existingMatch, conn);
                         conn.send({
                             type: 'rejoin',
-                            name, players, scores, cowHolder, gamePhase,
+                            name: existingMatch, players, scores, cowHolder, gamePhase,
                             round: roundNumber, question: currentQuestion,
-                            hasAnswered: !!answers[name]
+                            hasAnswered: !!answers[existingMatch]
                         });
                         broadcastLobby();
                         break;
                     }
 
-                    if (!name || players.some(p => p.toLowerCase() === name.toLowerCase())) {
-                        conn.send({ type: 'error', message: 'Name already taken or invalid' });
+                    // Name taken by a connected player
+                    if (existingMatch) {
+                        conn.send({ type: 'error', message: 'Name already taken' });
                         return;
                     }
+
                     hostConns.set(name, conn);
                     players.push(name);
                     if (!(name in scores)) scores[name] = 0;
