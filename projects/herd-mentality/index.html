@@ -1425,16 +1425,14 @@
                 }
             }
 
-            // Pink cow: if there's a herd, any player who gave a unique answer
-            // (group of 1, not in the herd) gets the cow
-            if (hasHerd) {
-                const uniqueAnswerPlayers = sorted.slice(1)
-                    .filter(g => g.players.length === 1)
-                    .flatMap(g => g.players);
-                if (uniqueAnswerPlayers.length === 1) {
-                    cowHolder = uniqueAnswerPlayers[0];
-                }
-                // If multiple people had unique answers or nobody did, cow stays
+            // Pink cow: if exactly one player wrote an answer that nobody
+            // else wrote (group of 1), they're the odd one out and get the cow.
+            // If zero or 2+ players had unique answers, cow doesn't transfer.
+            const uniqueAnswerPlayers = sorted
+                .filter(g => g.players.length === 1)
+                .flatMap(g => g.players);
+            if (uniqueAnswerPlayers.length === 1) {
+                cowHolder = uniqueAnswerPlayers[0];
             }
 
             const resultsData = {
