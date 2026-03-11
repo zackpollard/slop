@@ -716,6 +716,38 @@
             background: rgba(74, 158, 110, 0.1);
         }
 
+        .submission-chip.disconnected {
+            border-color: var(--color-error);
+            color: var(--color-error);
+            background: rgba(196, 94, 78, 0.1);
+        }
+
+        .edit-score-btn {
+            font-family: var(--font-body);
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 0.3rem 0.6rem;
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: 6px;
+            color: var(--color-text-muted);
+            cursor: pointer;
+            transition: all 0.15s;
+            margin-left: 0.5rem;
+        }
+
+        .edit-score-btn:hover {
+            border-color: var(--color-accent);
+            color: var(--color-accent);
+        }
+
+        .disconnected-badge {
+            font-size: 0.7rem;
+            color: var(--color-error);
+            margin-left: 0.5rem;
+            font-weight: 600;
+        }
+
         .waiting-message {
             text-align: center;
             padding: 2rem 1rem;
@@ -875,6 +907,16 @@
                         <div class="code" id="room-code-display"></div>
                         <p style="font-size:0.8rem; color:var(--color-text-muted); margin-top:0.5rem;">Share this code with other players</p>
                     </div>
+                    <div style="margin-top:1.25rem;">
+                        <h2>Add Local Player</h2>
+                        <p style="font-size:0.8rem; color:var(--color-text-muted); margin-bottom:0.5rem;">For players without a device — you'll enter their scores</p>
+                        <div class="setup-row">
+                            <div class="field">
+                                <input type="text" id="host-local-player-input" placeholder="Enter player name" maxlength="20">
+                            </div>
+                            <button class="btn btn-primary" id="host-add-local-btn" style="margin-bottom:1px;">Add</button>
+                        </div>
+                    </div>
                     <h2 style="margin-top:1.25rem;">Players in Lobby</h2>
                     <div class="lobby-players" id="host-lobby-players"></div>
                     <div class="actions-row" style="margin-top:1.25rem;">
@@ -1029,6 +1071,9 @@
         let lobbyPlayers = []; // [{name, isHost, peerId}]
         let peerSubmissions = {}; // host tracks: {playerName: scoreData}
         let myScoreSubmitted = false;
+        let hostEditingPlayers = new Set(); // host manually editing these remote players
+        let disconnectedPlayers = new Set(); // players currently disconnected
+        let localPlayers = new Set(); // players added locally by host (no device)
 
         const NUMBER_CARDS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
         const MODIFIER_CARDS = ['+2', '+4', '+6', '+8', '+10'];
@@ -1068,6 +1113,8 @@
         const hostLobbyPlayers = document.getElementById('host-lobby-players');
         const hostBackBtn = document.getElementById('host-back-btn');
         const hostStartBtn = document.getElementById('host-start-btn');
+        const hostLocalPlayerInput = document.getElementById('host-local-player-input');
+        const hostAddLocalBtn = document.getElementById('host-add-local-btn');
 
         // Join lobby
         const joinCodeInput = document.getElementById('join-code-input');
@@ -1273,7 +1320,49 @@
                 const name = data.name.trim().substring(0, 20);
                 if (!name) return;
 
-                // Check for duplicate names
+                // Check if this is a reconnection during an active game
+                if (gameStarted && players.includes(name) && name !== myName) {
+                    // Reconnecting player - update their connection
+                    // Remove old connection entry for this player
+                    for (const [peerId, info] of Object.entries(connections)) {
+                        if (info.playerName === name) {
+                            delete connections[peerId];
+                            break;
+                        }
+                    }
+                    connections[conn.peer] = { conn, playerName: name };
+                    disconnectedPlayers.delete(name);
+
+                    // Update lobby player entry
+                    const lobbyEntry = lobbyPlayers.find(p => p.name === name);
+                    if (lobbyEntry) {
+                        lobbyEntry.peerId = conn.peer;
+                    }
+
+                    // Send rejoin-ok with current game state
+                    conn.send({
+                        type: 'rejoin-ok',
+                        players: players,
+                        rounds: rounds,
+                        currentRound: currentRound,
+                        gameOver: gameOver
+                    });
+
+                    // If host was manually editing this player, stop
+                    hostEditingPlayers.delete(name);
+
+                    updateMpPlayerCount();
+                    renderGame();
+                    return;
+                }
+
+                // Block new players after game has started
+                if (gameStarted) {
+                    conn.send({ type: 'join-error', message: 'Game already in progress. You can only rejoin with your original name.' });
+                    return;
+                }
+
+                // Check for duplicate names in lobby
                 const allNames = lobbyPlayers.map(p => p.name);
                 if (myName) allNames.push(myName);
                 if (allNames.includes(name)) {
@@ -1307,7 +1396,10 @@
                     // During game, mark as disconnected but keep player
                     if (connections[conn.peer]) {
                         connections[conn.peer].disconnected = true;
+                        disconnectedPlayers.add(info.playerName);
                     }
+                    updateMpPlayerCount();
+                    renderGame();
                 }
             }
         }
@@ -1332,15 +1424,29 @@
 
         function renderHostLobby() {
             const allPlayers = [];
-            if (myName) allPlayers.push({ name: myName, isHost: true });
+            if (myName) allPlayers.push({ name: myName, isHost: true, isLocal: false });
             allPlayers.push(...lobbyPlayers);
 
             hostLobbyPlayers.innerHTML = allPlayers.length === 0
                 ? '<span style="color:var(--color-text-muted); font-size:0.85rem;">No players yet</span>'
-                : allPlayers.map(p =>
-                    `<span class="lobby-player">${esc(p.name)}${p.isHost ? '<span class="host-badge">(host)</span>' : ''}</span>`
-                ).join('');
+                : allPlayers.map(p => {
+                    let badge = '';
+                    if (p.isHost) badge = '<span class="host-badge">(host)</span>';
+                    else if (p.isLocal) badge = '<span class="host-badge">(local)</span>';
+                    const removeBtn = p.isLocal && !gameStarted
+                        ? `<button onclick="window._removeLocalPlayer('${esc(p.name)}')" style="background:none;border:none;color:var(--color-accent);cursor:pointer;font-size:1rem;line-height:1;padding:0;opacity:0.7;">&times;</button>`
+                        : '';
+                    return `<span class="lobby-player">${esc(p.name)}${badge}${removeBtn}</span>`;
+                }).join('');
         }
+
+        window._removeLocalPlayer = function(name) {
+            lobbyPlayers = lobbyPlayers.filter(p => p.name !== name);
+            localPlayers.delete(name);
+            broadcastLobbyUpdate();
+            renderHostLobby();
+            updateHostStartBtn();
+        };
 
         function updateHostStartBtn() {
             const totalPlayers = (myName ? 1 : 0) + lobbyPlayers.length;
@@ -1370,6 +1476,35 @@
                 hostSetNameBtn.click();
             }
             hostNameInput.style.borderColor = '';
+        });
+
+        function addLocalPlayer() {
+            const name = hostLocalPlayerInput.value.trim().substring(0, 20);
+            if (!name) return;
+            // Check for duplicate against all players
+            const allNames = lobbyPlayers.map(p => p.name);
+            if (myName) allNames.push(myName);
+            if (allNames.includes(name)) {
+                hostLocalPlayerInput.style.borderColor = 'var(--color-error)';
+                return;
+            }
+            hostLocalPlayerInput.style.borderColor = '';
+            lobbyPlayers.push({ name, isHost: false, peerId: null, isLocal: true });
+            localPlayers.add(name);
+            hostLocalPlayerInput.value = '';
+            hostLocalPlayerInput.focus();
+            broadcastLobbyUpdate();
+            renderHostLobby();
+            updateHostStartBtn();
+        }
+
+        hostAddLocalBtn.addEventListener('click', addLocalPlayer);
+        hostLocalPlayerInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                addLocalPlayer();
+            }
+            hostLocalPlayerInput.style.borderColor = '';
         });
 
         hostBackBtn.addEventListener('click', () => {
@@ -1512,6 +1647,22 @@
             if (data.type === 'join-ok') {
                 joinConnecting.classList.add('hidden');
                 joinWaiting.classList.remove('hidden');
+            } else if (data.type === 'rejoin-ok') {
+                // Reconnecting to an active game
+                players = data.players;
+                rounds = data.rounds;
+                currentRound = data.currentRound;
+                gameOver = data.gameOver;
+                gameStarted = true;
+                myScoreSubmitted = false;
+                resetRoundState();
+
+                showPhase(gamePhase);
+                showMpBanner();
+                renderGame();
+                if (gameOver) {
+                    checkWinner();
+                }
             } else if (data.type === 'join-error') {
                 showJoinError(data.message || 'Could not join.');
                 joinConnecting.classList.add('hidden');
@@ -1604,6 +1755,9 @@
             lobbyPlayers = [];
             peerSubmissions = {};
             myScoreSubmitted = false;
+            hostEditingPlayers.clear();
+            disconnectedPlayers.clear();
+            localPlayers.clear();
             myName = '';
             roomCode = '';
         }
@@ -1705,29 +1859,38 @@
                 // Show submission status
                 renderSubmissionStatus();
 
-                // In host multiplayer, show host's own card as editable, remote players as read-only/status
-                const playersToRender = players;
-                scoringGrid.innerHTML = playersToRender.map(name => {
-                    const id = nameToId(name);
+                // In host multiplayer, show host's own card as editable, remote players contextually
+                scoringGrid.innerHTML = players.map(name => {
                     const isRemote = name !== myName;
+                    const isLocal = localPlayers.has(name);
                     const hasSubmitted = isRemote && peerSubmissions[name];
+                    const isDisconnected = disconnectedPlayers.has(name);
+                    const isHostEditing = hostEditingPlayers.has(name);
 
-                    if (isRemote && hasSubmitted) {
-                        // Show submitted score (read-only summary)
-                        return renderSubmittedCard(name, peerSubmissions[name]);
-                    } else if (isRemote && !hasSubmitted) {
-                        // Show waiting card
-                        return renderWaitingCard(name);
-                    } else {
-                        // Host's own card - editable
+                    if (!isRemote || isLocal) {
+                        // Host's own card or local player - always editable by host
                         return renderEditableCard(name);
+                    } else if (isHostEditing) {
+                        // Host is manually editing this remote player's score
+                        return renderEditableCard(name, true);
+                    } else if (hasSubmitted) {
+                        // Show submitted score with edit override button
+                        return renderSubmittedCard(name, peerSubmissions[name]);
+                    } else if (isDisconnected) {
+                        // Disconnected and hasn't submitted - show disconnected card with edit option
+                        return renderDisconnectedCard(name);
+                    } else {
+                        // Connected but waiting for submission
+                        return renderWaitingCard(name);
                     }
                 }).join('');
 
-                // Update submit button text
+                // Update submit button - enable when all remote players have submitted, are local, or are being host-edited
                 submitRoundBtn.textContent = 'Submit Round';
-                const allRemoteSubmitted = players.filter(n => n !== myName).every(n => peerSubmissions[n]);
-                submitRoundBtn.disabled = !allRemoteSubmitted && players.filter(n => n !== myName).length > 0;
+                const allRemoteReady = players.filter(n => n !== myName).every(n =>
+                    peerSubmissions[n] || hostEditingPlayers.has(n) || localPlayers.has(n)
+                );
+                submitRoundBtn.disabled = !allRemoteReady;
             } else {
                 // Single device mode - all editable
                 submissionStatus.classList.add('hidden');
@@ -1736,14 +1899,14 @@
                 submitRoundBtn.disabled = false;
             }
 
-            // Initialize round state for rendered players
+            // Initialize round state and update display for editable cards
             players.forEach(name => {
                 const id = nameToId(name);
                 if (!roundState[id]) {
                     roundState[id] = { cards: [], modifiers: [], x2: false, flip7: false, bust: false };
                 }
-                // Only update display for editable cards
-                if (gameMode === 'single' || name === myName) {
+                const isEditable = gameMode === 'single' || name === myName || hostEditingPlayers.has(name) || localPlayers.has(name);
+                if (isEditable) {
                     updatePlayerRoundDisplay(id);
                 }
             });
@@ -1776,11 +1939,13 @@
             updatePlayerRoundDisplay(id);
         }
 
-        function renderEditableCard(name) {
+        function renderEditableCard(name, hostOverride) {
             const id = nameToId(name);
+            const isDisconnected = disconnectedPlayers.has(name);
+            const showOverrideLabel = hostOverride && gameMode === 'host';
             return `<div class="player-score-card" id="card-${id}">
                 <div class="player-score-header">
-                    <span class="name">${esc(name)}</span>
+                    <span class="name">${esc(name)}${showOverrideLabel ? '<span class="disconnected-badge">(editing)</span>' : ''}${isDisconnected && showOverrideLabel ? '<span class="disconnected-badge">DISCONNECTED</span>' : ''}</span>
                     <span class="round-total" id="total-${id}">0</span>
                 </div>
                 <div class="card-input-area">
@@ -1812,7 +1977,7 @@
             const isBust = scoreData.bust;
             return `<div class="player-score-card submitted ${isBust ? 'bust' : ''}" id="card-${id}">
                 <div class="player-score-header">
-                    <span class="name">${esc(name)}</span>
+                    <span class="name">${esc(name)}<button class="edit-score-btn" onclick="window._hostEditPlayer('${esc(name)}')">Edit</button></span>
                     <span class="round-total ${isBust ? 'bust-text' : ''}">${isBust ? 'BUST' : score}</span>
                 </div>
                 <div class="score-breakdown" style="margin-top:0;">
@@ -1825,7 +1990,7 @@
             const id = nameToId(name);
             return `<div class="player-score-card" id="card-${id}" style="opacity:0.5;">
                 <div class="player-score-header">
-                    <span class="name">${esc(name)}</span>
+                    <span class="name">${esc(name)}<button class="edit-score-btn" onclick="window._hostEditPlayer('${esc(name)}')">Enter Score</button></span>
                     <span class="round-total" style="color:var(--color-text-muted);">...</span>
                 </div>
                 <div class="waiting-message" style="padding:0.5rem 0;">
@@ -1833,6 +1998,27 @@
                 </div>
             </div>`;
         }
+
+        function renderDisconnectedCard(name) {
+            const id = nameToId(name);
+            return `<div class="player-score-card" id="card-${id}" style="border-color: var(--color-error); opacity:0.8;">
+                <div class="player-score-header">
+                    <span class="name">${esc(name)}<span class="disconnected-badge">DISCONNECTED</span></span>
+                    <span class="round-total" style="color:var(--color-text-muted);">...</span>
+                </div>
+                <div style="display:flex; align-items:center; gap:0.75rem; padding:0.5rem 0;">
+                    <span style="font-size:0.85rem; color:var(--color-text-muted);">Player disconnected.</span>
+                    <button class="btn btn-sm btn-primary" onclick="window._hostEditPlayer('${esc(name)}')">Enter Score</button>
+                </div>
+            </div>`;
+        }
+
+        window._hostEditPlayer = function(name) {
+            // Remove peer submission if any (host is overriding)
+            delete peerSubmissions[name];
+            hostEditingPlayers.add(name);
+            renderGame();
+        };
 
         function formatScoreBreakdown(data) {
             const parts = [];
@@ -1854,9 +2040,28 @@
                 return;
             }
             submissionStatus.classList.remove('hidden');
-            submissionStatus.innerHTML = players.filter(n => n !== myName).map(name => {
+            const remotePlayers = players.filter(n => n !== myName && !localPlayers.has(n));
+            if (remotePlayers.length === 0) {
+                submissionStatus.classList.add('hidden');
+                return;
+            }
+            submissionStatus.innerHTML = remotePlayers.map(name => {
                 const submitted = !!peerSubmissions[name];
-                return `<span class="submission-chip ${submitted ? 'submitted' : ''}">${esc(name)}${submitted ? ' ✓' : ''}</span>`;
+                const isDisconnected = disconnectedPlayers.has(name);
+                const isHostEditing = hostEditingPlayers.has(name);
+                let cls = '';
+                let label = esc(name);
+                if (submitted) {
+                    cls = 'submitted';
+                    label += ' ✓';
+                } else if (isHostEditing) {
+                    cls = 'submitted';
+                    label += ' (host)';
+                } else if (isDisconnected) {
+                    cls = 'disconnected';
+                    label += ' ✗';
+                }
+                return `<span class="submission-chip ${cls}">${label}</span>`;
             }).join('');
         }
 
@@ -2003,10 +2208,27 @@
                 };
             }
 
-            // Peer submissions
+            // Peer submissions, local players, and host-edited players
             players.forEach(name => {
                 if (name === myName) return;
-                if (peerSubmissions[name]) {
+                if (localPlayers.has(name) || hostEditingPlayers.has(name)) {
+                    // Host manually entered this player's score
+                    const id = nameToId(name);
+                    const state = roundState[id];
+                    if (state) {
+                        const score = calculateRoundScore(state);
+                        roundResult[name] = {
+                            cards: [...state.cards],
+                            modifiers: [...state.modifiers],
+                            x2: state.x2,
+                            flip7: state.flip7,
+                            bust: state.bust,
+                            score
+                        };
+                    } else {
+                        roundResult[name] = { cards: [], modifiers: [], x2: false, flip7: false, bust: true, score: 0 };
+                    }
+                } else if (peerSubmissions[name]) {
                     roundResult[name] = peerSubmissions[name];
                 } else {
                     // Player didn't submit - give them 0 (bust)
@@ -2018,6 +2240,7 @@
             currentRound++;
             resetRoundState();
             peerSubmissions = {};
+            hostEditingPlayers.clear();
 
             // Broadcast state update to all peers
             broadcastToAll({
@@ -2087,6 +2310,7 @@
             winnerBanner.classList.add('hidden');
             resetRoundState();
             peerSubmissions = {};
+            hostEditingPlayers.clear();
 
             if (gameMode === 'host') {
                 broadcastToAll({
