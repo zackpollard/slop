@@ -1296,9 +1296,25 @@
                     return;
                 }
                 console.error('Host peer error:', err);
-                hostConnecting.innerHTML = `<span class="connection-dot error"></span><span>Failed to create room. Please try again.</span>`;
+                if (gameStarted) {
+                    startHostReconnect();
+                } else {
+                    hostConnecting.innerHTML = `<span class="connection-dot error"></span><span>Failed to create room. Please try again.</span>`;
+                }
             });
 
+            peer.on('disconnected', () => {
+                // PeerJS lost connection to signaling server
+                if (gameStarted) {
+                    startHostReconnect();
+                }
+            });
+
+            setupHostConnectionHandler();
+        }
+
+        function setupHostConnectionHandler() {
+            if (!peer) return;
             peer.on('connection', (conn) => {
                 conn.on('open', () => {
                     // Wait for join message
@@ -1315,6 +1331,87 @@
                 conn.on('error', () => {
                     handlePeerDisconnect(conn);
                 });
+            });
+        }
+
+        // =====================================================================
+        // HOST AUTO-RECONNECT
+        // =====================================================================
+        let hostReconnectAttempts = 0;
+        let hostReconnectTimer = null;
+        const MAX_HOST_RECONNECT_ATTEMPTS = 15;
+
+        function startHostReconnect() {
+            if (hostReconnectTimer) return;
+            hostReconnectAttempts = 0;
+            // Mark all remote peers as disconnected
+            for (const [peerId, info] of Object.entries(connections)) {
+                info.disconnected = true;
+                disconnectedPlayers.add(info.playerName);
+            }
+            connections = {};
+            mpConnectionDot.classList.remove('connected');
+            mpConnectionDot.classList.add('error');
+            updateMpPlayerCount();
+            renderGame();
+            showReconnectBanner('host');
+            attemptHostReconnect();
+        }
+
+        function attemptHostReconnect() {
+            if (!gameStarted || !roomCode) return;
+            if (hostReconnectAttempts >= MAX_HOST_RECONNECT_ATTEMPTS) {
+                showReconnectFailed('host');
+                return;
+            }
+
+            const delay = Math.min(1000 * Math.pow(1.5, hostReconnectAttempts), 15000);
+            hostReconnectAttempts++;
+            updateReconnectBanner(hostReconnectAttempts, MAX_HOST_RECONNECT_ATTEMPTS);
+
+            hostReconnectTimer = setTimeout(() => {
+                hostReconnectTimer = null;
+                doHostReconnect();
+            }, delay);
+        }
+
+        function doHostReconnect() {
+            if (!gameStarted || !roomCode) return;
+
+            // Destroy old peer cleanly
+            if (peer) {
+                try { peer.destroy(); } catch(e) {}
+                peer = null;
+            }
+
+            peer = new Peer('flip7-' + roomCode, { debug: 0 });
+
+            peer.on('open', () => {
+                // Successfully re-registered with the same room code
+                hostReconnectAttempts = 0;
+                hostReconnectTimer = null;
+                hideReconnectBanner();
+                mpConnectionDot.classList.remove('error');
+                mpConnectionDot.classList.add('connected');
+                updateMpPlayerCount();
+                // Peers will reconnect on their own and send join messages
+                setupHostConnectionHandler();
+            });
+
+            peer.on('error', (err) => {
+                console.error('Host reconnect error:', err);
+                if (err.type === 'unavailable-id') {
+                    // Our old ID is still reserved, wait and retry
+                    setTimeout(() => attemptHostReconnect(), 2000);
+                } else {
+                    attemptHostReconnect();
+                }
+            });
+
+            peer.on('disconnected', () => {
+                if (gameStarted) {
+                    attemptHostReconnect();
+                }
             });
         }
 
@@ -1654,20 +1751,20 @@
         function startAutoReconnect() {
             if (reconnectTimer) return; // already reconnecting
             reconnectAttempts = 0;
-            showReconnectBanner();
+            showReconnectBanner('peer');
             attemptReconnect();
         }
 
         function attemptReconnect() {
             if (!gameStarted || !roomCode || !myName) return;
             if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-                showReconnectFailed();
+                showReconnectFailed('peer');
                 return;
             }
 
             const delay = Math.min(1000 * Math.pow(1.5, reconnectAttempts), 15000);
             reconnectAttempts++;
-            updateReconnectBanner(reconnectAttempts);
+            updateReconnectBanner(reconnectAttempts, MAX_RECONNECT_ATTEMPTS);
 
             reconnectTimer = setTimeout(() => {
                 reconnectTimer = null;
@@ -1734,7 +1831,10 @@
             });
         }
 
-        function showReconnectBanner() {
+        // =====================================================================
+        // SHARED RECONNECT UI
+        // =====================================================================
+        function showReconnectBanner(mode) {
             let banner = document.getElementById('reconnect-banner');
             if (!banner) {
                 banner = document.createElement('div');
@@ -1743,20 +1843,23 @@
                 const mpBannerEl = document.getElementById('mp-banner');
                 mpBannerEl.parentNode.insertBefore(banner, mpBannerEl.nextSibling);
             }
+            banner.style.borderColor = 'var(--color-accent)';
+            banner.style.background = 'rgba(196,162,78,0.15)';
+            const label = mode === 'host' ? 'Re-establishing room...' : 'Reconnecting...';
             banner.innerHTML = `
                 <div style="display:flex; align-items:center; gap:0.5rem;">
                     <span class="spinner" style="width:16px; height:16px; border-width:2px;"></span>
-                    <span id="reconnect-text">Reconnecting...</span>
+                    <span id="reconnect-text">${label}</span>
                 </div>
                 <button class="btn btn-sm" onclick="window._cancelReconnect()" style="font-size:0.75rem;">Cancel</button>
             `;
             banner.classList.remove('hidden');
         }
 
-        function updateReconnectBanner(attempt) {
+        function updateReconnectBanner(attempt, max) {
             const text = document.getElementById('reconnect-text');
             if (text) {
-                text.textContent = `Reconnecting... (attempt ${attempt}/${MAX_RECONNECT_ATTEMPTS})`;
+                text.textContent = `Reconnecting... (attempt ${attempt}/${max})`;
             }
         }
 
@@ -1765,14 +1868,15 @@
             if (banner) banner.classList.add('hidden');
         }
 
-        function showReconnectFailed() {
+        function showReconnectFailed(mode) {
             const banner = document.getElementById('reconnect-banner');
             if (banner) {
                 banner.style.borderColor = 'var(--color-error)';
                 banner.style.background = 'rgba(196,94,78,0.15)';
+                const label = mode === 'host' ? 'Lost connection to server' : 'Disconnected from host';
                 banner.innerHTML = `
                     <div style="display:flex; align-items:center; gap:0.5rem;">
-                        <span style="color:var(--color-error); font-weight:600;">Disconnected from host</span>
+                        <span style="color:var(--color-error); font-weight:600;">${label}</span>
                     </div>
                     <button class="btn btn-sm btn-primary" onclick="window._retryReconnect()" style="font-size:0.75rem;">Retry</button>
                 `;
@@ -1780,34 +1884,53 @@
         }
 
         window._cancelReconnect = function() {
-            if (reconnectTimer) {
-                clearTimeout(reconnectTimer);
-                reconnectTimer = null;
+            if (gameMode === 'host') {
+                if (hostReconnectTimer) {
+                    clearTimeout(hostReconnectTimer);
+                    hostReconnectTimer = null;
+                }
+                hostReconnectAttempts = MAX_HOST_RECONNECT_ATTEMPTS;
+                showReconnectFailed('host');
+            } else {
+                if (reconnectTimer) {
+                    clearTimeout(reconnectTimer);
+                    reconnectTimer = null;
+                }
+                reconnectAttempts = MAX_RECONNECT_ATTEMPTS;
+                showReconnectFailed('peer');
             }
-            reconnectAttempts = MAX_RECONNECT_ATTEMPTS;
-            showReconnectFailed();
         };
 
         window._retryReconnect = function() {
-            reconnectAttempts = 0;
-            const banner = document.getElementById('reconnect-banner');
-            if (banner) {
-                banner.style.borderColor = 'var(--color-accent)';
-                banner.style.background = 'rgba(196,162,78,0.15)';
+            if (gameMode === 'host') {
+                hostReconnectAttempts = 0;
+                showReconnectBanner('host');
+                attemptHostReconnect();
+            } else {
+                reconnectAttempts = 0;
+                showReconnectBanner('peer');
+                attemptReconnect();
             }
-            showReconnectBanner();
-            attemptReconnect();
         };
 
         // Detect visibility change (screen on/off) to trigger reconnect check
         document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'visible' && gameStarted && gameMode === 'peer') {
-                // Check if connection is still alive
+            if (document.visibilityState !== 'visible' || !gameStarted) return;
+
+            if (gameMode === 'peer') {
                 if (!hostConn || !hostConn.open) {
                     mpConnectionDot.classList.remove('connected');
                     mpConnectionDot.classList.add('error');
                     if (!reconnectTimer && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
                         startAutoReconnect();
+                    }
+                }
+            } else if (gameMode === 'host') {
+                if (!peer || peer.disconnected || peer.destroyed) {
+                    mpConnectionDot.classList.remove('connected');
+                    mpConnectionDot.classList.add('error');
+                    if (!hostReconnectTimer && hostReconnectAttempts < MAX_HOST_RECONNECT_ATTEMPTS) {
+                        startHostReconnect();
                     }
                 }
             }
@@ -1943,6 +2066,11 @@
                 reconnectTimer = null;
             }
             reconnectAttempts = 0;
+            if (hostReconnectTimer) {
+                clearTimeout(hostReconnectTimer);
+                hostReconnectTimer = null;
+            }
+            hostReconnectAttempts = 0;
             hideReconnectBanner();
             myName = '';
             roomCode = '';
