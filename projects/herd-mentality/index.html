@@ -179,6 +179,12 @@
             border-color: rgba(74, 158, 110, 0.4);
         }
 
+        .player-tag.disconnected {
+            opacity: 0.5;
+            background: rgba(196, 94, 78, 0.1);
+            border-color: rgba(196, 94, 78, 0.3);
+        }
+
         /* Scoreboard */
         .scoreboard {
             margin-bottom: 1.25rem;
@@ -860,7 +866,8 @@
         let peer = null;
 
         // Host state
-        let hostConns = new Map();
+        let hostConns = new Map();       // name -> DataConnection
+        let disconnectedPlayers = new Set(); // names of disconnected players still in game
         let players = [];
         let scores = {};
         let cowHolder = null;
@@ -869,8 +876,10 @@
         let answers = {};
         let usedQuestionIndices = new Set();
         let activeCategories = new Set(allCategories);
-        let mergeGroups = []; // working merge state
+        let mergeGroups = [];
         let mergeSelected = -1;
+        let mooTimeout = null;
+        let gamePhase = 'lobby'; // 'lobby' | 'question' | 'answering' | 'merge' | 'results'
 
         // Player state
         let playerConn = null;
@@ -903,6 +912,53 @@
             let code = '';
             for (let i = 0; i < 4; i++) code += chars[Math.floor(Math.random() * chars.length)];
             return code;
+        }
+
+        // ── Moo sound via Web Audio API ──────────────────────────
+        function playMoo() {
+            try {
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                const duration = 1.2;
+                const osc1 = ctx.createOscillator();
+                const osc2 = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc1.type = 'sawtooth';
+                osc2.type = 'sine';
+                osc1.frequency.setValueAtTime(150, ctx.currentTime);
+                osc1.frequency.linearRampToValueAtTime(120, ctx.currentTime + duration);
+                osc2.frequency.setValueAtTime(148, ctx.currentTime);
+                osc2.frequency.linearRampToValueAtTime(118, ctx.currentTime + duration);
+                gain.gain.setValueAtTime(0.3, ctx.currentTime);
+                gain.gain.linearRampToValueAtTime(0.4, ctx.currentTime + 0.15);
+                gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + duration);
+                osc1.connect(gain);
+                osc2.connect(gain);
+                gain.connect(ctx.destination);
+                osc1.start(ctx.currentTime);
+                osc2.start(ctx.currentTime);
+                osc1.stop(ctx.currentTime + duration);
+                osc2.stop(ctx.currentTime + duration);
+            } catch (e) { /* audio not supported */ }
+        }
+
+        // ── Session persistence ──────────────────────────────────
+        function saveSession() {
+            try {
+                sessionStorage.setItem('herd-session', JSON.stringify({
+                    role, myName, roomCode, gamePhase
+                }));
+            } catch (e) { /* ignore */ }
+        }
+
+        function loadSession() {
+            try {
+                const data = sessionStorage.getItem('herd-session');
+                return data ? JSON.parse(data) : null;
+            } catch (e) { return null; }
+        }
+
+        function clearSession() {
+            try { sessionStorage.removeItem('herd-session'); } catch (e) { /* ignore */ }
         }
 
         // ── Scoreboard rendering ───────────────────────────────────
@@ -1010,7 +1066,17 @@
                     for (const [name, c] of hostConns.entries()) {
                         if (c === conn) {
                             hostConns.delete(name);
-                            players = players.filter(p => p !== name);
+                            if (gamePhase === 'lobby') {
+                                // In lobby, fully remove them
+                                players = players.filter(p => p !== name);
+                            } else {
+                                // Mid-game: mark as disconnected, don't remove
+                                disconnectedPlayers.add(name);
+                                // If we're waiting for their answer, check if we can proceed
+                                if (gamePhase === 'answering') {
+                                    checkAllAnswered();
+                                }
+                            }
                             broadcastLobby();
                             break;
                         }
@@ -1023,6 +1089,23 @@
             switch (data.type) {
                 case 'join': {
                     const name = data.name.trim();
+                    const isRejoin = data.rejoin && disconnectedPlayers.has(name);
+
+                    if (isRejoin) {
+                        // Reconnecting player — restore them
+                        disconnectedPlayers.delete(name);
+                        hostConns.set(name, conn);
+                        // Send them the current game state so they land on the right screen
+                        conn.send({
+                            type: 'rejoin',
+                            name, players, scores, cowHolder, gamePhase,
+                            round: roundNumber, question: currentQuestion,
+                            hasAnswered: !!answers[name]
+                        });
+                        broadcastLobby();
+                        break;
+                    }
+
                     if (!name || players.some(p => p.toLowerCase() === name.toLowerCase())) {
                         conn.send({ type: 'error', message: 'Name already taken or invalid' });
                         return;
@@ -1063,18 +1146,40 @@
 
         function broadcastProgress() {
             const answered = Object.keys(answers);
-            broadcast({ type: 'progress', answered, total: players.length });
+            const activePlayers = players.filter(p => !disconnectedPlayers.has(p));
+            broadcast({ type: 'progress', answered, total: activePlayers.length });
             renderHostWaiting();
+
+            // Moo timer: if exactly 1 active player hasn't answered, start 5s timer
+            if (mooTimeout) { clearTimeout(mooTimeout); mooTimeout = null; }
+            const unanswered = activePlayers.filter(p => !answers[p]);
+            if (unanswered.length === 1) {
+                const lastPlayer = unanswered[0];
+                mooTimeout = setTimeout(() => {
+                    // Tell that player to moo
+                    if (lastPlayer === myName) {
+                        playMoo();
+                    } else {
+                        const conn = hostConns.get(lastPlayer);
+                        if (conn) try { conn.send({ type: 'moo' }); } catch (e) { /* */ }
+                    }
+                }, 5000);
+            }
         }
 
         function checkAllAnswered() {
-            if (Object.keys(answers).length >= players.length) {
+            const activePlayers = players.filter(p => !disconnectedPlayers.has(p));
+            const answeredCount = activePlayers.filter(p => answers[p]).length;
+            if (answeredCount >= activePlayers.length) {
+                if (mooTimeout) { clearTimeout(mooTimeout); mooTimeout = null; }
                 showMergeScreen();
             }
         }
 
         // ── Lobby ──────────────────────────────────────────────────
         function showLobby() {
+            gamePhase = 'lobby';
+            saveSession();
             $('lobby-room-code').textContent = roomCode;
             renderLobby();
             if (role === 'host') {
@@ -1135,6 +1240,8 @@
         }
 
         function showHostQuestion() {
+            gamePhase = 'question';
+            saveSession();
             $('hq-round').textContent = 'Round ' + roundNumber;
             $('hq-question').textContent = currentQuestion;
             $('hq-custom-input').value = '';
@@ -1180,6 +1287,8 @@
 
         $('hq-send-btn').addEventListener('click', () => {
             answers = {};
+            gamePhase = 'answering';
+            saveSession();
             broadcast({ type: 'question', round: roundNumber, question: currentQuestion });
             showHostAnswering();
         });
@@ -1233,17 +1342,22 @@
         function renderHostWaiting() {
             const el = $('hw-players');
             const answeredSet = new Set(Object.keys(answers));
+            const activePlayers = players.filter(p => !disconnectedPlayers.has(p));
             el.innerHTML = players.map(name => {
                 const done = answeredSet.has(name);
-                return `<span class="player-tag${done ? ' answered' : ''}">
-                    ${done ? '&#10003; ' : ''}${esc(name)}
+                const dc = disconnectedPlayers.has(name);
+                return `<span class="player-tag${done ? ' answered' : ''}${dc ? ' disconnected' : ''}">
+                    ${done ? '&#10003; ' : ''}${dc ? '&#x2715; ' : ''}${esc(name)}${dc ? ' <span style="font-size:0.75rem;color:var(--color-error)">(left)</span>' : ''}
                 </span>`;
             }).join('');
-            $('hw-progress').textContent = `${answeredSet.size} of ${players.length} answered`;
+            const answeredActive = activePlayers.filter(p => answeredSet.has(p)).length;
+            $('hw-progress').textContent = `${answeredActive} of ${activePlayers.length} answered`;
         }
 
         // ── Merge screen (host only) ──────────────────────────────
         function showMergeScreen() {
+            gamePhase = 'merge';
+            saveSession();
             // Build initial groups from answers
             const groups = {};
             for (const [player, answer] of Object.entries(answers)) {
@@ -1311,16 +1425,17 @@
                 }
             }
 
-            // Pink cow: only if exactly one person is the sole odd one out
-            let oddOnes = [];
+            // Pink cow: if there's a herd, any player who gave a unique answer
+            // (group of 1, not in the herd) gets the cow
             if (hasHerd) {
-                oddOnes = sorted.slice(1).flatMap(g => g.players);
+                const uniqueAnswerPlayers = sorted.slice(1)
+                    .filter(g => g.players.length === 1)
+                    .flatMap(g => g.players);
+                if (uniqueAnswerPlayers.length === 1) {
+                    cowHolder = uniqueAnswerPlayers[0];
+                }
+                // If multiple people had unique answers or nobody did, cow stays
             }
-            // Only assign cow if there is exactly 1 odd one out
-            if (hasHerd && oddOnes.length === 1) {
-                cowHolder = oddOnes[0];
-            }
-            // If no herd or multiple odd ones, cow stays with whoever had it
 
             const resultsData = {
                 type: 'results',
@@ -1330,6 +1445,8 @@
                 cowHolder
             };
 
+            gamePhase = 'results';
+            saveSession();
             broadcast(resultsData);
             renderResults(resultsData);
         }
@@ -1398,7 +1515,7 @@
         // ════════════════════════════════════════════════════════════
         // PLAYER LOGIC
         // ════════════════════════════════════════════════════════════
-        function startPlayer() {
+        function startPlayer(isRejoin) {
             showScreen('connecting-screen');
             peer = new Peer();
 
@@ -1408,32 +1525,47 @@
 
                 const timeout = setTimeout(() => {
                     showError('Could not connect — check the room code');
-                    showScreen('join-screen');
+                    if (isRejoin) {
+                        clearSession();
+                        showScreen('home-screen');
+                    } else {
+                        showScreen('join-screen');
+                    }
                     peer.destroy();
                 }, 10000);
 
                 playerConn.on('open', () => {
                     clearTimeout(timeout);
-                    playerConn.send({ type: 'join', name: myName });
+                    playerConn.send({ type: 'join', name: myName, rejoin: !!isRejoin });
                 });
 
                 playerConn.on('data', data => handlePlayerMessage(data));
 
                 playerConn.on('close', () => {
-                    showError('Disconnected from host');
+                    showError('Disconnected from host — rejoin with the same name to reconnect');
                     showScreen('home-screen');
                 });
 
                 playerConn.on('error', err => {
                     clearTimeout(timeout);
                     showError('Connection error: ' + err.message);
-                    showScreen('join-screen');
+                    if (isRejoin) {
+                        clearSession();
+                        showScreen('home-screen');
+                    } else {
+                        showScreen('join-screen');
+                    }
                 });
             });
 
             peer.on('error', err => {
                 showError('Connection error: ' + err.message);
-                showScreen('join-screen');
+                if (isRejoin) {
+                    clearSession();
+                    showScreen('home-screen');
+                } else {
+                    showScreen('join-screen');
+                }
             });
         }
 
@@ -1443,8 +1575,40 @@
                     players = data.players;
                     if (data.scores) for (const [k, v] of Object.entries(data.scores)) scores[k] = v;
                     cowHolder = data.cowHolder;
+                    saveSession();
                     showLobby();
                     break;
+
+                case 'rejoin': {
+                    // Restore state and show the right screen
+                    players = data.players;
+                    if (data.scores) for (const [k, v] of Object.entries(data.scores)) scores[k] = v;
+                    cowHolder = data.cowHolder;
+                    roundNumber = data.round;
+                    currentQuestion = data.question;
+                    saveSession();
+                    const phase = data.gamePhase;
+                    if (phase === 'lobby') {
+                        showLobby();
+                    } else if (phase === 'question') {
+                        // Host is still picking a question
+                        showScreen('player-waiting-screen');
+                    } else if (phase === 'answering') {
+                        if (data.hasAnswered) {
+                            showScreen('player-waiting-screen');
+                        } else {
+                            showPlayerAnswer();
+                        }
+                    } else if (phase === 'merge') {
+                        // Host is reviewing, just wait
+                        showScreen('player-waiting-screen');
+                    } else if (phase === 'results') {
+                        showScreen('player-waiting-screen');
+                    } else {
+                        showLobby();
+                    }
+                    break;
+                }
 
                 case 'lobby':
                     players = data.players;
@@ -1462,6 +1626,10 @@
                 case 'progress':
                     break;
 
+                case 'moo':
+                    playMoo();
+                    break;
+
                 case 'results':
                     if (data.scores) for (const [k, v] of Object.entries(data.scores)) scores[k] = v;
                     cowHolder = data.cowHolder;
@@ -1469,7 +1637,6 @@
                     break;
 
                 case 'next-round':
-                    // Show waiting screen while host picks next question
                     showScreen('player-waiting-screen');
                     break;
 
@@ -1508,6 +1675,19 @@
             playerConn.send({ type: 'answer', answer });
             showScreen('player-waiting-screen');
         });
+
+        // ── Auto-rejoin on page load ─────────────────────────────
+        (function tryAutoRejoin() {
+            const session = loadSession();
+            if (!session || !session.myName || !session.roomCode) return;
+            if (session.role === 'player') {
+                myName = session.myName;
+                roomCode = session.roomCode;
+                role = 'player';
+                startPlayer(true);
+            }
+            // Host can't rejoin (they are the peer server), session is lost on refresh
+        })();
 
     })();
     </script>
