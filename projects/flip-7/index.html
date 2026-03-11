@@ -1074,6 +1074,9 @@
         let hostEditingPlayers = new Set(); // host manually editing these remote players
         let disconnectedPlayers = new Set(); // players currently disconnected
         let localPlayers = new Set(); // players added locally by host (no device)
+        let reconnectAttempts = 0;
+        let reconnectTimer = null;
+        const MAX_RECONNECT_ATTEMPTS = 10;
 
         const NUMBER_CARDS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
         const MODIFIER_CARDS = ['+2', '+4', '+6', '+8', '+10'];
@@ -1608,6 +1611,7 @@
                     if (gameStarted) {
                         mpConnectionDot.classList.remove('connected');
                         mpConnectionDot.classList.add('error');
+                        startAutoReconnect();
                     } else {
                         showJoinError('Disconnected from host.');
                         joinConnecting.classList.add('hidden');
@@ -1618,10 +1622,16 @@
 
                 hostConn.on('error', () => {
                     clearTimeout(timeout);
-                    showJoinError('Connection error. Please try again.');
-                    joinConnecting.classList.add('hidden');
-                    joinForm.classList.remove('hidden');
-                    cleanupPeer();
+                    if (gameStarted) {
+                        mpConnectionDot.classList.remove('connected');
+                        mpConnectionDot.classList.add('error');
+                        startAutoReconnect();
+                    } else {
+                        showJoinError('Connection error. Please try again.');
+                        joinConnecting.classList.add('hidden');
+                        joinForm.classList.remove('hidden');
+                        cleanupPeer();
+                    }
                 });
             });
 
@@ -1638,6 +1648,171 @@
             });
         }
 
+        // =====================================================================
+        // AUTO-RECONNECT (peer side)
+        // =====================================================================
+        function startAutoReconnect() {
+            if (reconnectTimer) return; // already reconnecting
+            reconnectAttempts = 0;
+            showReconnectBanner();
+            attemptReconnect();
+        }
+
+        function attemptReconnect() {
+            if (!gameStarted || !roomCode || !myName) return;
+            if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+                showReconnectFailed();
+                return;
+            }
+
+            const delay = Math.min(1000 * Math.pow(1.5, reconnectAttempts), 15000);
+            reconnectAttempts++;
+            updateReconnectBanner(reconnectAttempts);
+
+            reconnectTimer = setTimeout(() => {
+                reconnectTimer = null;
+                doReconnect();
+            }, delay);
+        }
+
+        function doReconnect() {
+            if (!gameStarted || !roomCode || !myName) return;
+
+            // Destroy old peer cleanly
+            if (peer) {
+                try { peer.destroy(); } catch(e) {}
+                peer = null;
+            }
+            hostConn = null;
+
+            peer = new Peer(undefined, { debug: 0 });
+
+            peer.on('open', () => {
+                hostConn = peer.connect('flip7-' + roomCode, { reliable: true });
+
+                const timeout = setTimeout(() => {
+                    // This attempt failed, try again
+                    hostConn = null;
+                    attemptReconnect();
+                }, 8000);
+
+                hostConn.on('open', () => {
+                    clearTimeout(timeout);
+                    hostConn.send({ type: 'join', name: myName });
+                });
+
+                hostConn.on('data', (data) => {
+                    if (data.type === 'rejoin-ok') {
+                        // Successfully reconnected
+                        reconnectAttempts = 0;
+                        hideReconnectBanner();
+                        mpConnectionDot.classList.remove('error');
+                        mpConnectionDot.classList.add('connected');
+                    }
+                    handlePeerMessage(data);
+                });
+
+                hostConn.on('close', () => {
+                    if (gameStarted) {
+                        mpConnectionDot.classList.remove('connected');
+                        mpConnectionDot.classList.add('error');
+                        attemptReconnect();
+                    }
+                });
+
+                hostConn.on('error', () => {
+                    clearTimeout(timeout);
+                    if (gameStarted) {
+                        attemptReconnect();
+                    }
+                });
+            });
+
+            peer.on('error', (err) => {
+                console.error('Reconnect peer error:', err);
+                attemptReconnect();
+            });
+        }
+
+        function showReconnectBanner() {
+            let banner = document.getElementById('reconnect-banner');
+            if (!banner) {
+                banner = document.createElement('div');
+                banner.id = 'reconnect-banner';
+                banner.style.cssText = 'background:rgba(196,162,78,0.15); border:1px solid var(--color-accent); border-radius:8px; padding:0.6rem 1rem; margin-bottom:1rem; display:flex; align-items:center; justify-content:space-between; font-size:0.85rem;';
+                const mpBannerEl = document.getElementById('mp-banner');
+                mpBannerEl.parentNode.insertBefore(banner, mpBannerEl.nextSibling);
+            }
+            banner.innerHTML = `
+                <div style="display:flex; align-items:center; gap:0.5rem;">
+                    <span class="spinner" style="width:16px; height:16px; border-width:2px;"></span>
+                    <span id="reconnect-text">Reconnecting...</span>
+                </div>
+                <button class="btn btn-sm" onclick="window._cancelReconnect()" style="font-size:0.75rem;">Cancel</button>
+            `;
+            banner.classList.remove('hidden');
+        }
+
+        function updateReconnectBanner(attempt) {
+            const text = document.getElementById('reconnect-text');
+            if (text) {
+                text.textContent = `Reconnecting... (attempt ${attempt}/${MAX_RECONNECT_ATTEMPTS})`;
+            }
+        }
+
+        function hideReconnectBanner() {
+            const banner = document.getElementById('reconnect-banner');
+            if (banner) banner.classList.add('hidden');
+        }
+
+        function showReconnectFailed() {
+            const banner = document.getElementById('reconnect-banner');
+            if (banner) {
+                banner.style.borderColor = 'var(--color-error)';
+                banner.style.background = 'rgba(196,94,78,0.15)';
+                banner.innerHTML = `
+                    <div style="display:flex; align-items:center; gap:0.5rem;">
+                        <span style="color:var(--color-error); font-weight:600;">Disconnected from host</span>
+                    </div>
+                    <button class="btn btn-sm btn-primary" onclick="window._retryReconnect()" style="font-size:0.75rem;">Retry</button>
+                `;
+            }
+        }
+
+        window._cancelReconnect = function() {
+            if (reconnectTimer) {
+                clearTimeout(reconnectTimer);
+                reconnectTimer = null;
+            }
+            reconnectAttempts = MAX_RECONNECT_ATTEMPTS;
+            showReconnectFailed();
+        };
+
+        window._retryReconnect = function() {
+            reconnectAttempts = 0;
+            const banner = document.getElementById('reconnect-banner');
+            if (banner) {
+                banner.style.borderColor = 'var(--color-accent)';
+                banner.style.background = 'rgba(196,162,78,0.15)';
+            }
+            showReconnectBanner();
+            attemptReconnect();
+        };
+
+        // Detect visibility change (screen on/off) to trigger reconnect check
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' && gameStarted && gameMode === 'peer') {
+                // Check if connection is still alive
+                if (!hostConn || !hostConn.open) {
+                    mpConnectionDot.classList.remove('connected');
+                    mpConnectionDot.classList.add('error');
+                    if (!reconnectTimer && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                        startAutoReconnect();
+                    }
+                }
+            }
+        });
+
         function showJoinError(msg) {
             joinError.textContent = msg;
             joinError.classList.remove('hidden');
@@ -1649,6 +1824,11 @@
                 joinWaiting.classList.remove('hidden');
             } else if (data.type === 'rejoin-ok') {
                 // Reconnecting to an active game
+                reconnectAttempts = 0;
+                hideReconnectBanner();
+                mpConnectionDot.classList.remove('error');
+                mpConnectionDot.classList.add('connected');
+
                 players = data.players;
                 rounds = data.rounds;
                 currentRound = data.currentRound;
@@ -1758,6 +1938,12 @@
             hostEditingPlayers.clear();
             disconnectedPlayers.clear();
             localPlayers.clear();
+            if (reconnectTimer) {
+                clearTimeout(reconnectTimer);
+                reconnectTimer = null;
+            }
+            reconnectAttempts = 0;
+            hideReconnectBanner();
             myName = '';
             roomCode = '';
         }
