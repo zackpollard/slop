@@ -156,6 +156,9 @@ jobs:
           - name: exploding-kittens
             pages-project: slop-exploding-kittens
             directory: projects/exploding-kittens
+          - name: herd-mentality
+            pages-project: slop-herd-mentality
+            directory: projects/herd-mentality
     steps:
       - name: Checkout
         uses: actions/checkout@v4

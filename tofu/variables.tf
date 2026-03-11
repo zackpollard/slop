@@ -48,5 +48,8 @@ variable "projects" {
     exploding-kittens = {
       subdomain = "exploding-kittens.slop"
     }
+    herd-mentality = {
+      subdomain = "herd-mentality.slop"
+    }
   }
 }
