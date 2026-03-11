@@ -7,6 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
     <style>
         :root {
             --color-bg: #0f0f0c;
@@ -115,6 +116,7 @@
         .btn:disabled {
             opacity: 0.4;
             cursor: not-allowed;
+            pointer-events: none;
         }
 
         /* Inputs */
@@ -132,23 +134,14 @@
         }
 
         input[type="text"]:focus { border-color: var(--color-accent); }
-
         input[type="text"]::placeholder { color: var(--color-text-muted); }
 
-        /* Player setup */
-        .player-input-row {
-            display: flex;
-            gap: 0.5rem;
-            margin-bottom: 0.75rem;
-        }
-
-        .player-input-row input { flex: 1; }
-
+        /* Player tags */
         .player-tags {
             display: flex;
             flex-wrap: wrap;
             gap: 0.5rem;
-            margin-bottom: 1rem;
+            margin-bottom: 0.5rem;
         }
 
         .player-tag {
@@ -178,12 +171,102 @@
             border-color: rgba(212, 97, 155, 0.3);
         }
 
+        .player-tag.is-you {
+            border-color: var(--color-accent);
+        }
+
+        .player-tag .you-badge {
+            font-size: 0.7rem;
+            color: var(--color-accent);
+            font-weight: 600;
+        }
+
         .player-tag .cow { margin-left: 0.15rem; }
+
+        .player-tag.answered {
+            background: rgba(74, 158, 110, 0.12);
+            border-color: rgba(74, 158, 110, 0.4);
+        }
+
+        /* Room code display */
+        .room-code-display {
+            text-align: center;
+            margin-bottom: 1.25rem;
+        }
+
+        .room-code-display .label {
+            font-size: 0.8rem;
+            color: var(--color-text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-bottom: 0.25rem;
+        }
+
+        .room-code {
+            font-family: var(--font-mono);
+            font-size: 2.5rem;
+            font-weight: 700;
+            letter-spacing: 0.2em;
+            color: var(--color-accent);
+            user-select: all;
+        }
+
+        /* Room code input */
+        .room-code-input {
+            display: flex;
+            justify-content: center;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .room-code-input input {
+            width: 200px;
+            text-align: center;
+            font-family: var(--font-mono);
+            font-size: 1.5rem;
+            font-weight: 700;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            padding: 0.75rem;
+        }
+
+        /* Home screen */
+        .home-options {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .home-option {
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .home-option:hover {
+            border-color: var(--color-accent);
+            background: var(--color-surface-hover);
+        }
+
+        .home-option h3 {
+            font-size: 1.2rem;
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+        }
+
+        .home-option p {
+            color: var(--color-text-muted);
+            font-size: 0.9rem;
+        }
 
         /* Question display */
         .question-display {
             text-align: center;
-            padding: 1.5rem 1rem;
+            padding: 1rem;
         }
 
         .question-number {
@@ -210,16 +293,7 @@
         }
 
         /* Answer phase */
-        .answer-phase {
-            text-align: center;
-        }
-
-        .answer-phase .current-player {
-            font-size: 1.3rem;
-            font-weight: 700;
-            color: var(--color-accent);
-            margin-bottom: 0.25rem;
-        }
+        .answer-phase { text-align: center; }
 
         .answer-phase .instruction {
             color: var(--color-text-muted);
@@ -245,34 +319,13 @@
             margin-top: 1rem;
         }
 
-        /* Ready screen (between players) */
-        .ready-screen {
-            text-align: center;
-            padding: 2rem 1rem;
-        }
-
-        .ready-screen .next-player {
-            font-size: 1.1rem;
-            color: var(--color-text-muted);
-            margin-bottom: 0.5rem;
-        }
-
-        .ready-screen .player-name {
-            font-size: 1.6rem;
-            font-weight: 700;
-            color: var(--color-accent);
-            margin-bottom: 1.25rem;
-        }
-
         /* Results */
         .results-header {
             text-align: center;
             margin-bottom: 1.25rem;
         }
 
-        .results-header h2 {
-            margin-bottom: 0.25rem;
-        }
+        .results-header h2 { margin-bottom: 0.25rem; }
 
         .results-header .herd-label {
             color: var(--color-success);
@@ -285,7 +338,6 @@
             border-radius: 10px;
             padding: 1rem 1.25rem;
             margin-bottom: 0.75rem;
-            transition: border-color 0.15s;
         }
 
         .answer-group.is-herd {
@@ -315,15 +367,8 @@
             vertical-align: middle;
         }
 
-        .badge-herd {
-            background: rgba(74, 158, 110, 0.2);
-            color: var(--color-success);
-        }
-
-        .badge-cow {
-            background: var(--color-pink-dim);
-            color: var(--color-pink);
-        }
+        .badge-herd { background: rgba(74, 158, 110, 0.2); color: var(--color-success); }
+        .badge-cow { background: var(--color-pink-dim); color: var(--color-pink); }
 
         .answer-group .answer-players {
             color: var(--color-text-muted);
@@ -339,7 +384,7 @@
         }
 
         /* Pink cow holder */
-        .cow-holder {
+        .cow-holder-bar {
             text-align: center;
             padding: 0.75rem;
             background: var(--color-pink-dim);
@@ -348,19 +393,43 @@
             margin-bottom: 1rem;
         }
 
-        .cow-holder .cow-icon { font-size: 1.5rem; }
-        .cow-holder .cow-name {
-            font-weight: 700;
-            color: var(--color-pink);
-        }
-        .cow-holder .cow-label {
-            font-size: 0.8rem;
+        .cow-holder-bar .cow-icon { font-size: 1.5rem; }
+        .cow-holder-bar .cow-name { font-weight: 700; color: var(--color-pink); }
+        .cow-holder-bar .cow-label { font-size: 0.8rem; color: var(--color-text-muted); }
+
+        /* Status message */
+        .status-msg {
+            text-align: center;
+            padding: 2rem 1rem;
             color: var(--color-text-muted);
         }
 
-        /* Screens */
-        .screen { display: none; }
-        .screen.active { display: block; }
+        .status-msg .big {
+            font-size: 1.3rem;
+            font-weight: 700;
+            color: var(--color-text);
+            margin-bottom: 0.25rem;
+        }
+
+        .status-msg .spinner {
+            display: inline-block;
+            width: 1.2rem;
+            height: 1.2rem;
+            border: 2px solid var(--color-border);
+            border-top-color: var(--color-accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            vertical-align: middle;
+            margin-right: 0.5rem;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Submitted check */
+        .submitted-check {
+            font-size: 3rem;
+            margin-bottom: 0.5rem;
+        }
 
         /* Custom question input */
         .custom-question-area {
@@ -388,7 +457,7 @@
             display: flex;
             flex-wrap: wrap;
             gap: 0.4rem;
-            margin-bottom: 1rem;
+            margin-bottom: 0.5rem;
         }
 
         .category-btn {
@@ -412,23 +481,73 @@
             color: var(--color-accent);
         }
 
+        /* Error banner */
+        .error-banner {
+            background: rgba(196, 94, 78, 0.12);
+            border: 1px solid var(--color-error);
+            border-radius: 8px;
+            padding: 0.75rem 1rem;
+            color: var(--color-error);
+            font-size: 0.9rem;
+            margin-bottom: 1rem;
+            text-align: center;
+            display: none;
+        }
+
+        .error-banner.visible { display: block; }
+
+        /* Connection indicator */
+        .connection-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 0.4rem;
+            vertical-align: middle;
+        }
+
+        .connection-dot.connected { background: var(--color-success); }
+        .connection-dot.disconnected { background: var(--color-error); }
+        .connection-dot.connecting { background: var(--color-accent); animation: pulse 1s ease infinite; }
+
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+        /* Screens */
+        .screen { display: none; }
+        .screen.active { display: block; }
+
         /* Responsive */
         @media (max-width: 500px) {
             .container { padding: 1.25rem 1rem; }
             header h1 { font-size: 1.6rem; }
             .question-text { font-size: 1.2rem; }
+            .room-code { font-size: 2rem; }
             .question-actions { flex-direction: column; }
             .question-actions .btn { width: 100%; }
         }
 
-        /* Transition helper */
-        .fade-in {
-            animation: fadeIn 0.25s ease;
-        }
+        .fade-in { animation: fadeIn 0.25s ease; }
 
         @keyframes fadeIn {
             from { opacity: 0; transform: translateY(8px); }
             to { opacity: 1; transform: translateY(0); }
+        }
+
+        .btn-row {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+
+        .name-input-section {
+            margin-bottom: 1rem;
+        }
+
+        .name-input-section label {
+            display: block;
+            font-size: 0.85rem;
+            color: var(--color-text-muted);
+            margin-bottom: 0.4rem;
         }
     </style>
 </head>
@@ -439,90 +558,179 @@
             <p class="subtitle">Think like the herd. Don't be the odd one out.</p>
         </header>
 
-        <!-- Screen 1: Player Setup -->
-        <div id="setup-screen" class="screen active">
-            <div class="section">
-                <h2>Players</h2>
-                <div class="player-tags" id="player-tags"></div>
-                <div class="player-input-row">
-                    <input type="text" id="player-name-input" placeholder="Enter player name" maxlength="20">
-                    <button class="btn" id="add-player-btn">Add</button>
+        <div id="error-banner" class="error-banner"></div>
+
+        <!-- Screen: Home -->
+        <div id="home-screen" class="screen active">
+            <div class="home-options">
+                <div class="home-option" id="btn-create-room">
+                    <h3>Create Room</h3>
+                    <p>Host a game and get a room code to share</p>
                 </div>
-                <p id="player-count" style="font-size: 0.85rem; color: var(--color-text-muted); margin-top: 0.5rem;"></p>
+                <div class="home-option" id="btn-join-room">
+                    <h3>Join Room</h3>
+                    <p>Enter a room code to join an existing game</p>
+                </div>
             </div>
-            <button class="btn btn-primary btn-wide" id="start-game-btn" disabled>Start Game</button>
         </div>
 
-        <!-- Screen 2: Question -->
-        <div id="question-screen" class="screen">
-            <div id="cow-holder-display" class="cow-holder" style="display: none;">
+        <!-- Screen: Create Room (enter name) -->
+        <div id="create-screen" class="screen">
+            <div class="section">
+                <h2>Create a Room</h2>
+                <div class="name-input-section">
+                    <label>Your name</label>
+                    <input type="text" id="host-name-input" placeholder="Enter your name" maxlength="20">
+                </div>
+                <button class="btn btn-primary btn-wide" id="btn-create-go">Create Room</button>
+            </div>
+        </div>
+
+        <!-- Screen: Join Room (enter code + name) -->
+        <div id="join-screen" class="screen">
+            <div class="section">
+                <h2>Join a Room</h2>
+                <div class="name-input-section">
+                    <label>Your name</label>
+                    <input type="text" id="join-name-input" placeholder="Enter your name" maxlength="20">
+                </div>
+                <div class="name-input-section">
+                    <label>Room code</label>
+                    <input type="text" id="join-code-input" placeholder="ABCD" maxlength="4" style="font-family: var(--font-mono); font-size: 1.3rem; text-align: center; text-transform: uppercase; letter-spacing: 0.15em;">
+                </div>
+                <button class="btn btn-primary btn-wide" id="btn-join-go">Join Room</button>
+            </div>
+        </div>
+
+        <!-- Screen: Connecting -->
+        <div id="connecting-screen" class="screen">
+            <div class="section">
+                <div class="status-msg">
+                    <div><span class="spinner"></span></div>
+                    <div class="big" style="margin-top: 1rem;">Connecting...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Screen: Lobby (host + players) -->
+        <div id="lobby-screen" class="screen">
+            <div class="room-code-display">
+                <div class="label">Room Code</div>
+                <div class="room-code" id="lobby-room-code"></div>
+            </div>
+            <div class="section">
+                <h2>Players</h2>
+                <div class="player-tags" id="lobby-players"></div>
+                <div id="lobby-min-msg" style="font-size: 0.85rem; color: var(--color-text-muted); margin-top: 0.5rem;"></div>
+            </div>
+            <!-- Host-only controls -->
+            <div id="host-lobby-controls">
+                <button class="btn btn-primary btn-wide" id="btn-start-game" disabled>Start Game</button>
+            </div>
+            <!-- Player waiting message -->
+            <div id="player-lobby-msg" style="display: none;">
+                <div class="section">
+                    <div class="status-msg">
+                        <div><span class="spinner"></span></div>
+                        <div style="margin-top: 0.5rem;">Waiting for host to start the game...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Screen: Host Question (host picks/skips question) -->
+        <div id="host-question-screen" class="screen">
+            <div id="hq-cow-holder" class="cow-holder-bar" style="display: none;">
                 <span class="cow-icon">🐄</span>
                 <span class="cow-label">Pink Cow held by</span>
-                <span class="cow-name" id="cow-holder-name"></span>
+                <span class="cow-name" id="hq-cow-name"></span>
             </div>
             <div class="section">
                 <div class="question-display">
-                    <div class="question-number" id="question-number"></div>
-                    <div class="question-text" id="question-text"></div>
+                    <div class="question-number" id="hq-round"></div>
+                    <div class="question-text" id="hq-question"></div>
                     <div class="question-actions">
-                        <button class="btn" id="skip-question-btn">Skip</button>
-                        <button class="btn btn-primary" id="start-answers-btn">Collect Answers</button>
+                        <button class="btn" id="hq-skip-btn">Skip</button>
+                        <button class="btn btn-primary" id="hq-send-btn">Send to Players</button>
                     </div>
                 </div>
                 <div class="custom-question-area">
                     <label>Or use your own question:</label>
                     <div class="custom-question-row">
-                        <input type="text" id="custom-question-input" placeholder="Type a custom question">
-                        <button class="btn" id="use-custom-btn">Use</button>
+                        <input type="text" id="hq-custom-input" placeholder="Type a custom question">
+                        <button class="btn" id="hq-custom-btn">Use</button>
                     </div>
                 </div>
             </div>
             <div class="section">
                 <h2>Categories</h2>
-                <div class="category-filters" id="category-filters"></div>
+                <div class="category-filters" id="hq-categories"></div>
             </div>
         </div>
 
-        <!-- Screen 3: Ready (between players) -->
-        <div id="ready-screen" class="screen">
+        <!-- Screen: Host Waiting for Answers -->
+        <div id="host-waiting-screen" class="screen">
             <div class="section">
-                <div class="ready-screen">
-                    <div class="next-player">Pass the device to:</div>
-                    <div class="player-name" id="ready-player-name"></div>
-                    <div class="question-text" id="ready-question-text" style="font-size: 1.1rem; margin-bottom: 1.25rem; color: var(--color-text-muted);"></div>
-                    <button class="btn btn-primary btn-wide" id="ready-btn">I'm Ready — Show Question</button>
+                <div class="question-display">
+                    <div class="question-number" id="hw-round"></div>
+                    <div class="question-text" id="hw-question"></div>
                 </div>
             </div>
+            <div class="section">
+                <h2>Waiting for Answers</h2>
+                <div class="player-tags" id="hw-players"></div>
+                <div class="answer-progress" id="hw-progress" style="text-align: center; margin-top: 0.75rem;"></div>
+            </div>
         </div>
 
-        <!-- Screen 4: Answer Input -->
-        <div id="answer-screen" class="screen">
+        <!-- Screen: Player Answer -->
+        <div id="player-answer-screen" class="screen">
             <div class="section">
                 <div class="answer-phase">
-                    <div class="current-player" id="answer-player-name"></div>
-                    <div class="instruction">Type your answer below. Think like the herd!</div>
-                    <div class="question-text" id="answer-question-text" style="font-size: 1.1rem; margin-bottom: 1rem;"></div>
+                    <div class="question-number" id="pa-round"></div>
+                    <div class="question-text" id="pa-question" style="margin-bottom: 1.25rem;"></div>
+                    <div class="instruction">Type your answer. Think like the herd!</div>
                     <div class="answer-input-area">
-                        <input type="text" id="answer-input" placeholder="Your answer" maxlength="60" autocomplete="off">
-                        <button class="btn btn-primary btn-wide" id="submit-answer-btn" disabled>Submit Answer</button>
+                        <input type="text" id="pa-input" placeholder="Your answer" maxlength="60" autocomplete="off">
+                        <button class="btn btn-primary btn-wide" id="pa-submit-btn" disabled>Submit Answer</button>
                     </div>
-                    <div class="answer-progress" id="answer-progress"></div>
                 </div>
             </div>
         </div>
 
-        <!-- Screen 5: Results -->
+        <!-- Screen: Player Waiting (submitted answer) -->
+        <div id="player-waiting-screen" class="screen">
+            <div class="section">
+                <div class="status-msg">
+                    <div class="submitted-check">&#10003;</div>
+                    <div class="big">Answer Submitted</div>
+                    <div style="margin-top: 0.75rem;"><span class="spinner"></span> Waiting for other players...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Screen: Results (both host and players) -->
         <div id="results-screen" class="screen">
+            <div id="rs-cow-holder" class="cow-holder-bar" style="display: none;">
+                <span class="cow-icon">🐄</span>
+                <span class="cow-label">Pink Cow held by</span>
+                <span class="cow-name" id="rs-cow-name"></span>
+            </div>
             <div class="section">
                 <div class="results-header">
                     <h2>Results</h2>
-                    <div id="results-summary"></div>
+                    <div id="rs-summary"></div>
                 </div>
-                <div id="answer-groups"></div>
+                <div id="rs-groups"></div>
             </div>
-            <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
-                <button class="btn btn-wide" id="new-round-btn">Next Round</button>
-                <button class="btn btn-danger" id="end-game-btn">End Game</button>
+            <!-- Host next round / end -->
+            <div id="rs-host-controls" class="btn-row" style="display: none;">
+                <button class="btn btn-wide" id="rs-next-btn">Next Round</button>
+                <button class="btn btn-danger" id="rs-end-btn">End Game</button>
+            </div>
+            <!-- Player waiting -->
+            <div id="rs-player-msg" style="display: none; text-align: center; margin-top: 0.75rem; color: var(--color-text-muted); font-size: 0.9rem;">
+                <span class="spinner"></span> Waiting for host...
             </div>
         </div>
     </div>
@@ -531,9 +739,8 @@
     (function() {
         'use strict';
 
-        // ── Question Bank ──────────────────────────────────────────────
+        // ── Question Bank ──────────────────────────────────────────
         const questions = [
-            // Favourites
             { q: "What is the best pizza topping?", c: "favourites" },
             { q: "What is the best ice cream flavour?", c: "favourites" },
             { q: "What is the best colour?", c: "favourites" },
@@ -554,8 +761,6 @@
             { q: "What is the best superhero?", c: "favourites" },
             { q: "What is the best Disney film?", c: "favourites" },
             { q: "What is the best TV show of all time?", c: "favourites" },
-
-            // Pop culture
             { q: "Name a famous Chris in Hollywood.", c: "pop culture" },
             { q: "Name a famous fictional detective.", c: "pop culture" },
             { q: "Name a famous sitcom.", c: "pop culture" },
@@ -570,8 +775,6 @@
             { q: "Name a famous movie quote.", c: "pop culture" },
             { q: "Name a famous comedian.", c: "pop culture" },
             { q: "Name a famous one-hit wonder.", c: "pop culture" },
-
-            // Animals
             { q: "Name the cutest animal.", c: "animals" },
             { q: "Name the scariest animal.", c: "animals" },
             { q: "What animal would make the worst pet?", c: "animals" },
@@ -582,8 +785,6 @@
             { q: "What is the ugliest animal?", c: "animals" },
             { q: "What is the fastest animal you can think of?", c: "animals" },
             { q: "If you could be any animal, what would you be?", c: "animals" },
-
-            // People & life
             { q: "What job would you never want to do?", c: "people" },
             { q: "What age is considered 'old'?", c: "people" },
             { q: "What is the worst household chore?", c: "people" },
@@ -598,8 +799,6 @@
             { q: "What is the first thing you do in the morning?", c: "people" },
             { q: "What is the ideal number of children to have?", c: "people" },
             { q: "What is the best age to be?", c: "people" },
-
-            // Would you / hypothetical
             { q: "What superpower would most people choose?", c: "hypothetical" },
             { q: "If you found £1 million, what's the first thing you'd buy?", c: "hypothetical" },
             { q: "What historical period would most people want to visit?", c: "hypothetical" },
@@ -612,8 +811,6 @@
             { q: "If you could have any animal as a safe pet, what would it be?", c: "hypothetical" },
             { q: "What would you rename the Earth to?", c: "hypothetical" },
             { q: "If you had a time machine, would you go to the past or future?", c: "hypothetical" },
-
-            // Word association
             { q: "Name something you associate with France.", c: "word association" },
             { q: "Name something you associate with Christmas.", c: "word association" },
             { q: "Name something you associate with a beach.", c: "word association" },
@@ -628,8 +825,6 @@
             { q: "Name something you'd find in a school.", c: "word association" },
             { q: "Name a three-letter word.", c: "word association" },
             { q: "Name something cold.", c: "word association" },
-
-            // Opinions
             { q: "What is the most overrated food?", c: "opinions" },
             { q: "What is the most useless school subject?", c: "opinions" },
             { q: "What is the worst film ever made?", c: "opinions" },
@@ -642,112 +837,240 @@
             { q: "What is the most pointless invention?", c: "opinions" },
         ];
 
-        const categories = [...new Set(questions.map(q => q.c))];
+        const allCategories = [...new Set(questions.map(q => q.c))];
 
-        // ── State ──────────────────────────────────────────────────────
-        let players = [];
+        // ── Shared State ───────────────────────────────────────────
+        let role = null; // 'host' or 'player'
+        let myName = '';
+        let roomCode = '';
+        let peer = null;
+
+        // Host state
+        let hostConns = new Map(); // name -> DataConnection
+        let players = [];          // all player names including host
         let cowHolder = null;
         let roundNumber = 0;
-        let currentQuestion = null;
-        let currentPlayerIndex = 0;
-        let answers = {};
+        let currentQuestion = '';
+        let answers = {};          // name -> answer
         let usedQuestionIndices = new Set();
-        let activeCategories = new Set(categories);
+        let activeCategories = new Set(allCategories);
 
-        // ── DOM refs ───────────────────────────────────────────────────
+        // Player state
+        let playerConn = null;     // DataConnection to host
+
+        // ── DOM helpers ────────────────────────────────────────────
         const $ = id => document.getElementById(id);
 
-        const screens = {
-            setup: $('setup-screen'),
-            question: $('question-screen'),
-            ready: $('ready-screen'),
-            answer: $('answer-screen'),
-            results: $('results-screen'),
-        };
-
-        function showScreen(name) {
-            Object.values(screens).forEach(s => s.classList.remove('active'));
-            screens[name].classList.add('active');
-            screens[name].classList.add('fade-in');
+        function showScreen(id) {
+            document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+            const el = $(id);
+            el.classList.add('active');
+            el.classList.add('fade-in');
         }
 
-        // ── Setup screen ──────────────────────────────────────────────
-        const playerInput = $('player-name-input');
-        const addPlayerBtn = $('add-player-btn');
-        const startGameBtn = $('start-game-btn');
-        const playerTags = $('player-tags');
-        const playerCount = $('player-count');
-
-        function renderPlayerTags() {
-            playerTags.innerHTML = players.map((name, i) => `
-                <span class="player-tag${cowHolder === name ? ' has-cow' : ''}">
-                    ${esc(name)}${cowHolder === name ? '<span class="cow">🐄</span>' : ''}
-                    <span class="remove" data-index="${i}">&times;</span>
-                </span>
-            `).join('');
-            startGameBtn.disabled = players.length < 3;
-            playerCount.textContent = players.length > 0
-                ? `${players.length} player${players.length !== 1 ? 's' : ''} — need at least 3`
-                : '';
+        function showError(msg) {
+            const el = $('error-banner');
+            el.textContent = msg;
+            el.classList.add('visible');
+            setTimeout(() => el.classList.remove('visible'), 5000);
         }
 
-        function addPlayer() {
-            const name = playerInput.value.trim();
-            if (!name || players.some(p => p.toLowerCase() === name.toLowerCase())) {
-                playerInput.value = '';
-                return;
-            }
-            players.push(name);
-            playerInput.value = '';
-            playerInput.focus();
-            renderPlayerTags();
+        function esc(str) {
+            const d = document.createElement('div');
+            d.textContent = str;
+            return d.innerHTML;
         }
 
-        addPlayerBtn.addEventListener('click', addPlayer);
-        playerInput.addEventListener('keydown', e => { if (e.key === 'Enter') addPlayer(); });
-        playerTags.addEventListener('click', e => {
-            if (e.target.classList.contains('remove')) {
-                const idx = parseInt(e.target.dataset.index);
-                const removed = players.splice(idx, 1)[0];
-                if (cowHolder === removed) cowHolder = null;
-                renderPlayerTags();
-            }
+        function genCode() {
+            const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+            let code = '';
+            for (let i = 0; i < 4; i++) code += chars[Math.floor(Math.random() * chars.length)];
+            return code;
+        }
+
+        // ── Home Screen ────────────────────────────────────────────
+        $('btn-create-room').addEventListener('click', () => showScreen('create-screen'));
+        $('btn-join-room').addEventListener('click', () => showScreen('join-screen'));
+
+        // ── Create Room ────────────────────────────────────────────
+        $('btn-create-go').addEventListener('click', () => {
+            const name = $('host-name-input').value.trim();
+            if (!name) { $('host-name-input').focus(); return; }
+            myName = name;
+            role = 'host';
+            startHost();
         });
 
-        startGameBtn.addEventListener('click', () => {
+        $('host-name-input').addEventListener('keydown', e => {
+            if (e.key === 'Enter') $('btn-create-go').click();
+        });
+
+        // ── Join Room ──────────────────────────────────────────────
+        $('btn-join-go').addEventListener('click', () => {
+            const name = $('join-name-input').value.trim();
+            const code = $('join-code-input').value.trim().toUpperCase();
+            if (!name) { $('join-name-input').focus(); return; }
+            if (code.length !== 4) { $('join-code-input').focus(); return; }
+            myName = name;
+            roomCode = code;
+            role = 'player';
+            startPlayer();
+        });
+
+        $('join-code-input').addEventListener('keydown', e => {
+            if (e.key === 'Enter') $('btn-join-go').click();
+        });
+
+        $('join-name-input').addEventListener('keydown', e => {
+            if (e.key === 'Enter') $('join-code-input').focus();
+        });
+
+        // force uppercase on code input
+        $('join-code-input').addEventListener('input', e => {
+            e.target.value = e.target.value.toUpperCase().replace(/[^A-Z]/g, '');
+        });
+
+        // ════════════════════════════════════════════════════════════
+        // HOST LOGIC
+        // ════════════════════════════════════════════════════════════
+        function startHost() {
+            showScreen('connecting-screen');
+            roomCode = genCode();
+            const peerId = 'herdm-' + roomCode;
+
+            peer = new Peer(peerId);
+
+            peer.on('open', () => {
+                players = [myName];
+                showLobby();
+            });
+
+            peer.on('error', err => {
+                if (err.type === 'unavailable-id') {
+                    // code collision, try again
+                    roomCode = genCode();
+                    peer.destroy();
+                    startHost();
+                    return;
+                }
+                showError('Connection error: ' + err.message);
+                showScreen('home-screen');
+            });
+
+            peer.on('connection', conn => {
+                conn.on('open', () => {
+                    conn.on('data', data => handleHostMessage(conn, data));
+                });
+
+                conn.on('close', () => {
+                    // Find and remove this player
+                    for (const [name, c] of hostConns.entries()) {
+                        if (c === conn) {
+                            hostConns.delete(name);
+                            players = players.filter(p => p !== name);
+                            broadcastLobby();
+                            break;
+                        }
+                    }
+                });
+            });
+        }
+
+        function handleHostMessage(conn, data) {
+            switch (data.type) {
+                case 'join': {
+                    const name = data.name.trim();
+                    if (!name || players.some(p => p.toLowerCase() === name.toLowerCase())) {
+                        conn.send({ type: 'error', message: 'Name already taken or invalid' });
+                        return;
+                    }
+                    hostConns.set(name, conn);
+                    players.push(name);
+                    conn.send({ type: 'joined', name, players, cowHolder });
+                    broadcastLobby();
+                    break;
+                }
+                case 'answer': {
+                    // Find who sent this
+                    for (const [name, c] of hostConns.entries()) {
+                        if (c === conn) {
+                            if (!answers[name]) {
+                                answers[name] = data.answer;
+                                broadcastProgress();
+                                checkAllAnswered();
+                            }
+                            break;
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+
+        function broadcast(msg) {
+            for (const conn of hostConns.values()) {
+                try { conn.send(msg); } catch (e) { /* ignore */ }
+            }
+        }
+
+        function broadcastLobby() {
+            broadcast({ type: 'lobby', players, cowHolder });
+            renderLobby();
+        }
+
+        function broadcastProgress() {
+            const answered = Object.keys(answers);
+            broadcast({ type: 'progress', answered, total: players.length });
+            renderHostWaiting();
+        }
+
+        function checkAllAnswered() {
+            if (Object.keys(answers).length >= players.length) {
+                computeAndShowResults();
+            }
+        }
+
+        // ── Lobby rendering ────────────────────────────────────────
+        function showLobby() {
+            $('lobby-room-code').textContent = roomCode;
+            renderLobby();
+            if (role === 'host') {
+                $('host-lobby-controls').style.display = 'block';
+                $('player-lobby-msg').style.display = 'none';
+            } else {
+                $('host-lobby-controls').style.display = 'none';
+                $('player-lobby-msg').style.display = 'block';
+            }
+            showScreen('lobby-screen');
+        }
+
+        function renderLobby() {
+            const el = $('lobby-players');
+            el.innerHTML = players.map(name => {
+                const isMe = name === myName;
+                const hasCow = name === cowHolder;
+                return `<span class="player-tag${hasCow ? ' has-cow' : ''}${isMe ? ' is-you' : ''}">
+                    ${esc(name)}${isMe ? ' <span class="you-badge">(you)</span>' : ''}${hasCow ? ' <span class="cow">🐄</span>' : ''}
+                </span>`;
+            }).join('');
+            const count = players.length;
+            $('lobby-min-msg').textContent = count < 3
+                ? `${count} player${count !== 1 ? 's' : ''} — need at least 3`
+                : `${count} player${count !== 1 ? 's' : ''}`;
+            $('btn-start-game').disabled = count < 3;
+        }
+
+        $('btn-start-game').addEventListener('click', () => {
             roundNumber = 0;
             usedQuestionIndices.clear();
-            nextRound();
+            hostNextRound();
         });
 
-        // ── Category filters ──────────────────────────────────────────
-        const categoryFilters = $('category-filters');
-
-        function renderCategories() {
-            categoryFilters.innerHTML = categories.map(c => `
-                <button class="category-btn${activeCategories.has(c) ? ' active' : ''}" data-cat="${c}">
-                    ${c}
-                </button>
-            `).join('');
-        }
-
-        categoryFilters.addEventListener('click', e => {
-            const btn = e.target.closest('.category-btn');
-            if (!btn) return;
-            const cat = btn.dataset.cat;
-            if (activeCategories.has(cat)) {
-                if (activeCategories.size > 1) activeCategories.delete(cat);
-            } else {
-                activeCategories.add(cat);
-            }
-            renderCategories();
-        });
-
-        // ── Question screen ───────────────────────────────────────────
-        function nextRound() {
+        // ── Host question phase ────────────────────────────────────
+        function hostNextRound() {
             roundNumber++;
             pickQuestion();
-            showQuestionScreen();
+            showHostQuestion();
         }
 
         function pickQuestion() {
@@ -765,164 +1088,179 @@
             currentQuestion = pick.q;
         }
 
-        function showQuestionScreen() {
-            $('question-number').textContent = `Round ${roundNumber}`;
-            $('question-text').textContent = currentQuestion;
-            $('custom-question-input').value = '';
-            renderCategories();
-            updateCowDisplay();
-            showScreen('question');
+        function showHostQuestion() {
+            $('hq-round').textContent = 'Round ' + roundNumber;
+            $('hq-question').textContent = currentQuestion;
+            $('hq-custom-input').value = '';
+            renderHostCategories();
+            updateCowDisplay('hq-cow-holder', 'hq-cow-name');
+            showScreen('host-question-screen');
         }
 
-        $('skip-question-btn').addEventListener('click', () => {
+        function renderHostCategories() {
+            $('hq-categories').innerHTML = allCategories.map(c => `
+                <button class="category-btn${activeCategories.has(c) ? ' active' : ''}" data-cat="${c}">${c}</button>
+            `).join('');
+        }
+
+        $('hq-categories').addEventListener('click', e => {
+            const btn = e.target.closest('.category-btn');
+            if (!btn) return;
+            const cat = btn.dataset.cat;
+            if (activeCategories.has(cat)) {
+                if (activeCategories.size > 1) activeCategories.delete(cat);
+            } else {
+                activeCategories.add(cat);
+            }
+            renderHostCategories();
+        });
+
+        $('hq-skip-btn').addEventListener('click', () => {
             pickQuestion();
-            $('question-text').textContent = currentQuestion;
+            $('hq-question').textContent = currentQuestion;
         });
 
-        $('start-answers-btn').addEventListener('click', startAnswerPhase);
-
-        $('use-custom-btn').addEventListener('click', () => {
-            const custom = $('custom-question-input').value.trim();
-            if (!custom) return;
-            currentQuestion = custom;
-            $('question-text').textContent = currentQuestion;
-            $('custom-question-input').value = '';
+        $('hq-custom-btn').addEventListener('click', () => {
+            const q = $('hq-custom-input').value.trim();
+            if (!q) return;
+            currentQuestion = q;
+            $('hq-question').textContent = currentQuestion;
+            $('hq-custom-input').value = '';
         });
 
-        $('custom-question-input').addEventListener('keydown', e => {
-            if (e.key === 'Enter') $('use-custom-btn').click();
+        $('hq-custom-input').addEventListener('keydown', e => {
+            if (e.key === 'Enter') $('hq-custom-btn').click();
         });
 
-        function updateCowDisplay() {
-            const display = $('cow-holder-display');
-            if (cowHolder) {
-                $('cow-holder-name').textContent = cowHolder;
-                display.style.display = 'block';
-            } else {
-                display.style.display = 'none';
-            }
-        }
-
-        // ── Answer phase ──────────────────────────────────────────────
-        function startAnswerPhase() {
+        $('hq-send-btn').addEventListener('click', () => {
             answers = {};
-            currentPlayerIndex = 0;
-            const shuffled = [...players];
-            for (let i = shuffled.length - 1; i > 0; i--) {
-                const j = Math.floor(Math.random() * (i + 1));
-                [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-            }
-            players = shuffled;
-            showReadyScreen();
-        }
-
-        // ── Ready screen ──────────────────────────────────────────────
-        function showReadyScreen() {
-            $('ready-player-name').textContent = players[currentPlayerIndex];
-            $('ready-question-text').textContent = currentQuestion;
-            showScreen('ready');
-        }
-
-        $('ready-btn').addEventListener('click', showAnswerInput);
-
-        // ── Answer input ──────────────────────────────────────────────
-        function showAnswerInput() {
-            const player = players[currentPlayerIndex];
-            $('answer-player-name').textContent = player;
-            $('answer-question-text').textContent = currentQuestion;
-            $('answer-input').value = '';
-            $('submit-answer-btn').disabled = true;
-            $('answer-progress').textContent = `${currentPlayerIndex + 1} of ${players.length}`;
-            showScreen('answer');
-            setTimeout(() => $('answer-input').focus(), 100);
-        }
-
-        $('answer-input').addEventListener('input', () => {
-            $('submit-answer-btn').disabled = !$('answer-input').value.trim();
+            // Send question to all players
+            broadcast({ type: 'question', round: roundNumber, question: currentQuestion });
+            // Show host waiting screen (host also answers)
+            showHostAnswering();
         });
 
-        $('answer-input').addEventListener('keydown', e => {
-            if (e.key === 'Enter' && $('answer-input').value.trim()) submitAnswer();
-        });
-
-        $('submit-answer-btn').addEventListener('click', submitAnswer);
-
-        function submitAnswer() {
-            const player = players[currentPlayerIndex];
-            const answer = $('answer-input').value.trim();
-            if (!answer) return;
-            answers[player] = answer;
-            currentPlayerIndex++;
-
-            if (currentPlayerIndex >= players.length) {
-                showResults();
-            } else {
-                showReadyScreen();
+        // ── Host waiting for answers ───────────────────────────────
+        function showHostAnswering() {
+            $('hw-round').textContent = 'Round ' + roundNumber;
+            $('hw-question').textContent = currentQuestion;
+            renderHostWaiting();
+            showScreen('host-waiting-screen');
+            // Host gets to answer too — show a small input in the waiting screen
+            // Actually, let's embed the host's answer input into the waiting screen
+            if (!answers[myName]) {
+                showHostAnswerPrompt();
             }
         }
 
-        // ── Results ───────────────────────────────────────────────────
-        function showResults() {
-            // Group answers (case-insensitive, trimmed)
+        function showHostAnswerPrompt() {
+            // Add answer input to the host waiting screen if not present
+            let existing = $('hw-answer-area');
+            if (!existing) {
+                const area = document.createElement('div');
+                area.id = 'hw-answer-area';
+                area.className = 'section';
+                area.innerHTML = `
+                    <div class="answer-phase">
+                        <div class="instruction">Your answer:</div>
+                        <div class="answer-input-area">
+                            <input type="text" id="hw-answer-input" placeholder="Your answer" maxlength="60" autocomplete="off">
+                            <button class="btn btn-primary btn-wide" id="hw-answer-submit" disabled>Submit</button>
+                        </div>
+                    </div>
+                `;
+                $('host-waiting-screen').appendChild(area);
+
+                $('hw-answer-input').addEventListener('input', () => {
+                    $('hw-answer-submit').disabled = !$('hw-answer-input').value.trim();
+                });
+                $('hw-answer-input').addEventListener('keydown', e => {
+                    if (e.key === 'Enter' && $('hw-answer-input').value.trim()) $('hw-answer-submit').click();
+                });
+                $('hw-answer-submit').addEventListener('click', () => {
+                    const val = $('hw-answer-input').value.trim();
+                    if (!val) return;
+                    answers[myName] = val;
+                    area.innerHTML = '<div class="status-msg"><div class="submitted-check">&#10003;</div><div>Your answer submitted</div></div>';
+                    broadcastProgress();
+                    checkAllAnswered();
+                });
+            }
+            setTimeout(() => { const inp = $('hw-answer-input'); if (inp) inp.focus(); }, 100);
+        }
+
+        function renderHostWaiting() {
+            const el = $('hw-players');
+            const answeredSet = new Set(Object.keys(answers));
+            el.innerHTML = players.map(name => {
+                const done = answeredSet.has(name);
+                return `<span class="player-tag${done ? ' answered' : ''}">
+                    ${done ? '&#10003; ' : ''}${esc(name)}
+                </span>`;
+            }).join('');
+            $('hw-progress').textContent = `${answeredSet.size} of ${players.length} answered`;
+        }
+
+        // ── Results computation ────────────────────────────────────
+        function computeAndShowResults() {
             const groups = {};
             for (const [player, answer] of Object.entries(answers)) {
                 const key = answer.toLowerCase().trim();
-                if (!groups[key]) groups[key] = { answer: answer, players: [] };
+                if (!groups[key]) groups[key] = { answer, players: [] };
                 groups[key].players.push(player);
             }
 
-            // Sort by group size descending
             const sorted = Object.values(groups).sort((a, b) => b.players.length - a.players.length);
-
-            // Determine herd (largest group, must be > 1 to count)
             const herdSize = sorted[0].players.length;
-            const isHerd = herdSize > 1;
+            const topGroups = sorted.filter(g => g.players.length === herdSize);
+            const hasHerd = topGroups.length === 1 && herdSize > 1;
 
-            // Find odd ones out (everyone not in the largest group, or everyone if no herd)
             let oddOnes = [];
-            if (isHerd) {
-                sorted.forEach((g, i) => {
-                    if (i > 0 || g.players.length < herdSize) {
-                        // Handle ties at the top: only the largest group is the herd
-                    }
-                });
-                // Actually: herd = all groups tied at max size? No — in Herd Mentality,
-                // the herd is the single most popular answer. If there's a tie for most
-                // popular, NO ONE is in the herd.
-                const topGroups = sorted.filter(g => g.players.length === herdSize);
-                if (topGroups.length === 1 && herdSize > 1) {
-                    // Clear herd
-                    oddOnes = sorted.slice(1).flatMap(g => g.players);
-                } else {
-                    // Tie — no herd, everyone is odd
-                    oddOnes = players.slice();
-                }
+            if (hasHerd) {
+                oddOnes = sorted.slice(1).flatMap(g => g.players);
             } else {
                 oddOnes = players.slice();
             }
 
-            const topGroups = sorted.filter(g => g.players.length === herdSize);
-            const hasHerd = topGroups.length === 1 && herdSize > 1;
-
-            // Assign pink cow to a random odd one (if any)
             if (oddOnes.length > 0 && hasHerd) {
                 cowHolder = oddOnes[Math.floor(Math.random() * oddOnes.length)];
             }
 
-            // Render
-            const summaryEl = $('results-summary');
-            if (hasHerd) {
-                summaryEl.innerHTML = `The herd said: <span class="herd-label">"${esc(sorted[0].answer)}"</span>`;
+            const resultsData = {
+                type: 'results',
+                sorted: sorted.map(g => ({ answer: g.answer, players: g.players })),
+                hasHerd,
+                cowHolder
+            };
+
+            broadcast(resultsData);
+            renderResults(resultsData);
+        }
+
+        function renderResults(data) {
+            const { sorted, hasHerd, cowHolder: cow } = data;
+
+            // Cow display
+            if (cow) {
+                $('rs-cow-name').textContent = cow;
+                $('rs-cow-holder').style.display = 'block';
             } else {
-                summaryEl.innerHTML = `<span style="color: var(--color-pink)">No herd! Everyone thinks differently.</span>`;
+                $('rs-cow-holder').style.display = 'none';
             }
 
-            const groupsEl = $('answer-groups');
-            groupsEl.innerHTML = sorted.map((g, i) => {
+            // Summary
+            if (hasHerd) {
+                $('rs-summary').innerHTML = `The herd said: <span class="herd-label">"${esc(sorted[0].answer)}"</span>`;
+            } else {
+                $('rs-summary').innerHTML = `<span style="color: var(--color-pink)">No herd! Everyone thinks differently.</span>`;
+            }
+
+            // Groups
+            $('rs-groups').innerHTML = sorted.map((g, i) => {
                 const isHerdGroup = hasHerd && i === 0;
                 const isOddGroup = !isHerdGroup && hasHerd;
                 return `
-                    <div class="answer-group ${isHerdGroup ? 'is-herd' : ''}${isOddGroup ? ' is-odd' : ''}">
+                    <div class="answer-group${isHerdGroup ? ' is-herd' : ''}${isOddGroup ? ' is-odd' : ''}">
                         <span class="answer-count">${g.players.length} player${g.players.length !== 1 ? 's' : ''}</span>
                         <div class="answer-text">
                             "${esc(g.answer)}"
@@ -934,25 +1272,150 @@
                 `;
             }).join('');
 
-            showScreen('results');
+            // Controls
+            if (role === 'host') {
+                $('rs-host-controls').style.display = 'flex';
+                $('rs-player-msg').style.display = 'none';
+            } else {
+                $('rs-host-controls').style.display = 'none';
+                $('rs-player-msg').style.display = 'block';
+            }
+
+            showScreen('results-screen');
         }
 
-        $('new-round-btn').addEventListener('click', nextRound);
-        $('end-game-btn').addEventListener('click', () => {
-            showScreen('setup');
-            renderPlayerTags();
+        $('rs-next-btn').addEventListener('click', () => {
+            // Clean up the host answer area from previous round
+            const hwArea = $('hw-answer-area');
+            if (hwArea) hwArea.remove();
+            hostNextRound();
         });
 
-        // ── Helpers ────────────────────────────────────────────────────
-        function esc(str) {
-            const div = document.createElement('div');
-            div.textContent = str;
-            return div.innerHTML;
+        $('rs-end-btn').addEventListener('click', () => {
+            broadcast({ type: 'end' });
+            // Clean up the host answer area
+            const hwArea = $('hw-answer-area');
+            if (hwArea) hwArea.remove();
+            showLobby();
+        });
+
+        function updateCowDisplay(holderId, nameId) {
+            const el = $(holderId);
+            if (cowHolder) {
+                $(nameId).textContent = cowHolder;
+                el.style.display = 'block';
+            } else {
+                el.style.display = 'none';
+            }
         }
 
-        // ── Init ───────────────────────────────────────────────────────
-        renderPlayerTags();
-        renderCategories();
+        // ════════════════════════════════════════════════════════════
+        // PLAYER LOGIC
+        // ════════════════════════════════════════════════════════════
+        function startPlayer() {
+            showScreen('connecting-screen');
+            peer = new Peer();
+
+            peer.on('open', () => {
+                const hostPeerId = 'herdm-' + roomCode;
+                playerConn = peer.connect(hostPeerId, { reliable: true });
+
+                const timeout = setTimeout(() => {
+                    showError('Could not connect — check the room code');
+                    showScreen('join-screen');
+                    peer.destroy();
+                }, 10000);
+
+                playerConn.on('open', () => {
+                    clearTimeout(timeout);
+                    playerConn.send({ type: 'join', name: myName });
+                });
+
+                playerConn.on('data', data => handlePlayerMessage(data));
+
+                playerConn.on('close', () => {
+                    showError('Disconnected from host');
+                    showScreen('home-screen');
+                });
+
+                playerConn.on('error', err => {
+                    clearTimeout(timeout);
+                    showError('Connection error: ' + err.message);
+                    showScreen('join-screen');
+                });
+            });
+
+            peer.on('error', err => {
+                showError('Connection error: ' + err.message);
+                showScreen('join-screen');
+            });
+        }
+
+        function handlePlayerMessage(data) {
+            switch (data.type) {
+                case 'joined':
+                    players = data.players;
+                    cowHolder = data.cowHolder;
+                    showLobby();
+                    break;
+
+                case 'lobby':
+                    players = data.players;
+                    cowHolder = data.cowHolder;
+                    renderLobby();
+                    break;
+
+                case 'question':
+                    roundNumber = data.round;
+                    currentQuestion = data.question;
+                    showPlayerAnswer();
+                    break;
+
+                case 'progress':
+                    // Player doesn't need to see progress, just wait
+                    break;
+
+                case 'results':
+                    cowHolder = data.cowHolder;
+                    renderResults(data);
+                    break;
+
+                case 'end':
+                    showLobby();
+                    break;
+
+                case 'error':
+                    showError(data.message);
+                    showScreen('join-screen');
+                    break;
+            }
+        }
+
+        // ── Player answer screen ───────────────────────────────────
+        function showPlayerAnswer() {
+            $('pa-round').textContent = 'Round ' + roundNumber;
+            $('pa-question').textContent = currentQuestion;
+            $('pa-input').value = '';
+            $('pa-submit-btn').disabled = true;
+            showScreen('player-answer-screen');
+            setTimeout(() => $('pa-input').focus(), 100);
+        }
+
+        $('pa-input').addEventListener('input', () => {
+            $('pa-submit-btn').disabled = !$('pa-input').value.trim();
+        });
+
+        $('pa-input').addEventListener('keydown', e => {
+            if (e.key === 'Enter' && $('pa-input').value.trim()) $('pa-submit-btn').click();
+        });
+
+        $('pa-submit-btn').addEventListener('click', () => {
+            const answer = $('pa-input').value.trim();
+            if (!answer) return;
+            playerConn.send({ type: 'answer', answer });
+            showScreen('player-waiting-screen');
+        });
+
     })();
     </script>
 </body>
