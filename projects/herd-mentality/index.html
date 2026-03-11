@@ -1,0 +1,959 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Herd Mentality — slop</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --color-bg: #0f0f0c;
+            --color-surface: #1a1a16;
+            --color-surface-hover: #222218;
+            --color-border: #2e2e24;
+            --color-text: #e8e4d4;
+            --color-text-muted: #9a9686;
+            --color-accent: #c4a24e;
+            --color-accent-dim: rgba(196, 162, 78, 0.15);
+            --color-error: #c45e4e;
+            --color-success: #4a9e6e;
+            --color-pink: #d4619b;
+            --color-pink-dim: rgba(212, 97, 155, 0.15);
+            --font-body: 'Inter', sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: var(--font-body);
+            background: var(--color-bg);
+            color: var(--color-text);
+            min-height: 100vh;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 700px;
+            margin: 0 auto;
+            padding: 2rem 1.5rem;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+
+        header h1 {
+            font-size: 2rem;
+            font-weight: 800;
+            letter-spacing: -0.03em;
+        }
+
+        header h1 .accent { color: var(--color-accent); }
+
+        header .subtitle {
+            color: var(--color-text-muted);
+            font-size: 0.95rem;
+            margin-top: 0.25rem;
+        }
+
+        .section {
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1.25rem;
+        }
+
+        .section h2 {
+            font-size: 1.1rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            letter-spacing: -0.01em;
+        }
+
+        /* Buttons */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            padding: 0.65rem 1.25rem;
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            background: var(--color-surface);
+            color: var(--color-text);
+            font-family: var(--font-body);
+            font-size: 0.9rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .btn:hover { background: var(--color-surface-hover); border-color: var(--color-accent); }
+
+        .btn-primary {
+            background: var(--color-accent);
+            color: #0f0f0c;
+            border-color: var(--color-accent);
+        }
+
+        .btn-primary:hover { background: #d4b25e; border-color: #d4b25e; }
+
+        .btn-danger {
+            color: var(--color-error);
+            border-color: var(--color-error);
+        }
+
+        .btn-danger:hover { background: rgba(196, 94, 78, 0.15); }
+
+        .btn-wide { width: 100%; }
+
+        .btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        /* Inputs */
+        input[type="text"] {
+            width: 100%;
+            padding: 0.65rem 0.85rem;
+            background: var(--color-bg);
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            color: var(--color-text);
+            font-family: var(--font-body);
+            font-size: 0.95rem;
+            outline: none;
+            transition: border-color 0.15s ease;
+        }
+
+        input[type="text"]:focus { border-color: var(--color-accent); }
+
+        input[type="text"]::placeholder { color: var(--color-text-muted); }
+
+        /* Player setup */
+        .player-input-row {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .player-input-row input { flex: 1; }
+
+        .player-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .player-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.35rem 0.75rem;
+            background: var(--color-accent-dim);
+            border: 1px solid rgba(196, 162, 78, 0.3);
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+
+        .player-tag .remove {
+            cursor: pointer;
+            color: var(--color-text-muted);
+            font-size: 1.1rem;
+            line-height: 1;
+            transition: color 0.15s;
+        }
+
+        .player-tag .remove:hover { color: var(--color-error); }
+
+        .player-tag.has-cow {
+            background: var(--color-pink-dim);
+            border-color: rgba(212, 97, 155, 0.3);
+        }
+
+        .player-tag .cow { margin-left: 0.15rem; }
+
+        /* Question display */
+        .question-display {
+            text-align: center;
+            padding: 1.5rem 1rem;
+        }
+
+        .question-number {
+            font-family: var(--font-mono);
+            font-size: 0.8rem;
+            color: var(--color-accent);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-bottom: 0.5rem;
+        }
+
+        .question-text {
+            font-size: 1.4rem;
+            font-weight: 700;
+            line-height: 1.4;
+            letter-spacing: -0.02em;
+        }
+
+        .question-actions {
+            display: flex;
+            gap: 0.5rem;
+            justify-content: center;
+            margin-top: 1.25rem;
+        }
+
+        /* Answer phase */
+        .answer-phase {
+            text-align: center;
+        }
+
+        .answer-phase .current-player {
+            font-size: 1.3rem;
+            font-weight: 700;
+            color: var(--color-accent);
+            margin-bottom: 0.25rem;
+        }
+
+        .answer-phase .instruction {
+            color: var(--color-text-muted);
+            font-size: 0.9rem;
+            margin-bottom: 1.25rem;
+        }
+
+        .answer-input-area {
+            max-width: 400px;
+            margin: 0 auto;
+        }
+
+        .answer-input-area input {
+            text-align: center;
+            font-size: 1.1rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .answer-progress {
+            font-family: var(--font-mono);
+            font-size: 0.8rem;
+            color: var(--color-text-muted);
+            margin-top: 1rem;
+        }
+
+        /* Ready screen (between players) */
+        .ready-screen {
+            text-align: center;
+            padding: 2rem 1rem;
+        }
+
+        .ready-screen .next-player {
+            font-size: 1.1rem;
+            color: var(--color-text-muted);
+            margin-bottom: 0.5rem;
+        }
+
+        .ready-screen .player-name {
+            font-size: 1.6rem;
+            font-weight: 700;
+            color: var(--color-accent);
+            margin-bottom: 1.25rem;
+        }
+
+        /* Results */
+        .results-header {
+            text-align: center;
+            margin-bottom: 1.25rem;
+        }
+
+        .results-header h2 {
+            margin-bottom: 0.25rem;
+        }
+
+        .results-header .herd-label {
+            color: var(--color-success);
+            font-weight: 600;
+        }
+
+        .answer-group {
+            background: var(--color-bg);
+            border: 1px solid var(--color-border);
+            border-radius: 10px;
+            padding: 1rem 1.25rem;
+            margin-bottom: 0.75rem;
+            transition: border-color 0.15s;
+        }
+
+        .answer-group.is-herd {
+            border-color: var(--color-success);
+            background: rgba(74, 158, 110, 0.08);
+        }
+
+        .answer-group.is-odd {
+            border-color: var(--color-pink);
+            background: var(--color-pink-dim);
+        }
+
+        .answer-group .answer-text {
+            font-size: 1.15rem;
+            font-weight: 600;
+            margin-bottom: 0.35rem;
+        }
+
+        .answer-group .answer-text .badge {
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            padding: 0.15rem 0.5rem;
+            border-radius: 4px;
+            margin-left: 0.5rem;
+            vertical-align: middle;
+        }
+
+        .badge-herd {
+            background: rgba(74, 158, 110, 0.2);
+            color: var(--color-success);
+        }
+
+        .badge-cow {
+            background: var(--color-pink-dim);
+            color: var(--color-pink);
+        }
+
+        .answer-group .answer-players {
+            color: var(--color-text-muted);
+            font-size: 0.85rem;
+        }
+
+        .answer-count {
+            font-family: var(--font-mono);
+            font-size: 0.8rem;
+            color: var(--color-text-muted);
+            float: right;
+            margin-top: 0.15rem;
+        }
+
+        /* Pink cow holder */
+        .cow-holder {
+            text-align: center;
+            padding: 0.75rem;
+            background: var(--color-pink-dim);
+            border: 1px solid rgba(212, 97, 155, 0.3);
+            border-radius: 10px;
+            margin-bottom: 1rem;
+        }
+
+        .cow-holder .cow-icon { font-size: 1.5rem; }
+        .cow-holder .cow-name {
+            font-weight: 700;
+            color: var(--color-pink);
+        }
+        .cow-holder .cow-label {
+            font-size: 0.8rem;
+            color: var(--color-text-muted);
+        }
+
+        /* Screens */
+        .screen { display: none; }
+        .screen.active { display: block; }
+
+        /* Custom question input */
+        .custom-question-area {
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--color-border);
+        }
+
+        .custom-question-area label {
+            display: block;
+            font-size: 0.85rem;
+            color: var(--color-text-muted);
+            margin-bottom: 0.5rem;
+        }
+
+        .custom-question-row {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .custom-question-row input { flex: 1; }
+
+        /* Category filter */
+        .category-filters {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.4rem;
+            margin-bottom: 1rem;
+        }
+
+        .category-btn {
+            padding: 0.3rem 0.7rem;
+            border: 1px solid var(--color-border);
+            border-radius: 6px;
+            background: transparent;
+            color: var(--color-text-muted);
+            font-family: var(--font-body);
+            font-size: 0.8rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .category-btn:hover { border-color: var(--color-accent); color: var(--color-text); }
+
+        .category-btn.active {
+            background: var(--color-accent-dim);
+            border-color: var(--color-accent);
+            color: var(--color-accent);
+        }
+
+        /* Responsive */
+        @media (max-width: 500px) {
+            .container { padding: 1.25rem 1rem; }
+            header h1 { font-size: 1.6rem; }
+            .question-text { font-size: 1.2rem; }
+            .question-actions { flex-direction: column; }
+            .question-actions .btn { width: 100%; }
+        }
+
+        /* Transition helper */
+        .fade-in {
+            animation: fadeIn 0.25s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Herd <span class="accent">Mentality</span></h1>
+            <p class="subtitle">Think like the herd. Don't be the odd one out.</p>
+        </header>
+
+        <!-- Screen 1: Player Setup -->
+        <div id="setup-screen" class="screen active">
+            <div class="section">
+                <h2>Players</h2>
+                <div class="player-tags" id="player-tags"></div>
+                <div class="player-input-row">
+                    <input type="text" id="player-name-input" placeholder="Enter player name" maxlength="20">
+                    <button class="btn" id="add-player-btn">Add</button>
+                </div>
+                <p id="player-count" style="font-size: 0.85rem; color: var(--color-text-muted); margin-top: 0.5rem;"></p>
+            </div>
+            <button class="btn btn-primary btn-wide" id="start-game-btn" disabled>Start Game</button>
+        </div>
+
+        <!-- Screen 2: Question -->
+        <div id="question-screen" class="screen">
+            <div id="cow-holder-display" class="cow-holder" style="display: none;">
+                <span class="cow-icon">🐄</span>
+                <span class="cow-label">Pink Cow held by</span>
+                <span class="cow-name" id="cow-holder-name"></span>
+            </div>
+            <div class="section">
+                <div class="question-display">
+                    <div class="question-number" id="question-number"></div>
+                    <div class="question-text" id="question-text"></div>
+                    <div class="question-actions">
+                        <button class="btn" id="skip-question-btn">Skip</button>
+                        <button class="btn btn-primary" id="start-answers-btn">Collect Answers</button>
+                    </div>
+                </div>
+                <div class="custom-question-area">
+                    <label>Or use your own question:</label>
+                    <div class="custom-question-row">
+                        <input type="text" id="custom-question-input" placeholder="Type a custom question">
+                        <button class="btn" id="use-custom-btn">Use</button>
+                    </div>
+                </div>
+            </div>
+            <div class="section">
+                <h2>Categories</h2>
+                <div class="category-filters" id="category-filters"></div>
+            </div>
+        </div>
+
+        <!-- Screen 3: Ready (between players) -->
+        <div id="ready-screen" class="screen">
+            <div class="section">
+                <div class="ready-screen">
+                    <div class="next-player">Pass the device to:</div>
+                    <div class="player-name" id="ready-player-name"></div>
+                    <div class="question-text" id="ready-question-text" style="font-size: 1.1rem; margin-bottom: 1.25rem; color: var(--color-text-muted);"></div>
+                    <button class="btn btn-primary btn-wide" id="ready-btn">I'm Ready — Show Question</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Screen 4: Answer Input -->
+        <div id="answer-screen" class="screen">
+            <div class="section">
+                <div class="answer-phase">
+                    <div class="current-player" id="answer-player-name"></div>
+                    <div class="instruction">Type your answer below. Think like the herd!</div>
+                    <div class="question-text" id="answer-question-text" style="font-size: 1.1rem; margin-bottom: 1rem;"></div>
+                    <div class="answer-input-area">
+                        <input type="text" id="answer-input" placeholder="Your answer" maxlength="60" autocomplete="off">
+                        <button class="btn btn-primary btn-wide" id="submit-answer-btn" disabled>Submit Answer</button>
+                    </div>
+                    <div class="answer-progress" id="answer-progress"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Screen 5: Results -->
+        <div id="results-screen" class="screen">
+            <div class="section">
+                <div class="results-header">
+                    <h2>Results</h2>
+                    <div id="results-summary"></div>
+                </div>
+                <div id="answer-groups"></div>
+            </div>
+            <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
+                <button class="btn btn-wide" id="new-round-btn">Next Round</button>
+                <button class="btn btn-danger" id="end-game-btn">End Game</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    (function() {
+        'use strict';
+
+        // ── Question Bank ──────────────────────────────────────────────
+        const questions = [
+            // Favourites
+            { q: "What is the best pizza topping?", c: "favourites" },
+            { q: "What is the best ice cream flavour?", c: "favourites" },
+            { q: "What is the best colour?", c: "favourites" },
+            { q: "What is the best day of the week?", c: "favourites" },
+            { q: "What is the best season of the year?", c: "favourites" },
+            { q: "What is the best movie snack?", c: "favourites" },
+            { q: "What is the best fast food restaurant?", c: "favourites" },
+            { q: "What is the best fruit?", c: "favourites" },
+            { q: "What is the best holiday destination?", c: "favourites" },
+            { q: "What is the best board game?", c: "favourites" },
+            { q: "What is the best breakfast food?", c: "favourites" },
+            { q: "What is the best biscuit?", c: "favourites" },
+            { q: "What is the best chocolate bar?", c: "favourites" },
+            { q: "What is the best drink to have at a pub?", c: "favourites" },
+            { q: "What is the best sandwich filling?", c: "favourites" },
+            { q: "What is the best crisp flavour?", c: "favourites" },
+            { q: "What is the best cereal?", c: "favourites" },
+            { q: "What is the best superhero?", c: "favourites" },
+            { q: "What is the best Disney film?", c: "favourites" },
+            { q: "What is the best TV show of all time?", c: "favourites" },
+
+            // Pop culture
+            { q: "Name a famous Chris in Hollywood.", c: "pop culture" },
+            { q: "Name a famous fictional detective.", c: "pop culture" },
+            { q: "Name a famous sitcom.", c: "pop culture" },
+            { q: "Name a famous band from the UK.", c: "pop culture" },
+            { q: "Name a famous video game character.", c: "pop culture" },
+            { q: "Name a famous children's TV show.", c: "pop culture" },
+            { q: "Name a famous song everyone knows the words to.", c: "pop culture" },
+            { q: "Name a famous movie villain.", c: "pop culture" },
+            { q: "Name a famous reality TV show.", c: "pop culture" },
+            { q: "Name a famous book series.", c: "pop culture" },
+            { q: "Name a famous animated film.", c: "pop culture" },
+            { q: "Name a famous movie quote.", c: "pop culture" },
+            { q: "Name a famous comedian.", c: "pop culture" },
+            { q: "Name a famous one-hit wonder.", c: "pop culture" },
+
+            // Animals
+            { q: "Name the cutest animal.", c: "animals" },
+            { q: "Name the scariest animal.", c: "animals" },
+            { q: "What animal would make the worst pet?", c: "animals" },
+            { q: "What animal would win in a fight against all others?", c: "animals" },
+            { q: "What is the most annoying animal?", c: "animals" },
+            { q: "Name an animal beginning with the letter S.", c: "animals" },
+            { q: "What animal best represents wisdom?", c: "animals" },
+            { q: "What is the ugliest animal?", c: "animals" },
+            { q: "What is the fastest animal you can think of?", c: "animals" },
+            { q: "If you could be any animal, what would you be?", c: "animals" },
+
+            // People & life
+            { q: "What job would you never want to do?", c: "people" },
+            { q: "What age is considered 'old'?", c: "people" },
+            { q: "What is the worst household chore?", c: "people" },
+            { q: "Where is the best place to go on a first date?", c: "people" },
+            { q: "What is the most common excuse for being late?", c: "people" },
+            { q: "What is the most common New Year's resolution?", c: "people" },
+            { q: "What is the most British thing you can think of?", c: "people" },
+            { q: "What subject were you worst at in school?", c: "people" },
+            { q: "Name something people always lose.", c: "people" },
+            { q: "Name something people do when they're nervous.", c: "people" },
+            { q: "What is the most annoying habit someone can have?", c: "people" },
+            { q: "What is the first thing you do in the morning?", c: "people" },
+            { q: "What is the ideal number of children to have?", c: "people" },
+            { q: "What is the best age to be?", c: "people" },
+
+            // Would you / hypothetical
+            { q: "What superpower would most people choose?", c: "hypothetical" },
+            { q: "If you found £1 million, what's the first thing you'd buy?", c: "hypothetical" },
+            { q: "What historical period would most people want to visit?", c: "hypothetical" },
+            { q: "If you could live in any country, where would you go?", c: "hypothetical" },
+            { q: "What celebrity would most people want to have dinner with?", c: "hypothetical" },
+            { q: "If you could only eat one food forever, what would it be?", c: "hypothetical" },
+            { q: "What would you take to a desert island?", c: "hypothetical" },
+            { q: "If you could master any skill instantly, what would it be?", c: "hypothetical" },
+            { q: "What fictional world would most people want to live in?", c: "hypothetical" },
+            { q: "If you could have any animal as a safe pet, what would it be?", c: "hypothetical" },
+            { q: "What would you rename the Earth to?", c: "hypothetical" },
+            { q: "If you had a time machine, would you go to the past or future?", c: "hypothetical" },
+
+            // Word association
+            { q: "Name something you associate with France.", c: "word association" },
+            { q: "Name something you associate with Christmas.", c: "word association" },
+            { q: "Name something you associate with a beach.", c: "word association" },
+            { q: "Name something yellow.", c: "word association" },
+            { q: "Name something you'd find in a kitchen drawer.", c: "word association" },
+            { q: "Name a word that rhymes with 'cat'.", c: "word association" },
+            { q: "Name something you'd find at a fairground.", c: "word association" },
+            { q: "Name something round.", c: "word association" },
+            { q: "Name something you'd take camping.", c: "word association" },
+            { q: "Name something you'd find in a hotel room.", c: "word association" },
+            { q: "Name something associated with Halloween.", c: "word association" },
+            { q: "Name something you'd find in a school.", c: "word association" },
+            { q: "Name a three-letter word.", c: "word association" },
+            { q: "Name something cold.", c: "word association" },
+
+            // Opinions
+            { q: "What is the most overrated food?", c: "opinions" },
+            { q: "What is the most useless school subject?", c: "opinions" },
+            { q: "What is the worst film ever made?", c: "opinions" },
+            { q: "What is the most overrated holiday?", c: "opinions" },
+            { q: "What is the worst fashion trend of all time?", c: "opinions" },
+            { q: "What is the most boring sport to watch?", c: "opinions" },
+            { q: "What is the most annoying song?", c: "opinions" },
+            { q: "What is the worst smell?", c: "opinions" },
+            { q: "What is the best smell?", c: "opinions" },
+            { q: "What is the most pointless invention?", c: "opinions" },
+        ];
+
+        const categories = [...new Set(questions.map(q => q.c))];
+
+        // ── State ──────────────────────────────────────────────────────
+        let players = [];
+        let cowHolder = null;
+        let roundNumber = 0;
+        let currentQuestion = null;
+        let currentPlayerIndex = 0;
+        let answers = {};
+        let usedQuestionIndices = new Set();
+        let activeCategories = new Set(categories);
+
+        // ── DOM refs ───────────────────────────────────────────────────
+        const $ = id => document.getElementById(id);
+
+        const screens = {
+            setup: $('setup-screen'),
+            question: $('question-screen'),
+            ready: $('ready-screen'),
+            answer: $('answer-screen'),
+            results: $('results-screen'),
+        };
+
+        function showScreen(name) {
+            Object.values(screens).forEach(s => s.classList.remove('active'));
+            screens[name].classList.add('active');
+            screens[name].classList.add('fade-in');
+        }
+
+        // ── Setup screen ──────────────────────────────────────────────
+        const playerInput = $('player-name-input');
+        const addPlayerBtn = $('add-player-btn');
+        const startGameBtn = $('start-game-btn');
+        const playerTags = $('player-tags');
+        const playerCount = $('player-count');
+
+        function renderPlayerTags() {
+            playerTags.innerHTML = players.map((name, i) => `
+                <span class="player-tag${cowHolder === name ? ' has-cow' : ''}">
+                    ${esc(name)}${cowHolder === name ? '<span class="cow">🐄</span>' : ''}
+                    <span class="remove" data-index="${i}">&times;</span>
+                </span>
+            `).join('');
+            startGameBtn.disabled = players.length < 3;
+            playerCount.textContent = players.length > 0
+                ? `${players.length} player${players.length !== 1 ? 's' : ''} — need at least 3`
+                : '';
+        }
+
+        function addPlayer() {
+            const name = playerInput.value.trim();
+            if (!name || players.some(p => p.toLowerCase() === name.toLowerCase())) {
+                playerInput.value = '';
+                return;
+            }
+            players.push(name);
+            playerInput.value = '';
+            playerInput.focus();
+            renderPlayerTags();
+        }
+
+        addPlayerBtn.addEventListener('click', addPlayer);
+        playerInput.addEventListener('keydown', e => { if (e.key === 'Enter') addPlayer(); });
+        playerTags.addEventListener('click', e => {
+            if (e.target.classList.contains('remove')) {
+                const idx = parseInt(e.target.dataset.index);
+                const removed = players.splice(idx, 1)[0];
+                if (cowHolder === removed) cowHolder = null;
+                renderPlayerTags();
+            }
+        });
+
+        startGameBtn.addEventListener('click', () => {
+            roundNumber = 0;
+            usedQuestionIndices.clear();
+            nextRound();
+        });
+
+        // ── Category filters ──────────────────────────────────────────
+        const categoryFilters = $('category-filters');
+
+        function renderCategories() {
+            categoryFilters.innerHTML = categories.map(c => `
+                <button class="category-btn${activeCategories.has(c) ? ' active' : ''}" data-cat="${c}">
+                    ${c}
+                </button>
+            `).join('');
+        }
+
+        categoryFilters.addEventListener('click', e => {
+            const btn = e.target.closest('.category-btn');
+            if (!btn) return;
+            const cat = btn.dataset.cat;
+            if (activeCategories.has(cat)) {
+                if (activeCategories.size > 1) activeCategories.delete(cat);
+            } else {
+                activeCategories.add(cat);
+            }
+            renderCategories();
+        });
+
+        // ── Question screen ───────────────────────────────────────────
+        function nextRound() {
+            roundNumber++;
+            pickQuestion();
+            showQuestionScreen();
+        }
+
+        function pickQuestion() {
+            const available = questions
+                .map((q, i) => ({ ...q, i }))
+                .filter(q => activeCategories.has(q.c) && !usedQuestionIndices.has(q.i));
+
+            if (available.length === 0) {
+                usedQuestionIndices.clear();
+                return pickQuestion();
+            }
+
+            const pick = available[Math.floor(Math.random() * available.length)];
+            usedQuestionIndices.add(pick.i);
+            currentQuestion = pick.q;
+        }
+
+        function showQuestionScreen() {
+            $('question-number').textContent = `Round ${roundNumber}`;
+            $('question-text').textContent = currentQuestion;
+            $('custom-question-input').value = '';
+            renderCategories();
+            updateCowDisplay();
+            showScreen('question');
+        }
+
+        $('skip-question-btn').addEventListener('click', () => {
+            pickQuestion();
+            $('question-text').textContent = currentQuestion;
+        });
+
+        $('start-answers-btn').addEventListener('click', startAnswerPhase);
+
+        $('use-custom-btn').addEventListener('click', () => {
+            const custom = $('custom-question-input').value.trim();
+            if (!custom) return;
+            currentQuestion = custom;
+            $('question-text').textContent = currentQuestion;
+            $('custom-question-input').value = '';
+        });
+
+        $('custom-question-input').addEventListener('keydown', e => {
+            if (e.key === 'Enter') $('use-custom-btn').click();
+        });
+
+        function updateCowDisplay() {
+            const display = $('cow-holder-display');
+            if (cowHolder) {
+                $('cow-holder-name').textContent = cowHolder;
+                display.style.display = 'block';
+            } else {
+                display.style.display = 'none';
+            }
+        }
+
+        // ── Answer phase ──────────────────────────────────────────────
+        function startAnswerPhase() {
+            answers = {};
+            currentPlayerIndex = 0;
+            const shuffled = [...players];
+            for (let i = shuffled.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+            }
+            players = shuffled;
+            showReadyScreen();
+        }
+
+        // ── Ready screen ──────────────────────────────────────────────
+        function showReadyScreen() {
+            $('ready-player-name').textContent = players[currentPlayerIndex];
+            $('ready-question-text').textContent = currentQuestion;
+            showScreen('ready');
+        }
+
+        $('ready-btn').addEventListener('click', showAnswerInput);
+
+        // ── Answer input ──────────────────────────────────────────────
+        function showAnswerInput() {
+            const player = players[currentPlayerIndex];
+            $('answer-player-name').textContent = player;
+            $('answer-question-text').textContent = currentQuestion;
+            $('answer-input').value = '';
+            $('submit-answer-btn').disabled = true;
+            $('answer-progress').textContent = `${currentPlayerIndex + 1} of ${players.length}`;
+            showScreen('answer');
+            setTimeout(() => $('answer-input').focus(), 100);
+        }
+
+        $('answer-input').addEventListener('input', () => {
+            $('submit-answer-btn').disabled = !$('answer-input').value.trim();
+        });
+
+        $('answer-input').addEventListener('keydown', e => {
+            if (e.key === 'Enter' && $('answer-input').value.trim()) submitAnswer();
+        });
+
+        $('submit-answer-btn').addEventListener('click', submitAnswer);
+
+        function submitAnswer() {
+            const player = players[currentPlayerIndex];
+            const answer = $('answer-input').value.trim();
+            if (!answer) return;
+            answers[player] = answer;
+            currentPlayerIndex++;
+
+            if (currentPlayerIndex >= players.length) {
+                showResults();
+            } else {
+                showReadyScreen();
+            }
+        }
+
+        // ── Results ───────────────────────────────────────────────────
+        function showResults() {
+            // Group answers (case-insensitive, trimmed)
+            const groups = {};
+            for (const [player, answer] of Object.entries(answers)) {
+                const key = answer.toLowerCase().trim();
+                if (!groups[key]) groups[key] = { answer: answer, players: [] };
+                groups[key].players.push(player);
+            }
+
+            // Sort by group size descending
+            const sorted = Object.values(groups).sort((a, b) => b.players.length - a.players.length);
+
+            // Determine herd (largest group, must be > 1 to count)
+            const herdSize = sorted[0].players.length;
+            const isHerd = herdSize > 1;
+
+            // Find odd ones out (everyone not in the largest group, or everyone if no herd)
+            let oddOnes = [];
+            if (isHerd) {
+                sorted.forEach((g, i) => {
+                    if (i > 0 || g.players.length < herdSize) {
+                        // Handle ties at the top: only the largest group is the herd
+                    }
+                });
+                // Actually: herd = all groups tied at max size? No — in Herd Mentality,
+                // the herd is the single most popular answer. If there's a tie for most
+                // popular, NO ONE is in the herd.
+                const topGroups = sorted.filter(g => g.players.length === herdSize);
+                if (topGroups.length === 1 && herdSize > 1) {
+                    // Clear herd
+                    oddOnes = sorted.slice(1).flatMap(g => g.players);
+                } else {
+                    // Tie — no herd, everyone is odd
+                    oddOnes = players.slice();
+                }
+            } else {
+                oddOnes = players.slice();
+            }
+
+            const topGroups = sorted.filter(g => g.players.length === herdSize);
+            const hasHerd = topGroups.length === 1 && herdSize > 1;
+
+            // Assign pink cow to a random odd one (if any)
+            if (oddOnes.length > 0 && hasHerd) {
+                cowHolder = oddOnes[Math.floor(Math.random() * oddOnes.length)];
+            }
+
+            // Render
+            const summaryEl = $('results-summary');
+            if (hasHerd) {
+                summaryEl.innerHTML = `The herd said: <span class="herd-label">"${esc(sorted[0].answer)}"</span>`;
+            } else {
+                summaryEl.innerHTML = `<span style="color: var(--color-pink)">No herd! Everyone thinks differently.</span>`;
+            }
+
+            const groupsEl = $('answer-groups');
+            groupsEl.innerHTML = sorted.map((g, i) => {
+                const isHerdGroup = hasHerd && i === 0;
+                const isOddGroup = !isHerdGroup && hasHerd;
+                return `
+                    <div class="answer-group ${isHerdGroup ? 'is-herd' : ''}${isOddGroup ? ' is-odd' : ''}">
+                        <span class="answer-count">${g.players.length} player${g.players.length !== 1 ? 's' : ''}</span>
+                        <div class="answer-text">
+                            "${esc(g.answer)}"
+                            ${isHerdGroup ? '<span class="badge badge-herd">Herd</span>' : ''}
+                            ${isOddGroup ? '<span class="badge badge-cow">Odd one out</span>' : ''}
+                        </div>
+                        <div class="answer-players">${g.players.map(esc).join(', ')}</div>
+                    </div>
+                `;
+            }).join('');
+
+            showScreen('results');
+        }
+
+        $('new-round-btn').addEventListener('click', nextRound);
+        $('end-game-btn').addEventListener('click', () => {
+            showScreen('setup');
+            renderPlayerTags();
+        });
+
+        // ── Helpers ────────────────────────────────────────────────────
+        function esc(str) {
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
+        // ── Init ───────────────────────────────────────────────────────
+        renderPlayerTags();
+        renderCategories();
+    })();
+    </script>
+</body>
+</html>
