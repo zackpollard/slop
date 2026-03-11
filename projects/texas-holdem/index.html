@@ -1361,21 +1361,27 @@
     function createPeer(id) {
         return new Promise((resolve, reject) => {
             const p = new Peer(id, { debug: 0 });
+            let resolved = false;
             const timeout = setTimeout(() => {
-                p.destroy();
-                reject(new Error('Connection timeout'));
+                if (!resolved) {
+                    p.destroy();
+                    reject(new Error('PeerJS server timeout — check your connection'));
+                }
             }, 15000);
             p.on('open', () => {
+                resolved = true;
                 clearTimeout(timeout);
                 resolve(p);
             });
             p.on('error', (err) => {
+                if (resolved) return; // post-creation errors handled elsewhere
                 clearTimeout(timeout);
                 if (err.type === 'unavailable-id') {
-                    reject(new Error('Room code already in use'));
-                } else if (err.type === 'peer-unavailable') {
-                    reject(new Error('Room not found'));
+                    reject(new Error('Room code already in use — try again'));
+                } else if (err.type === 'network' || err.type === 'server-error') {
+                    reject(new Error('Cannot reach PeerJS server'));
                 } else if (!p.destroyed && err.type === 'disconnected') {
+                    // Don't reject, let it retry
                     p.reconnect();
                 } else {
                     reject(err);
@@ -1387,12 +1393,7 @@
     /* ── HOST ── */
     async function hostGame(name, config) {
         roomCode = generateRoomCode();
-        try {
-            peer = await createPeer(peerIdFromCode(roomCode));
-        } catch (e) {
-            toast('Failed to create room: ' + e.message);
-            return;
-        }
+        peer = await createPeer(peerIdFromCode(roomCode));
 
         isHost = true;
         myPlayerId = 'host';
@@ -1511,12 +1512,7 @@
         roomCode = code.toUpperCase();
         hostPeerId = peerIdFromCode(roomCode);
 
-        try {
-            peer = await createPeer(undefined); // auto ID
-        } catch (e) {
-            toast('Failed to connect: ' + e.message);
-            return;
-        }
+        peer = await createPeer(undefined); // auto ID
 
         myName = name;
         isHost = false;
@@ -1527,48 +1523,103 @@
             }
         });
 
-        connectToHost();
-    }
-
-    function connectToHost() {
-        if (peer.destroyed) return;
-        hostConnection = peer.connect(hostPeerId, { reliable: true });
-
-        hostConnection.on('open', () => {
-            clearReconnectTimer();
-            hostConnection.send({ type: 'join', name: myName });
-        });
-
-        hostConnection.on('data', (data) => {
-            if (data.type === 'joined') {
-                myPlayerId = data.playerId;
-                showScreen('waiting-room');
-                $('#display-code').textContent = roomCode;
-                $('#btn-start-game').style.display = 'none';
-            } else if (data.type === 'waitingRoom') {
-                renderWaitingPlayers(data.players);
-            } else if (data.type === 'state') {
-                lastGameState = data.state;
-                if ($('#game').classList.contains('active') || data.state.phase !== PHASE.WAITING) {
-                    showScreen('game');
-                    renderGame(data.state);
-                }
-            } else if (data.type === 'gameStart') {
-                showScreen('game');
-            } else if (data.type === 'gameOver') {
-                showGameOver(data.winner);
-            } else if (data.type === 'error') {
-                toast(data.message);
+        // peer-unavailable fires on the peer, not the connection, so listen here
+        peer.on('error', (err) => {
+            if (err.type === 'peer-unavailable') {
+                toast('Room not found — check the code');
+                resetToLobby();
+            } else if (err.type === 'disconnected' && !peer.destroyed) {
+                peer.reconnect();
             }
         });
 
-        hostConnection.on('close', () => {
-            toast('Disconnected from host');
-            scheduleReconnect();
-        });
+        await connectToHost();
+    }
 
-        hostConnection.on('error', () => {
-            scheduleReconnect();
+    function resetToLobby() {
+        if (peer && !peer.destroyed) peer.destroy();
+        peer = null;
+        hostConnection = null;
+        clearReconnectTimer();
+        showScreen('lobby');
+        $('#btn-join').disabled = false;
+        $('#btn-join').textContent = 'Join Table';
+        $('#btn-create').disabled = false;
+        $('#btn-create').textContent = 'Create Table';
+    }
+
+    function connectToHost() {
+        if (peer.destroyed) return Promise.reject(new Error('Peer destroyed'));
+
+        return new Promise((resolve, reject) => {
+            hostConnection = peer.connect(hostPeerId, { reliable: true });
+
+            const timeout = setTimeout(() => {
+                toast('Connection timed out');
+                resetToLobby();
+                reject(new Error('Connection timed out'));
+            }, 15000);
+
+            hostConnection.on('open', () => {
+                clearTimeout(timeout);
+                clearReconnectTimer();
+                hostConnection.send({ type: 'join', name: myName });
+                // Don't resolve yet — wait for 'joined' confirmation
+            });
+
+            hostConnection.on('data', (data) => {
+                if (data.type === 'joined') {
+                    clearTimeout(timeout);
+                    myPlayerId = data.playerId;
+                    showScreen('waiting-room');
+                    $('#display-code').textContent = roomCode;
+                    $('#btn-start-game').style.display = 'none';
+                    resolve();
+                } else if (data.type === 'waitingRoom') {
+                    renderWaitingPlayers(data.players);
+                } else if (data.type === 'state') {
+                    clearTimeout(timeout);
+                    lastGameState = data.state;
+                    if ($('#game').classList.contains('active') || data.state.phase !== PHASE.WAITING) {
+                        showScreen('game');
+                        renderGame(data.state);
+                    }
+                    resolve();
+                } else if (data.type === 'gameStart') {
+                    showScreen('game');
+                } else if (data.type === 'gameOver') {
+                    showGameOver(data.winner);
+                } else if (data.type === 'error') {
+                    clearTimeout(timeout);
+                    toast(data.message);
+                    resetToLobby();
+                    reject(new Error(data.message));
+                }
+            });
+
+            hostConnection.on('close', () => {
+                clearTimeout(timeout);
+                // Only reconnect if we actually joined successfully
+                if (myPlayerId) {
+                    toast('Disconnected from host');
+                    scheduleReconnect();
+                } else {
+                    toast('Could not connect to host');
+                    resetToLobby();
+                    reject(new Error('Connection closed'));
+                }
+            });
+
+            hostConnection.on('error', (err) => {
+                clearTimeout(timeout);
+                if (myPlayerId) {
+                    scheduleReconnect();
+                } else {
+                    toast('Connection error');
+                    resetToLobby();
+                    reject(new Error('Connection error'));
+                }
+            });
         });
     }
 
@@ -1576,9 +1627,12 @@
         if (reconnectTimer) return;
         reconnectTimer = setTimeout(() => {
             reconnectTimer = null;
-            if (!peer.destroyed) {
+            if (peer && !peer.destroyed) {
                 toast('Reconnecting...');
-                connectToHost();
+                connectToHost().catch(() => {
+                    // If reconnect fails, try again
+                    scheduleReconnect();
+                });
             }
         }, 3000);
     }
@@ -1910,20 +1964,38 @@
        ══════════════════════════════════════════════════════════════ */
 
     // Create table
-    $('#btn-create').addEventListener('click', () => {
+    $('#btn-create').addEventListener('click', async () => {
+        const btn = $('#btn-create');
         const name = $('#host-name').value.trim() || 'Host';
         const buyIn = parseInt($('#buy-in').value) || 1000;
         const sb = parseInt($('#small-blind').value) || 5;
         const bb = parseInt($('#big-blind').value) || 10;
-        hostGame(name, { buyIn, smallBlind: sb, bigBlind: bb });
+        btn.disabled = true;
+        btn.textContent = 'Creating...';
+        try {
+            await hostGame(name, { buyIn, smallBlind: sb, bigBlind: bb });
+        } catch (e) {
+            toast('Failed: ' + e.message);
+        }
+        btn.disabled = false;
+        btn.textContent = 'Create Table';
     });
 
     // Join table
-    $('#btn-join').addEventListener('click', () => {
+    $('#btn-join').addEventListener('click', async () => {
+        const btn = $('#btn-join');
         const name = $('#join-name').value.trim() || 'Player';
         const code = $('#room-code').value.trim();
         if (!code) { toast('Enter a room code'); return; }
-        joinGame(name, code);
+        btn.disabled = true;
+        btn.textContent = 'Connecting...';
+        try {
+            await joinGame(name, code);
+        } catch (e) {
+            toast('Failed: ' + e.message);
+            btn.disabled = false;
+            btn.textContent = 'Join Table';
+        }
     });
 
     // Copy room code
