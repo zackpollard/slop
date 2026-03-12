@@ -7,7 +7,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+    <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
+    <script src="lib/slopnet.js"></script>
     <style>
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -586,9 +587,9 @@
 
     // ==================== GAME STATE ====================
     const state = {
-        peer: null,
-        connections: [],     // host only: array of { conn, name, id }
-        hostConn: null,      // client only: connection to host
+        slopHost: null,      // host only: SlopNet.PeerHost instance
+        slopClient: null,    // client only: SlopNet.PeerClient instance
+        clientMap: {},        // host only: { clientId: { name, playerId } }
         isHost: false,
         myName: '',
         myId: '',
@@ -638,13 +639,6 @@
         l.scrollTop = l.scrollHeight;
     }
 
-    function generateCode() {
-        const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-        let code = '';
-        for (let i = 0; i < 5; i++) code += chars[Math.floor(Math.random() * chars.length)];
-        return code;
-    }
-
     function shuffle(arr) {
         const a = [...arr];
         for (let i = a.length - 1; i > 0; i--) {
@@ -658,35 +652,6 @@
         return text.replace(/_+/g, '<span style="border-bottom: 2px solid #fff; padding: 0 0.5rem;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>');
     }
 
-    // ==================== PEER SETUP ====================
-    function initPeer(id) {
-        return new Promise((resolve, reject) => {
-            const peerId = id ? `cah-${id}` : undefined;
-            const peer = new Peer(peerId, {
-                debug: 0,
-            });
-
-            peer.on('open', (id) => {
-                state.myId = id;
-                log('Connected to signaling server: ' + id);
-                resolve(peer);
-            });
-
-            peer.on('error', (err) => {
-                log('Peer error: ' + err.type + ' - ' + err.message);
-                if (err.type === 'unavailable-id') {
-                    reject(new Error('Game code already in use, try again'));
-                } else if (err.type === 'peer-unavailable') {
-                    reject(new Error('Game not found. Check the code and try again.'));
-                } else {
-                    reject(err);
-                }
-            });
-
-            state.peer = peer;
-        });
-    }
-
     // ==================== HOST LOGIC ====================
     async function createGame() {
         const name = $('player-name').value.trim();
@@ -695,14 +660,85 @@
         state.myName = name;
         state.isHost = true;
         state.scoreLimit = Math.max(1, Math.min(20, parseInt($('score-limit').value) || 7));
-        state.gameCode = generateCode();
+        state.myId = 'host-' + Date.now() + Math.random().toString(36).slice(2, 5);
 
         try {
             $('btn-create').disabled = true;
-            log('Creating game ' + state.gameCode + '...');
-            await initPeer(state.gameCode);
 
-            state.peer.on('connection', handleNewConnection);
+            const host = new SlopNet.PeerHost({ roomPrefix: 'cah-' });
+            state.slopHost = host;
+
+            host.on('client-joined', (clientId, metadata) => {
+                const playerName = (metadata && metadata.name) || 'Unknown';
+                log(playerName + ' joined');
+
+                const player = { id: clientId, name: playerName, score: 0 };
+                state.clientMap[clientId] = { name: playerName, playerId: clientId };
+                state.players.push(player);
+
+                // Send full state to the new player
+                host.send(clientId, { type: 'joined', players: state.players, scoreLimit: state.scoreLimit });
+
+                // Broadcast updated player list to all
+                host.broadcast({ type: 'player-list', players: state.players });
+                renderWaitingPlayers();
+
+                if (state.phase !== 'lobby') {
+                    // Late join during game — deal hand and sync
+                    const hand = dealHand(10);
+                    state.hands[clientId] = hand;
+                    host.send(clientId, { type: 'game-start', hand, black: state.currentBlack, czarId: state.players[state.czarIndex].id, round: state.round, phase: state.phase });
+                }
+            });
+
+            host.on('client-rejoined', (clientId, metadata) => {
+                const playerName = (metadata && metadata.name) || (state.clientMap[clientId] && state.clientMap[clientId].name) || 'Unknown';
+                log(playerName + ' reconnected');
+                toast(playerName + ' reconnected');
+
+                // If they were removed from players list, re-add them
+                if (!state.players.find(p => p.id === clientId)) {
+                    state.players.push({ id: clientId, name: playerName, score: 0 });
+                }
+
+                // Re-sync state
+                host.send(clientId, { type: 'joined', players: state.players, scoreLimit: state.scoreLimit });
+                host.broadcast({ type: 'player-list', players: state.players });
+                renderWaitingPlayers();
+                renderGamePlayers();
+
+                if (state.phase !== 'lobby') {
+                    const hand = state.hands[clientId] || dealHand(10);
+                    state.hands[clientId] = hand;
+                    host.send(clientId, { type: 'game-start', hand, black: state.currentBlack, czarId: state.players[state.czarIndex].id, round: state.round, phase: state.phase });
+                }
+            });
+
+            host.on('client-left', (clientId, metadata) => {
+                const info = state.clientMap[clientId];
+                const playerName = (info && info.name) || 'Unknown';
+                log(playerName + ' disconnected');
+
+                state.players = state.players.filter(p => p.id !== clientId);
+                delete state.hands[clientId];
+                delete state.submissions[clientId];
+                delete state.clientMap[clientId];
+
+                host.broadcast({ type: 'player-list', players: state.players });
+                renderWaitingPlayers();
+                renderGamePlayers();
+            });
+
+            host.on('data', (clientId, data) => {
+                handleHostMessage(clientId, data);
+            });
+
+            host.on('error', (err) => {
+                log('Host error: ' + (err.message || err));
+            });
+
+            state.gameCode = await host.start();
+            log('Creating game ' + state.gameCode + '...');
 
             state.players = [{ id: state.myId, name: state.myName, score: 0 }];
             $('display-code').textContent = state.gameCode;
@@ -711,60 +747,25 @@
         } catch (e) {
             toast(e.message);
             $('btn-create').disabled = false;
-            if (state.peer) { state.peer.destroy(); state.peer = null; }
+            if (state.slopHost) { state.slopHost.destroy(); state.slopHost = null; }
         }
     }
 
-    function handleNewConnection(conn) {
-        conn.on('open', () => {
-            log('Player connecting: ' + conn.peer);
-
-            conn.on('data', (data) => {
-                handleHostMessage(conn, data);
-            });
-
-            conn.on('close', () => {
-                handlePlayerDisconnect(conn);
-            });
-        });
-    }
-
-    function handleHostMessage(conn, data) {
+    function handleHostMessage(senderId, data) {
         switch (data.type) {
-            case 'join': {
-                const player = { id: conn.peer, name: data.name, score: 0 };
-                state.connections.push({ conn, name: data.name, id: conn.peer });
-                state.players.push(player);
-                log(data.name + ' joined');
-
-                // Send full state
-                conn.send({ type: 'joined', players: state.players, scoreLimit: state.scoreLimit });
-
-                // Broadcast to all
-                broadcast({ type: 'player-list', players: state.players });
-                renderWaitingPlayers();
-
-                if (state.phase !== 'lobby') {
-                    // Late join during game — deal hand and sync
-                    const hand = dealHand(10);
-                    state.hands[conn.peer] = hand;
-                    conn.send({ type: 'game-start', hand, black: state.currentBlack, czarId: state.players[state.czarIndex].id, round: state.round, phase: state.phase });
-                }
-                break;
-            }
             case 'submit': {
-                if (state.submissions[conn.peer]) break;
-                state.submissions[conn.peer] = data.cards;
+                if (state.submissions[senderId]) break;
+                state.submissions[senderId] = data.cards;
 
                 // Remove played cards from player's hand on host
-                if (state.hands[conn.peer]) {
-                    state.hands[conn.peer] = state.hands[conn.peer].filter(c => !data.cards.includes(c));
+                if (state.hands[senderId]) {
+                    state.hands[senderId] = state.hands[senderId].filter(c => !data.cards.includes(c));
                 }
 
                 const needed = state.players.length - 1; // everyone except czar
                 const got = Object.keys(state.submissions).length;
 
-                broadcast({ type: 'submit-count', count: got, needed });
+                state.slopHost.broadcast({ type: 'submit-count', count: got, needed });
 
                 if (got >= needed) {
                     startJudging();
@@ -773,7 +774,7 @@
             }
             case 'pick-winner': {
                 const czar = state.players[state.czarIndex];
-                if (conn.peer !== czar.id) break;
+                if (senderId !== czar.id) break;
                 const winnerId = data.playerId || state.submissionOrder[data.index];
                 if (winnerId) announceWinner(winnerId);
                 break;
@@ -783,29 +784,6 @@
                 break;
             }
         }
-    }
-
-    function handlePlayerDisconnect(conn) {
-        const idx = state.connections.findIndex(c => c.id === conn.peer);
-        if (idx !== -1) {
-            const name = state.connections[idx].name;
-            state.connections.splice(idx, 1);
-            state.players = state.players.filter(p => p.id !== conn.peer);
-            delete state.hands[conn.peer];
-            delete state.submissions[conn.peer];
-            log(name + ' disconnected');
-            broadcast({ type: 'player-list', players: state.players });
-            renderWaitingPlayers();
-            renderGamePlayers();
-        }
-    }
-
-    function broadcast(data, excludeId) {
-        state.connections.forEach(c => {
-            if (c.id !== excludeId) {
-                try { c.conn.send(data); } catch (e) {}
-            }
-        });
     }
 
     function dealHand(count) {
@@ -840,10 +818,11 @@
         state.hands[state.myId] = dealHand(10);
         state.myHand = state.hands[state.myId];
 
-        state.connections.forEach(c => {
+        state.players.forEach(p => {
+            if (p.id === state.myId) return;
             const hand = dealHand(10);
-            state.hands[c.id] = hand;
-            c.conn.send({ type: 'game-start', hand, black: null, czarId: null, round: 0 });
+            state.hands[p.id] = hand;
+            state.slopHost.send(p.id, { type: 'game-start', hand, black: null, czarId: null, round: 0 });
         });
 
         nextRound();
@@ -878,13 +857,14 @@
         state.myHand = state.hands[state.myId] || [];
 
         // Send round info to all clients
-        state.connections.forEach(c => {
-            c.conn.send({
+        state.players.forEach(p => {
+            if (p.id === state.myId) return;
+            state.slopHost.send(p.id, {
                 type: 'new-round',
                 black: state.currentBlack,
                 czarId,
                 round: state.round,
-                hand: state.hands[c.id] || [],
+                hand: state.hands[p.id] || [],
                 players: state.players,
             });
         });
@@ -901,7 +881,7 @@
         const playerIds = Object.keys(state.submissions);
         state.submissionOrder = shuffle(playerIds);
 
-        broadcast({ type: 'judging', submissions: state.submissionOrder.map(id => ({ cards: state.submissions[id] })) });
+        state.slopHost.broadcast({ type: 'judging', submissions: state.submissionOrder.map(id => ({ cards: state.submissions[id] })) });
 
         renderRound();
     }
@@ -926,13 +906,13 @@
             winData.gameOver = true;
         }
 
-        broadcast(winData);
+        state.slopHost.broadcast(winData);
         renderRound();
 
         if (winner.score >= state.scoreLimit) {
             state.phase = 'gameover';
             setTimeout(() => {
-                broadcast({ type: 'game-over', players: state.players, winnerName: winner.name });
+                state.slopHost.broadcast({ type: 'game-over', players: state.players, winnerName: winner.name });
                 showGameOver(winner.name);
             }, 4000);
         }
@@ -952,36 +932,45 @@
         try {
             $('btn-join').disabled = true;
             log('Connecting to game ' + code + '...');
-            await initPeer();
 
-            const conn = state.peer.connect('cah-' + code, { reliable: true });
-            state.hostConn = conn;
+            const client = new SlopNet.PeerClient({ roomPrefix: 'cah-' });
+            state.slopClient = client;
 
-            conn.on('open', () => {
-                log('Connected to host');
-                conn.send({ type: 'join', name: state.myName });
-            });
+            const clientId = sessionStorage.getItem('cah-client-id') || ('p' + Date.now() + Math.random().toString(36).slice(2, 5));
+            sessionStorage.setItem('cah-client-id', clientId);
+            state.myId = clientId;
 
-            conn.on('data', (data) => {
+            client.on('data', (data) => {
                 handleClientMessage(data);
             });
 
-            conn.on('close', () => {
+            client.on('disconnected', () => {
                 log('Disconnected from host');
-                toast('Disconnected from game');
+                toast('Disconnected — reconnecting...');
+            });
+
+            client.on('reconnected', () => {
+                log('Reconnected to host');
+                toast('Reconnected!');
+            });
+
+            client.on('reconnect-failed', () => {
+                log('Reconnection failed');
+                toast('Lost connection to game');
                 showScreen('lobby');
                 $('btn-join').disabled = false;
             });
 
-            conn.on('error', (err) => {
-                log('Connection error: ' + err);
-                toast('Connection failed');
-                $('btn-join').disabled = false;
+            client.on('error', (err) => {
+                log('Connection error: ' + (err.message || err));
             });
+
+            await client.connect(code, clientId, { name: state.myName });
+            log('Connected to host');
         } catch (e) {
             toast(e.message);
             $('btn-join').disabled = false;
-            if (state.peer) { state.peer.destroy(); state.peer = null; }
+            if (state.slopClient) { state.slopClient.destroy(); state.slopClient = null; }
         }
     }
 
@@ -990,7 +979,6 @@
             case 'joined':
                 state.players = data.players;
                 state.scoreLimit = data.scoreLimit;
-                state.myId = state.peer.id;
                 showScreen('waiting');
                 $('display-code').textContent = state.gameCode;
                 renderWaitingPlayers();
@@ -1056,9 +1044,9 @@
     function sendToHost(data) {
         if (state.isHost) {
             // Host handles locally
-            handleHostMessage({ peer: state.myId }, data);
-        } else if (state.hostConn) {
-            state.hostConn.send(data);
+            handleHostMessage(state.myId, data);
+        } else if (state.slopClient) {
+            state.slopClient.send(data);
         }
     }
 
@@ -1241,7 +1229,7 @@
             announceWinner(winnerId);
         } else {
             // Client czar sends index, host resolves via submissionOrder
-            state.hostConn.send({ type: 'pick-winner', index: selectedSubmission });
+            state.slopClient.send({ type: 'pick-winner', index: selectedSubmission });
         }
     }
 
@@ -1268,7 +1256,7 @@
         if (state.isHost) {
             nextRound();
         } else {
-            state.hostConn.send({ type: 'next-round' });
+            state.slopClient.send({ type: 'next-round' });
         }
     }
 

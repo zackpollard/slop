@@ -7,7 +7,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+    <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
+    <script src="lib/slopnet.js"></script>
     <style>
         :root {
             --color-bg: #0f0f0c;
@@ -616,7 +617,7 @@
                 </div>
                 <div class="name-input-section">
                     <label>Room code</label>
-                    <input type="text" id="join-code-input" placeholder="ABCD" maxlength="4" style="font-family: var(--font-mono); font-size: 1.3rem; text-align: center; text-transform: uppercase; letter-spacing: 0.15em;">
+                    <input type="text" id="join-code-input" placeholder="ABC123" maxlength="6" style="font-family: var(--font-mono); font-size: 1.3rem; text-align: center; text-transform: uppercase; letter-spacing: 0.15em;">
                 </div>
                 <button class="btn btn-primary btn-wide" id="btn-join-go">Join Room</button>
             </div>
@@ -863,10 +864,13 @@
         let role = null; // 'host' or 'player'
         let myName = '';
         let roomCode = '';
-        let peer = null;
+
+        // SlopNet instances
+        let host = null;   // SlopNet.PeerHost (host only)
+        let client = null;  // SlopNet.PeerClient (player only)
 
         // Host state
-        let hostConns = new Map();       // name -> DataConnection
+        let clientMap = new Map();       // clientId -> { name }
         let disconnectedPlayers = new Set(); // names of disconnected players still in game
         let players = [];
         let scores = {};
@@ -880,9 +884,6 @@
         let mergeSelected = -1;
         let mooTimeout = null;
         let gamePhase = 'lobby'; // 'lobby' | 'question' | 'answering' | 'merge' | 'results'
-
-        // Player state
-        let playerConn = null;
 
         // ── DOM helpers ────────────────────────────────────────────
         const $ = id => document.getElementById(id);
@@ -907,11 +908,17 @@
             return d.innerHTML;
         }
 
-        function genCode() {
-            const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
-            let code = '';
-            for (let i = 0; i < 4; i++) code += chars[Math.floor(Math.random() * chars.length)];
-            return code;
+        // ── clientId <-> name helpers (host only) ────────────────
+        function nameForClientId(clientId) {
+            const entry = clientMap.get(clientId);
+            return entry ? entry.name : null;
+        }
+
+        function clientIdForName(name) {
+            for (const [cid, info] of clientMap.entries()) {
+                if (info.name === name) return cid;
+            }
+            return null;
         }
 
         // ── Moo sound via Web Audio API ──────────────────────────
@@ -1009,7 +1016,7 @@
             const name = $('join-name-input').value.trim();
             const code = $('join-code-input').value.trim().toUpperCase();
             if (!name) { $('join-name-input').focus(); return; }
-            if (code.length !== 4) { $('join-code-input').focus(); return; }
+            if (!code || code.length < 4) { $('join-code-input').focus(); return; }
             myName = name;
             roomCode = code;
             role = 'player';
@@ -1025,114 +1032,122 @@
         });
 
         $('join-code-input').addEventListener('input', e => {
-            e.target.value = e.target.value.toUpperCase().replace(/[^A-Z]/g, '');
+            e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
         });
 
         // ════════════════════════════════════════════════════════════
         // HOST LOGIC
         // ════════════════════════════════════════════════════════════
-        function startHost() {
+        async function startHost() {
             showScreen('connecting-screen');
-            roomCode = genCode();
-            const peerId = 'herdm-' + roomCode;
 
-            peer = new Peer(peerId);
+            host = new SlopNet.PeerHost({ roomPrefix: 'herdm-' });
 
-            peer.on('open', () => {
-                players = [myName];
-                scores = {};
-                scores[myName] = 0;
-                cowHolder = null;
-                showLobby();
-            });
-
-            peer.on('error', err => {
-                if (err.type === 'unavailable-id') {
-                    roomCode = genCode();
-                    peer.destroy();
-                    startHost();
-                    return;
-                }
+            try {
+                roomCode = await host.start();
+            } catch (err) {
                 showError('Connection error: ' + err.message);
                 showScreen('home-screen');
+                return;
+            }
+
+            players = [myName];
+            scores = {};
+            scores[myName] = 0;
+            cowHolder = null;
+
+            host.on('client-joined', (clientId, metadata) => {
+                const name = (metadata.name || '').trim();
+                if (!name) {
+                    host.send(clientId, { type: 'error', message: 'Name is required' });
+                    return;
+                }
+
+                // Check if name is already taken by a connected player
+                const existingMatch = players.find(p => p.toLowerCase() === name.toLowerCase());
+                if (existingMatch) {
+                    host.send(clientId, { type: 'error', message: 'Name already taken' });
+                    return;
+                }
+
+                clientMap.set(clientId, { name });
+                players.push(name);
+                if (!(name in scores)) scores[name] = 0;
+                host.send(clientId, { type: 'joined', name, players, scores, cowHolder });
+                broadcastLobby();
             });
 
-            peer.on('connection', conn => {
-                conn.on('open', () => {
-                    conn.on('data', data => handleHostMessage(conn, data));
-                });
+            host.on('client-rejoined', (clientId, metadata) => {
+                const name = (metadata.name || '').trim();
 
-                conn.on('close', () => {
-                    for (const [name, c] of hostConns.entries()) {
-                        if (c === conn) {
-                            hostConns.delete(name);
-                            if (gamePhase === 'lobby') {
-                                // In lobby, fully remove them
-                                players = players.filter(p => p !== name);
-                            } else {
-                                // Mid-game: mark as disconnected, don't remove
-                                disconnectedPlayers.add(name);
-                                // If we're waiting for their answer, check if we can proceed
-                                if (gamePhase === 'answering') {
-                                    checkAllAnswered();
-                                }
-                            }
-                            broadcastLobby();
-                            break;
-                        }
-                    }
-                });
-            });
-        }
-
-        function handleHostMessage(conn, data) {
-            switch (data.type) {
-                case 'join': {
-                    const name = data.name.trim();
-                    if (!name) {
-                        conn.send({ type: 'error', message: 'Name is required' });
-                        return;
-                    }
-
-                    // Check if this name belongs to a disconnected player — allow reconnect
-                    const existingMatch = players.find(p => p.toLowerCase() === name.toLowerCase());
-                    if (existingMatch && disconnectedPlayers.has(existingMatch)) {
-                        // Reconnecting player — restore them
-                        disconnectedPlayers.delete(existingMatch);
-                        hostConns.set(existingMatch, conn);
-                        conn.send({
+                // Check if this name belongs to a disconnected player
+                const existingMatch = players.find(p => p.toLowerCase() === name.toLowerCase());
+                if (existingMatch && disconnectedPlayers.has(existingMatch)) {
+                    // Reconnecting player — restore them
+                    disconnectedPlayers.delete(existingMatch);
+                    clientMap.set(clientId, { name: existingMatch });
+                    host.send(clientId, {
+                        type: 'rejoin',
+                        name: existingMatch, players, scores, cowHolder, gamePhase,
+                        round: roundNumber, question: currentQuestion,
+                        hasAnswered: !!answers[existingMatch]
+                    });
+                    broadcastLobby();
+                } else {
+                    // Treat as a fresh join (clientId reconnected but name may differ)
+                    const prevName = nameForClientId(clientId);
+                    if (prevName && disconnectedPlayers.has(prevName)) {
+                        disconnectedPlayers.delete(prevName);
+                        clientMap.set(clientId, { name: prevName });
+                        host.send(clientId, {
                             type: 'rejoin',
-                            name: existingMatch, players, scores, cowHolder, gamePhase,
+                            name: prevName, players, scores, cowHolder, gamePhase,
                             round: roundNumber, question: currentQuestion,
-                            hasAnswered: !!answers[existingMatch]
+                            hasAnswered: !!answers[prevName]
                         });
                         broadcastLobby();
-                        break;
                     }
-
-                    // Name taken by a connected player
-                    if (existingMatch) {
-                        conn.send({ type: 'error', message: 'Name already taken' });
-                        return;
-                    }
-
-                    hostConns.set(name, conn);
-                    players.push(name);
-                    if (!(name in scores)) scores[name] = 0;
-                    conn.send({ type: 'joined', name, players, scores, cowHolder });
-                    broadcastLobby();
-                    break;
                 }
+            });
+
+            host.on('client-left', (clientId, metadata) => {
+                const name = nameForClientId(clientId);
+                if (!name) return;
+
+                if (gamePhase === 'lobby') {
+                    // In lobby, fully remove them
+                    players = players.filter(p => p !== name);
+                    clientMap.delete(clientId);
+                } else {
+                    // Mid-game: mark as disconnected, don't remove
+                    disconnectedPlayers.add(name);
+                    // If we're waiting for their answer, check if we can proceed
+                    if (gamePhase === 'answering') {
+                        checkAllAnswered();
+                    }
+                }
+                broadcastLobby();
+            });
+
+            host.on('data', (clientId, data) => {
+                handleHostMessage(clientId, data);
+            });
+
+            host.on('error', (err) => {
+                showError('Connection error: ' + (err.message || err));
+            });
+
+            showLobby();
+        }
+
+        function handleHostMessage(clientId, data) {
+            switch (data.type) {
                 case 'answer': {
-                    for (const [name, c] of hostConns.entries()) {
-                        if (c === conn) {
-                            if (!answers[name]) {
-                                answers[name] = data.answer;
-                                broadcastProgress();
-                                checkAllAnswered();
-                            }
-                            break;
-                        }
+                    const name = nameForClientId(clientId);
+                    if (name && !answers[name]) {
+                        answers[name] = data.answer;
+                        broadcastProgress();
+                        checkAllAnswered();
                     }
                     break;
                 }
@@ -1140,9 +1155,7 @@
         }
 
         function broadcast(msg) {
-            for (const conn of hostConns.values()) {
-                try { conn.send(msg); } catch (e) { /* ignore */ }
-            }
+            if (host) host.broadcast(msg);
         }
 
         function broadcastLobby() {
@@ -1166,8 +1179,8 @@
                     if (lastPlayer === myName) {
                         playMoo();
                     } else {
-                        const conn = hostConns.get(lastPlayer);
-                        if (conn) try { conn.send({ type: 'moo' }); } catch (e) { /* */ }
+                        const cid = clientIdForName(lastPlayer);
+                        if (cid) host.send(cid, { type: 'moo' });
                     }
                 }, 5000);
             }
@@ -1519,57 +1532,45 @@
         // ════════════════════════════════════════════════════════════
         // PLAYER LOGIC
         // ════════════════════════════════════════════════════════════
-        function startPlayer(isRejoin) {
+        async function startPlayer(isRejoin) {
             showScreen('connecting-screen');
-            peer = new Peer();
 
-            peer.on('open', () => {
-                const hostPeerId = 'herdm-' + roomCode;
-                playerConn = peer.connect(hostPeerId, { reliable: true });
+            client = new SlopNet.PeerClient({ roomPrefix: 'herdm-' });
 
-                const timeout = setTimeout(() => {
-                    showError('Could not connect — check the room code');
-                    if (isRejoin) {
-                        clearSession();
-                        showScreen('home-screen');
-                    } else {
-                        showScreen('join-screen');
-                    }
-                    peer.destroy();
-                }, 10000);
+            // Persistent client identity for reconnection
+            const clientId = sessionStorage.getItem('herd-client-id') || ('p' + Date.now() + Math.random().toString(36).slice(2, 5));
+            sessionStorage.setItem('herd-client-id', clientId);
 
-                playerConn.on('open', () => {
-                    clearTimeout(timeout);
-                    playerConn.send({ type: 'join', name: myName, rejoin: !!isRejoin });
-                });
-
-                playerConn.on('data', data => handlePlayerMessage(data));
-
-                playerConn.on('close', () => {
-                    showError('Disconnected from host — rejoin with the same name to reconnect');
-                    showScreen('home-screen');
-                });
-
-                playerConn.on('error', err => {
-                    clearTimeout(timeout);
-                    showError('Connection error: ' + err.message);
-                    if (isRejoin) {
-                        clearSession();
-                        showScreen('home-screen');
-                    } else {
-                        showScreen('join-screen');
-                    }
-                });
-            });
-
-            peer.on('error', err => {
-                showError('Connection error: ' + err.message);
+            try {
+                await client.connect(roomCode, clientId, { name: myName });
+            } catch (err) {
+                showError('Could not connect — check the room code');
                 if (isRejoin) {
                     clearSession();
                     showScreen('home-screen');
                 } else {
                     showScreen('join-screen');
                 }
+                return;
+            }
+
+            client.on('data', data => handlePlayerMessage(data));
+
+            client.on('disconnected', () => {
+                showError('Disconnected from host — attempting to reconnect...');
+            });
+
+            client.on('reconnected', () => {
+                // SlopNet auto-reconnected; host will send rejoin state
+            });
+
+            client.on('reconnect-failed', () => {
+                showError('Lost connection to host');
+                showScreen('home-screen');
+            });
+
+            client.on('error', (err) => {
+                showError('Connection error: ' + (err.message || err));
             });
         }
 
@@ -1676,7 +1677,7 @@
         $('pa-submit-btn').addEventListener('click', () => {
             const answer = $('pa-input').value.trim();
             if (!answer) return;
-            playerConn.send({ type: 'answer', answer });
+            client.send({ type: 'answer', answer });
             showScreen('player-waiting-screen');
         });
 
