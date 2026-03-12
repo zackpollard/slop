@@ -1084,7 +1084,7 @@
         let localPlayers = new Set(); // players added locally by host (no device)
         let reconnectAttempts = 0;
         let reconnectTimer = null;
-        const MAX_RECONNECT_ATTEMPTS = 10;
+        const MAX_RECONNECT_ATTEMPTS = 20;
 
         const NUMBER_CARDS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
         const MODIFIER_CARDS = ['+2', '+4', '+6', '+8', '+10'];
@@ -1348,10 +1348,13 @@
         // =====================================================================
         let hostReconnectAttempts = 0;
         let hostReconnectTimer = null;
-        const MAX_HOST_RECONNECT_ATTEMPTS = 15;
+        const MAX_HOST_RECONNECT_ATTEMPTS = 20;
 
         function startHostReconnect() {
-            if (hostReconnectTimer) return;
+            if (hostReconnectTimer) {
+                clearTimeout(hostReconnectTimer);
+                hostReconnectTimer = null;
+            }
             hostReconnectAttempts = 0;
             // Mark all remote peers as disconnected
             for (const [peerId, info] of Object.entries(connections)) {
@@ -1488,6 +1491,17 @@
                 updateHostStartBtn();
             } else if (data.type === 'score-submit' && gameStarted) {
                 handleScoreSubmission(data.playerName, data.scoreData);
+            } else if (data.type === 'ping') {
+                try { conn.send({ type: 'pong' }); } catch(e) {}
+            } else if (data.type === 'pong') {
+                // Peer is alive — if they were marked disconnected, restore them
+                const info = connections[conn.peer];
+                if (info && info.disconnected) {
+                    info.disconnected = false;
+                    disconnectedPlayers.delete(info.playerName);
+                    updateMpPlayerCount();
+                    renderGame();
+                }
             }
         }
 
@@ -1758,7 +1772,10 @@
         // AUTO-RECONNECT (peer side)
         // =====================================================================
         function startAutoReconnect() {
-            if (reconnectTimer) return; // already reconnecting
+            if (reconnectTimer) {
+                clearTimeout(reconnectTimer);
+                reconnectTimer = null;
+            }
             reconnectAttempts = 0;
             showReconnectBanner('peer');
             attemptReconnect();
@@ -1791,19 +1808,28 @@
             }
             hostConn = null;
 
+            // Timeout for the entire reconnect attempt (PeerJS open + connection)
+            const overallTimeout = setTimeout(() => {
+                if (!hostConn || !hostConn.open) {
+                    hostConn = null;
+                    attemptReconnect();
+                }
+            }, 12000);
+
             peer = new Peer(undefined, { debug: 0 });
 
             peer.on('open', () => {
                 hostConn = peer.connect('flip7-' + roomCode, { reliable: true });
 
-                const timeout = setTimeout(() => {
-                    // This attempt failed, try again
+                const connTimeout = setTimeout(() => {
+                    // Connection didn't open in time
                     hostConn = null;
                     attemptReconnect();
                 }, 8000);
 
                 hostConn.on('open', () => {
-                    clearTimeout(timeout);
+                    clearTimeout(connTimeout);
+                    clearTimeout(overallTimeout);
                     hostConn.send({ type: 'join', name: myName });
                 });
 
@@ -1819,6 +1845,8 @@
                 });
 
                 hostConn.on('close', () => {
+                    clearTimeout(connTimeout);
+                    clearTimeout(overallTimeout);
                     if (gameStarted) {
                         mpConnectionDot.classList.remove('connected');
                         mpConnectionDot.classList.add('error');
@@ -1827,7 +1855,8 @@
                 });
 
                 hostConn.on('error', () => {
-                    clearTimeout(timeout);
+                    clearTimeout(connTimeout);
+                    clearTimeout(overallTimeout);
                     if (gameStarted) {
                         attemptReconnect();
                     }
@@ -1835,6 +1864,7 @@
             });
 
             peer.on('error', (err) => {
+                clearTimeout(overallTimeout);
                 console.error('Reconnect peer error:', err);
                 attemptReconnect();
             });
@@ -1922,25 +1952,72 @@
             }
         };
 
-        // Detect visibility change (screen on/off) to trigger reconnect check
+        // =====================================================================
+        // PING/PONG HEALTH CHECK
+        // =====================================================================
+        let lastPongTime = 0;
+        let healthCheckTimer = null;
+
+        function sendPing() {
+            if (gameMode === 'peer' && hostConn && hostConn.open) {
+                try { hostConn.send({ type: 'ping' }); } catch(e) {}
+            } else if (gameMode === 'host') {
+                Object.values(connections).forEach(({ conn, disconnected }) => {
+                    if (!disconnected && conn.open) {
+                        try { conn.send({ type: 'ping' }); } catch(e) {}
+                    }
+                });
+            }
+        }
+
+        // Detect visibility change (screen on/off) to trigger reconnect
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState !== 'visible' || !gameStarted) return;
 
             if (gameMode === 'peer') {
-                if (!hostConn || !hostConn.open) {
+                // Always reset attempts when user comes back to the tab
+                // so we get a fresh set of retries
+                if (reconnectTimer) {
+                    clearTimeout(reconnectTimer);
+                    reconnectTimer = null;
+                }
+                reconnectAttempts = 0;
+
+                if (!hostConn || !hostConn.open || !peer || peer.destroyed || peer.disconnected) {
+                    // Connection is clearly dead
                     mpConnectionDot.classList.remove('connected');
                     mpConnectionDot.classList.add('error');
-                    if (!reconnectTimer && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-                        startAutoReconnect();
-                    }
+                    showReconnectBanner('peer');
+                    attemptReconnect();
+                } else {
+                    // Connection might look alive but could be stale — ping to verify
+                    lastPongTime = 0;
+                    sendPing();
+                    clearTimeout(healthCheckTimer);
+                    healthCheckTimer = setTimeout(() => {
+                        if (lastPongTime === 0) {
+                            // No pong received — connection is dead
+                            mpConnectionDot.classList.remove('connected');
+                            mpConnectionDot.classList.add('error');
+                            showReconnectBanner('peer');
+                            attemptReconnect();
+                        }
+                    }, 3000);
                 }
             } else if (gameMode === 'host') {
+                if (hostReconnectTimer) {
+                    clearTimeout(hostReconnectTimer);
+                    hostReconnectTimer = null;
+                }
+                hostReconnectAttempts = 0;
+
                 if (!peer || peer.disconnected || peer.destroyed) {
                     mpConnectionDot.classList.remove('connected');
                     mpConnectionDot.classList.add('error');
-                    if (!hostReconnectTimer && hostReconnectAttempts < MAX_HOST_RECONNECT_ATTEMPTS) {
-                        startHostReconnect();
-                    }
+                    startHostReconnect();
+                } else {
+                    // Host peer is alive, but check if peers need re-pinging
+                    sendPing();
                 }
             }
         });
@@ -2013,6 +2090,13 @@
                 winnerBanner.classList.add('hidden');
                 resetRoundState();
                 renderGame();
+            } else if (data.type === 'ping') {
+                if (hostConn) {
+                    try { hostConn.send({ type: 'pong' }); } catch(e) {}
+                }
+            } else if (data.type === 'pong') {
+                lastPongTime = Date.now();
+                clearTimeout(healthCheckTimer);
             } else if (data.type === 'play-again') {
                 players = data.players;
                 rounds = [];
