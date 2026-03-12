@@ -7,6 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
     <style>
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -148,6 +149,11 @@
 
         .player-tag button:hover { opacity: 1; }
 
+        .player-tag .remote-indicator {
+            font-size: 0.7rem;
+            opacity: 0.7;
+        }
+
         /* Buttons */
         .btn {
             font-family: var(--font-body);
@@ -176,6 +182,11 @@
         .btn-primary:hover {
             background: #d4b25e;
             border-color: #d4b25e;
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
         }
 
         .btn-danger {
@@ -327,6 +338,11 @@
 
         .player-score-card.frozen {
             border-color: var(--color-text-muted);
+            opacity: 0.8;
+        }
+
+        .player-score-card.submitted {
+            border-color: var(--color-success);
             opacity: 0.8;
         }
 
@@ -549,6 +565,234 @@
 
         .hidden { display: none !important; }
 
+        /* Mode selection */
+        .mode-selection {
+            display: flex;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+        }
+
+        .mode-btn {
+            flex: 1;
+            min-width: 140px;
+            padding: 1.25rem 1rem;
+            background: var(--color-bg);
+            border: 2px solid var(--color-border);
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: center;
+        }
+
+        .mode-btn:hover {
+            border-color: var(--color-accent);
+            background: var(--color-surface-hover);
+        }
+
+        .mode-btn.active {
+            border-color: var(--color-accent);
+            background: var(--color-accent-dim);
+        }
+
+        .mode-btn .mode-title {
+            font-weight: 700;
+            font-size: 1rem;
+            color: var(--color-text);
+            margin-bottom: 0.25rem;
+        }
+
+        .mode-btn .mode-desc {
+            font-size: 0.8rem;
+            color: var(--color-text-muted);
+        }
+
+        /* Room code display */
+        .room-code-display {
+            text-align: center;
+            padding: 1rem;
+        }
+
+        .room-code-display .code {
+            font-family: var(--font-mono);
+            font-size: 2.5rem;
+            font-weight: 700;
+            letter-spacing: 0.2em;
+            color: var(--color-accent);
+            user-select: all;
+        }
+
+        .room-code-display .label {
+            font-size: 0.8rem;
+            color: var(--color-text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.5rem;
+        }
+
+        /* Lobby */
+        .lobby-players {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-top: 0.75rem;
+        }
+
+        .lobby-player {
+            display: flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0.35rem 0.65rem;
+            background: var(--color-accent-dim);
+            border: 1px solid var(--color-accent);
+            border-radius: 6px;
+            font-size: 0.85rem;
+            color: var(--color-accent);
+        }
+
+        .lobby-player .host-badge {
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            opacity: 0.8;
+            margin-left: 0.25rem;
+        }
+
+        /* Connection status */
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.8rem;
+            color: var(--color-text-muted);
+            margin-bottom: 0.75rem;
+        }
+
+        .connection-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--color-text-muted);
+        }
+
+        .connection-dot.connected {
+            background: var(--color-success);
+        }
+
+        .connection-dot.connecting {
+            background: var(--color-accent);
+            animation: pulse 1.5s infinite;
+        }
+
+        .connection-dot.error {
+            background: var(--color-error);
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        /* Submission status */
+        .submission-status {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .submission-chip {
+            padding: 0.25rem 0.6rem;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            background: var(--color-bg);
+            border: 1px solid var(--color-border);
+            color: var(--color-text-muted);
+        }
+
+        .submission-chip.submitted {
+            border-color: var(--color-success);
+            color: var(--color-success);
+            background: rgba(74, 158, 110, 0.1);
+        }
+
+        .submission-chip.disconnected {
+            border-color: var(--color-error);
+            color: var(--color-error);
+            background: rgba(196, 94, 78, 0.1);
+        }
+
+        .edit-score-btn {
+            font-family: var(--font-body);
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 0.3rem 0.6rem;
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: 6px;
+            color: var(--color-text-muted);
+            cursor: pointer;
+            transition: all 0.15s;
+            margin-left: 0.5rem;
+        }
+
+        .edit-score-btn:hover {
+            border-color: var(--color-accent);
+            color: var(--color-accent);
+        }
+
+        .disconnected-badge {
+            font-size: 0.7rem;
+            color: var(--color-error);
+            margin-left: 0.5rem;
+            font-weight: 600;
+        }
+
+        .waiting-message {
+            text-align: center;
+            padding: 2rem 1rem;
+            color: var(--color-text-muted);
+            font-size: 0.95rem;
+        }
+
+        .waiting-message .spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid var(--color-border);
+            border-top-color: var(--color-accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-right: 0.5rem;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Multiplayer banner */
+        .mp-banner {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            padding: 0.5rem 1rem;
+            margin-bottom: 1rem;
+            font-size: 0.8rem;
+        }
+
+        .mp-banner .room-info {
+            font-family: var(--font-mono);
+            color: var(--color-accent);
+        }
+
+        .mp-banner .player-count {
+            color: var(--color-text-muted);
+        }
+
         @media (max-width: 600px) {
             .container { padding: 1rem; }
             header h1 { font-size: 1.5rem; }
@@ -557,6 +801,8 @@
             .card-btn { width: 2.2rem; height: 2.2rem; font-size: 0.8rem; }
             .standings-table { font-size: 0.85rem; }
             .standings-table th, .standings-table td { padding: 0.4rem 0.5rem; }
+            .room-code-display .code { font-size: 1.8rem; }
+            .mode-btn { min-width: unset; }
         }
     </style>
 </head>
@@ -567,8 +813,29 @@
             <p>Track scores for the press-your-luck card game. First to 200 points wins.</p>
         </header>
 
-        <!-- Setup Phase -->
-        <div id="setup-phase">
+        <!-- Mode Selection Phase -->
+        <div id="mode-phase">
+            <div class="section">
+                <h2>Game Mode</h2>
+                <div class="mode-selection">
+                    <button class="mode-btn" id="mode-single" onclick="window._selectMode('single')">
+                        <div class="mode-title">Single Device</div>
+                        <div class="mode-desc">One person tracks all scores</div>
+                    </button>
+                    <button class="mode-btn" id="mode-host" onclick="window._selectMode('host')">
+                        <div class="mode-title">Host Game</div>
+                        <div class="mode-desc">Create a room for others to join</div>
+                    </button>
+                    <button class="mode-btn" id="mode-join" onclick="window._selectMode('join')">
+                        <div class="mode-title">Join Game</div>
+                        <div class="mode-desc">Enter a room code to join</div>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Setup Phase (Single Device) -->
+        <div id="setup-phase" class="hidden">
             <div class="section">
                 <h2>Players</h2>
                 <div class="setup-row">
@@ -580,6 +847,7 @@
                 </div>
                 <div class="player-tags" id="player-tags"></div>
                 <div class="actions-row" style="margin-top:1.25rem;">
+                    <button class="btn" id="back-to-mode-btn">Back</button>
                     <button class="btn btn-primary" id="start-game-btn" disabled>Start Game</button>
                 </div>
             </div>
@@ -618,8 +886,96 @@
             </div>
         </div>
 
+        <!-- Host Lobby Phase -->
+        <div id="host-lobby-phase" class="hidden">
+            <div class="section">
+                <h2>Host Game</h2>
+                <div id="host-connecting" class="connection-status">
+                    <span class="connection-dot connecting"></span>
+                    <span>Setting up room...</span>
+                </div>
+                <div id="host-ready" class="hidden">
+                    <div class="setup-row" style="margin-bottom:1rem;">
+                        <div class="field">
+                            <label for="host-name-input">Your Name</label>
+                            <input type="text" id="host-name-input" placeholder="Enter your name" maxlength="20">
+                        </div>
+                        <button class="btn btn-primary" id="host-set-name-btn" style="margin-bottom:1px;">Set Name</button>
+                    </div>
+                    <div class="room-code-display">
+                        <div class="label">Room Code</div>
+                        <div class="code" id="room-code-display"></div>
+                        <p style="font-size:0.8rem; color:var(--color-text-muted); margin-top:0.5rem;">Share this code with other players</p>
+                    </div>
+                    <div style="margin-top:1.25rem;">
+                        <h2>Add Local Player</h2>
+                        <p style="font-size:0.8rem; color:var(--color-text-muted); margin-bottom:0.5rem;">For players without a device — you'll enter their scores</p>
+                        <div class="setup-row">
+                            <div class="field">
+                                <input type="text" id="host-local-player-input" placeholder="Enter player name" maxlength="20">
+                            </div>
+                            <button class="btn btn-primary" id="host-add-local-btn" style="margin-bottom:1px;">Add</button>
+                        </div>
+                    </div>
+                    <h2 style="margin-top:1.25rem;">Players in Lobby</h2>
+                    <div class="lobby-players" id="host-lobby-players"></div>
+                    <div class="actions-row" style="margin-top:1.25rem;">
+                        <button class="btn" id="host-back-btn">Cancel</button>
+                        <button class="btn btn-primary" id="host-start-btn" disabled>Start Game</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Join Lobby Phase -->
+        <div id="join-lobby-phase" class="hidden">
+            <div class="section">
+                <h2>Join Game</h2>
+                <div id="join-form">
+                    <div class="setup-row">
+                        <div class="field">
+                            <label for="join-code-input">Room Code</label>
+                            <input type="text" id="join-code-input" placeholder="Enter room code" maxlength="6" style="text-transform:uppercase; font-family:var(--font-mono); letter-spacing:0.1em;">
+                        </div>
+                        <div class="field">
+                            <label for="join-name-input">Your Name</label>
+                            <input type="text" id="join-name-input" placeholder="Enter your name" maxlength="20">
+                        </div>
+                        <button class="btn btn-primary" id="join-connect-btn" style="margin-bottom:1px;">Join</button>
+                    </div>
+                    <div id="join-error" class="hidden" style="color:var(--color-error); font-size:0.85rem; margin-top:0.75rem;"></div>
+                </div>
+                <div id="join-connecting" class="hidden">
+                    <div class="connection-status">
+                        <span class="connection-dot connecting"></span>
+                        <span>Connecting to room...</span>
+                    </div>
+                </div>
+                <div id="join-waiting" class="hidden">
+                    <div class="connection-status">
+                        <span class="connection-dot connected"></span>
+                        <span>Connected! Waiting for host to start...</span>
+                    </div>
+                    <h2 style="margin-top:0.75rem;">Players in Lobby</h2>
+                    <div class="lobby-players" id="join-lobby-players"></div>
+                </div>
+                <div class="actions-row" style="margin-top:1.25rem;">
+                    <button class="btn" id="join-back-btn">Back</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Game Phase -->
         <div id="game-phase" class="hidden">
+            <!-- Multiplayer banner -->
+            <div id="mp-banner" class="mp-banner hidden">
+                <div>
+                    <span class="connection-dot connected" style="display:inline-block; vertical-align:middle; margin-right:0.4rem;" id="mp-connection-dot"></span>
+                    <span class="room-info">Room: <span id="mp-room-code"></span></span>
+                </div>
+                <span class="player-count" id="mp-player-count"></span>
+            </div>
+
             <!-- Winner Banner -->
             <div id="winner-banner" class="winner-banner hidden">
                 <h2 id="winner-name"></h2>
@@ -653,8 +1009,15 @@
                     <h2 id="round-title">Round 1</h2>
                     <div class="round-dealer">Dealer: <strong id="round-dealer"></strong></div>
                 </div>
+                <div id="submission-status" class="submission-status hidden"></div>
                 <div class="scoring-grid" id="scoring-grid"></div>
-                <div class="actions-row">
+                <div id="round-waiting" class="hidden">
+                    <div class="waiting-message">
+                        <span class="spinner"></span>
+                        Score submitted! Waiting for other players...
+                    </div>
+                </div>
+                <div class="actions-row" id="round-actions">
                     <button class="btn btn-danger btn-sm" id="undo-round-btn" class="hidden">Undo Last Round</button>
                     <button class="btn btn-primary" id="submit-round-btn">Submit Round</button>
                 </div>
@@ -688,15 +1051,43 @@
 
     <script>
     (function() {
-        // State
+        // =====================================================================
+        // STATE
+        // =====================================================================
         let players = [];
-        let rounds = []; // Array of round results: [{playerName: {cards:[], modifiers:[], x2:bool, flip7:bool, bust:bool, score:number}}]
+        let rounds = [];
         let currentRound = 1;
         let gameStarted = false;
         let gameOver = false;
+        let roundState = {};
 
-        // DOM refs
+        // Multiplayer state
+        let gameMode = 'single'; // 'single' | 'host' | 'peer'
+        let peer = null;
+        let connections = {}; // host: {peerId: {conn, playerName}}, peer: not used
+        let hostConn = null;  // peer: connection to host
+        let roomCode = '';
+        let myName = '';
+        let lobbyPlayers = []; // [{name, isHost, peerId}]
+        let peerSubmissions = {}; // host tracks: {playerName: scoreData}
+        let myScoreSubmitted = false;
+        let hostEditingPlayers = new Set(); // host manually editing these remote players
+        let disconnectedPlayers = new Set(); // players currently disconnected
+        let localPlayers = new Set(); // players added locally by host (no device)
+        let reconnectAttempts = 0;
+        let reconnectTimer = null;
+        const MAX_RECONNECT_ATTEMPTS = 10;
+
+        const NUMBER_CARDS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+        const MODIFIER_CARDS = ['+2', '+4', '+6', '+8', '+10'];
+
+        // =====================================================================
+        // DOM REFS
+        // =====================================================================
+        const modePhase = document.getElementById('mode-phase');
         const setupPhase = document.getElementById('setup-phase');
+        const hostLobbyPhase = document.getElementById('host-lobby-phase');
+        const joinLobbyPhase = document.getElementById('join-lobby-phase');
         const gamePhase = document.getElementById('game-phase');
         const playerInput = document.getElementById('player-name-input');
         const addPlayerBtn = document.getElementById('add-player-btn');
@@ -714,12 +1105,67 @@
         const winnerScore = document.getElementById('winner-score');
         const newGameBtn = document.getElementById('new-game-btn');
         const roundSection = document.getElementById('round-section');
+        const backToModeBtn = document.getElementById('back-to-mode-btn');
 
-        const NUMBER_CARDS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
-        const MODIFIER_CARDS = ['+2', '+4', '+6', '+8', '+10'];
+        // Host lobby
+        const hostConnecting = document.getElementById('host-connecting');
+        const hostReady = document.getElementById('host-ready');
+        const hostNameInput = document.getElementById('host-name-input');
+        const hostSetNameBtn = document.getElementById('host-set-name-btn');
+        const roomCodeDisplay = document.getElementById('room-code-display');
+        const hostLobbyPlayers = document.getElementById('host-lobby-players');
+        const hostBackBtn = document.getElementById('host-back-btn');
+        const hostStartBtn = document.getElementById('host-start-btn');
+        const hostLocalPlayerInput = document.getElementById('host-local-player-input');
+        const hostAddLocalBtn = document.getElementById('host-add-local-btn');
 
-        // Save/load state from localStorage
+        // Join lobby
+        const joinCodeInput = document.getElementById('join-code-input');
+        const joinNameInput = document.getElementById('join-name-input');
+        const joinConnectBtn = document.getElementById('join-connect-btn');
+        const joinError = document.getElementById('join-error');
+        const joinConnecting = document.getElementById('join-connecting');
+        const joinWaiting = document.getElementById('join-waiting');
+        const joinForm = document.getElementById('join-form');
+        const joinLobbyPlayers = document.getElementById('join-lobby-players');
+        const joinBackBtn = document.getElementById('join-back-btn');
+
+        // Multiplayer game banner
+        const mpBanner = document.getElementById('mp-banner');
+        const mpRoomCode = document.getElementById('mp-room-code');
+        const mpPlayerCount = document.getElementById('mp-player-count');
+        const mpConnectionDot = document.getElementById('mp-connection-dot');
+        const submissionStatus = document.getElementById('submission-status');
+        const roundWaiting = document.getElementById('round-waiting');
+        const roundActions = document.getElementById('round-actions');
+
+        // =====================================================================
+        // UTILITIES
+        // =====================================================================
+        function nameToId(name) {
+            return name.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
+        }
+
+        function esc(str) {
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
+        function generateRoomCode() {
+            const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+            let code = '';
+            for (let i = 0; i < 6; i++) {
+                code += chars.charAt(Math.floor(Math.random() * chars.length));
+            }
+            return code;
+        }
+
+        // =====================================================================
+        // SAVE/LOAD (single device only)
+        // =====================================================================
         function saveState() {
+            if (gameMode !== 'single') return;
             const state = { players, rounds, currentRound, gameStarted, gameOver };
             localStorage.setItem('flip7-state', JSON.stringify(state));
         }
@@ -740,7 +1186,44 @@
             }
         }
 
-        // Setup phase
+        // =====================================================================
+        // MODE SELECTION
+        // =====================================================================
+        function showPhase(phase) {
+            [modePhase, setupPhase, hostLobbyPhase, joinLobbyPhase, gamePhase].forEach(el => el.classList.add('hidden'));
+            phase.classList.remove('hidden');
+        }
+
+        window._selectMode = function(mode) {
+            if (mode === 'single') {
+                gameMode = 'single';
+                showPhase(setupPhase);
+                playerInput.focus();
+            } else if (mode === 'host') {
+                gameMode = 'host';
+                showPhase(hostLobbyPhase);
+                initHostPeer();
+            } else if (mode === 'join') {
+                showPhase(joinLobbyPhase);
+                joinCodeInput.focus();
+                // Reset join UI
+                joinForm.classList.remove('hidden');
+                joinConnecting.classList.add('hidden');
+                joinWaiting.classList.add('hidden');
+                joinError.classList.add('hidden');
+            }
+        };
+
+        backToModeBtn.addEventListener('click', () => {
+            players = [];
+            renderPlayerTags();
+            startGameBtn.disabled = true;
+            showPhase(modePhase);
+        });
+
+        // =====================================================================
+        // SINGLE DEVICE SETUP
+        // =====================================================================
         function addPlayer(name) {
             name = name.trim();
             if (!name || players.includes(name)) return;
@@ -778,13 +1261,824 @@
         startGameBtn.addEventListener('click', () => {
             if (players.length < 2) return;
             gameStarted = true;
-            setupPhase.classList.add('hidden');
-            gamePhase.classList.remove('hidden');
+            showPhase(gamePhase);
             renderGame();
             saveState();
         });
 
-        // Game logic
+        // =====================================================================
+        // HOST LOBBY - PEER.JS
+        // =====================================================================
+        function initHostPeer() {
+            hostConnecting.classList.remove('hidden');
+            hostReady.classList.add('hidden');
+            roomCode = generateRoomCode();
+
+            peer = new Peer('flip7-' + roomCode, {
+                debug: 0
+            });
+
+            peer.on('open', (id) => {
+                hostConnecting.classList.add('hidden');
+                hostReady.classList.remove('hidden');
+                roomCodeDisplay.textContent = roomCode;
+                lobbyPlayers = [];
+                renderHostLobby();
+                hostNameInput.focus();
+            });
+
+            peer.on('error', (err) => {
+                if (err.type === 'unavailable-id') {
+                    // Room code collision, try again
+                    peer.destroy();
+                    roomCode = generateRoomCode();
+                    initHostPeer();
+                    return;
+                }
+                console.error('Host peer error:', err);
+                if (gameStarted) {
+                    startHostReconnect();
+                } else {
+                    hostConnecting.innerHTML = `<span class="connection-dot error"></span><span>Failed to create room. Please try again.</span>`;
+                }
+            });
+
+            peer.on('disconnected', () => {
+                // PeerJS lost connection to signaling server
+                if (gameStarted) {
+                    startHostReconnect();
+                }
+            });
+
+            setupHostConnectionHandler();
+        }
+
+        function setupHostConnectionHandler() {
+            if (!peer) return;
+            peer.on('connection', (conn) => {
+                conn.on('open', () => {
+                    // Wait for join message
+                });
+
+                conn.on('data', (data) => {
+                    handleHostMessage(conn, data);
+                });
+
+                conn.on('close', () => {
+                    handlePeerDisconnect(conn);
+                });
+
+                conn.on('error', () => {
+                    handlePeerDisconnect(conn);
+                });
+            });
+        }
+
+        // =====================================================================
+        // HOST AUTO-RECONNECT
+        // =====================================================================
+        let hostReconnectAttempts = 0;
+        let hostReconnectTimer = null;
+        const MAX_HOST_RECONNECT_ATTEMPTS = 15;
+
+        function startHostReconnect() {
+            if (hostReconnectTimer) return;
+            hostReconnectAttempts = 0;
+            // Mark all remote peers as disconnected
+            for (const [peerId, info] of Object.entries(connections)) {
+                info.disconnected = true;
+                disconnectedPlayers.add(info.playerName);
+            }
+            connections = {};
+            mpConnectionDot.classList.remove('connected');
+            mpConnectionDot.classList.add('error');
+            updateMpPlayerCount();
+            renderGame();
+            showReconnectBanner('host');
+            attemptHostReconnect();
+        }
+
+        function attemptHostReconnect() {
+            if (!gameStarted || !roomCode) return;
+            if (hostReconnectAttempts >= MAX_HOST_RECONNECT_ATTEMPTS) {
+                showReconnectFailed('host');
+                return;
+            }
+
+            const delay = Math.min(1000 * Math.pow(1.5, hostReconnectAttempts), 15000);
+            hostReconnectAttempts++;
+            updateReconnectBanner(hostReconnectAttempts, MAX_HOST_RECONNECT_ATTEMPTS);
+
+            hostReconnectTimer = setTimeout(() => {
+                hostReconnectTimer = null;
+                doHostReconnect();
+            }, delay);
+        }
+
+        function doHostReconnect() {
+            if (!gameStarted || !roomCode) return;
+
+            // Destroy old peer cleanly
+            if (peer) {
+                try { peer.destroy(); } catch(e) {}
+                peer = null;
+            }
+
+            peer = new Peer('flip7-' + roomCode, { debug: 0 });
+
+            peer.on('open', () => {
+                // Successfully re-registered with the same room code
+                hostReconnectAttempts = 0;
+                hostReconnectTimer = null;
+                hideReconnectBanner();
+                mpConnectionDot.classList.remove('error');
+                mpConnectionDot.classList.add('connected');
+                updateMpPlayerCount();
+                // Peers will reconnect on their own and send join messages
+                setupHostConnectionHandler();
+            });
+
+            peer.on('error', (err) => {
+                console.error('Host reconnect error:', err);
+                if (err.type === 'unavailable-id') {
+                    // Our old ID is still reserved, wait and retry
+                    setTimeout(() => attemptHostReconnect(), 2000);
+                } else {
+                    attemptHostReconnect();
+                }
+            });
+
+            peer.on('disconnected', () => {
+                if (gameStarted) {
+                    attemptHostReconnect();
+                }
+            });
+        }
+
+        function handleHostMessage(conn, data) {
+            if (data.type === 'join') {
+                const name = data.name.trim().substring(0, 20);
+                if (!name) return;
+
+                // Check if this is a reconnection during an active game
+                if (gameStarted && players.includes(name) && name !== myName) {
+                    // Reconnecting player - update their connection
+                    // Remove old connection entry for this player
+                    for (const [peerId, info] of Object.entries(connections)) {
+                        if (info.playerName === name) {
+                            delete connections[peerId];
+                            break;
+                        }
+                    }
+                    connections[conn.peer] = { conn, playerName: name };
+                    disconnectedPlayers.delete(name);
+
+                    // Update lobby player entry
+                    const lobbyEntry = lobbyPlayers.find(p => p.name === name);
+                    if (lobbyEntry) {
+                        lobbyEntry.peerId = conn.peer;
+                    }
+
+                    // Send rejoin-ok with current game state
+                    conn.send({
+                        type: 'rejoin-ok',
+                        players: players,
+                        rounds: rounds,
+                        currentRound: currentRound,
+                        gameOver: gameOver
+                    });
+
+                    // If host was manually editing this player, stop
+                    hostEditingPlayers.delete(name);
+
+                    updateMpPlayerCount();
+                    renderGame();
+                    return;
+                }
+
+                // Block new players after game has started
+                if (gameStarted) {
+                    conn.send({ type: 'join-error', message: 'Game already in progress. You can only rejoin with your original name.' });
+                    return;
+                }
+
+                // Check for duplicate names in lobby
+                const allNames = lobbyPlayers.map(p => p.name);
+                if (myName) allNames.push(myName);
+                if (allNames.includes(name)) {
+                    conn.send({ type: 'join-error', message: 'Name already taken' });
+                    return;
+                }
+
+                connections[conn.peer] = { conn, playerName: name };
+                lobbyPlayers.push({ name, isHost: false, peerId: conn.peer });
+
+                conn.send({ type: 'join-ok' });
+                broadcastLobbyUpdate();
+                renderHostLobby();
+                updateHostStartBtn();
+            } else if (data.type === 'score-submit' && gameStarted) {
+                handleScoreSubmission(data.playerName, data.scoreData);
+            }
+        }
+
+        function handlePeerDisconnect(conn) {
+            const info = connections[conn.peer];
+            if (info) {
+                // Remove from lobby if game hasn't started
+                if (!gameStarted) {
+                    lobbyPlayers = lobbyPlayers.filter(p => p.peerId !== conn.peer);
+                    delete connections[conn.peer];
+                    broadcastLobbyUpdate();
+                    renderHostLobby();
+                    updateHostStartBtn();
+                } else {
+                    // During game, mark as disconnected but keep player
+                    if (connections[conn.peer]) {
+                        connections[conn.peer].disconnected = true;
+                        disconnectedPlayers.add(info.playerName);
+                    }
+                    updateMpPlayerCount();
+                    renderGame();
+                }
+            }
+        }
+
+        function broadcastLobbyUpdate() {
+            const playerList = [];
+            if (myName) playerList.push({ name: myName, isHost: true });
+            lobbyPlayers.forEach(p => playerList.push({ name: p.name, isHost: false }));
+
+            Object.values(connections).forEach(({ conn }) => {
+                try { conn.send({ type: 'lobby-update', players: playerList }); } catch(e) {}
+            });
+        }
+
+        function broadcastToAll(data) {
+            Object.values(connections).forEach(({ conn, disconnected }) => {
+                if (!disconnected) {
+                    try { conn.send(data); } catch(e) {}
+                }
+            });
+        }
+
+        function renderHostLobby() {
+            const allPlayers = [];
+            if (myName) allPlayers.push({ name: myName, isHost: true, isLocal: false });
+            allPlayers.push(...lobbyPlayers);
+
+            hostLobbyPlayers.innerHTML = allPlayers.length === 0
+                ? '<span style="color:var(--color-text-muted); font-size:0.85rem;">No players yet</span>'
+                : allPlayers.map(p => {
+                    let badge = '';
+                    if (p.isHost) badge = '<span class="host-badge">(host)</span>';
+                    else if (p.isLocal) badge = '<span class="host-badge">(local)</span>';
+                    const removeBtn = p.isLocal && !gameStarted
+                        ? `<button onclick="window._removeLocalPlayer('${esc(p.name)}')" style="background:none;border:none;color:var(--color-accent);cursor:pointer;font-size:1rem;line-height:1;padding:0;opacity:0.7;">&times;</button>`
+                        : '';
+                    return `<span class="lobby-player">${esc(p.name)}${badge}${removeBtn}</span>`;
+                }).join('');
+        }
+
+        window._removeLocalPlayer = function(name) {
+            lobbyPlayers = lobbyPlayers.filter(p => p.name !== name);
+            localPlayers.delete(name);
+            broadcastLobbyUpdate();
+            renderHostLobby();
+            updateHostStartBtn();
+        };
+
+        function updateHostStartBtn() {
+            const totalPlayers = (myName ? 1 : 0) + lobbyPlayers.length;
+            hostStartBtn.disabled = totalPlayers < 2 || !myName;
+        }
+
+        hostSetNameBtn.addEventListener('click', () => {
+            const name = hostNameInput.value.trim().substring(0, 20);
+            if (!name) return;
+            // Check for duplicate
+            if (lobbyPlayers.some(p => p.name === name)) {
+                hostNameInput.style.borderColor = 'var(--color-error)';
+                return;
+            }
+            myName = name;
+            hostNameInput.disabled = true;
+            hostSetNameBtn.disabled = true;
+            hostSetNameBtn.textContent = 'Set';
+            renderHostLobby();
+            broadcastLobbyUpdate();
+            updateHostStartBtn();
+        });
+
+        hostNameInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                hostSetNameBtn.click();
+            }
+            hostNameInput.style.borderColor = '';
+        });
+
+        function addLocalPlayer() {
+            const name = hostLocalPlayerInput.value.trim().substring(0, 20);
+            if (!name) return;
+            // Check for duplicate against all players
+            const allNames = lobbyPlayers.map(p => p.name);
+            if (myName) allNames.push(myName);
+            if (allNames.includes(name)) {
+                hostLocalPlayerInput.style.borderColor = 'var(--color-error)';
+                return;
+            }
+            hostLocalPlayerInput.style.borderColor = '';
+            lobbyPlayers.push({ name, isHost: false, peerId: null, isLocal: true });
+            localPlayers.add(name);
+            hostLocalPlayerInput.value = '';
+            hostLocalPlayerInput.focus();
+            broadcastLobbyUpdate();
+            renderHostLobby();
+            updateHostStartBtn();
+        }
+
+        hostAddLocalBtn.addEventListener('click', addLocalPlayer);
+        hostLocalPlayerInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                addLocalPlayer();
+            }
+            hostLocalPlayerInput.style.borderColor = '';
+        });
+
+        hostBackBtn.addEventListener('click', () => {
+            cleanupPeer();
+            showPhase(modePhase);
+        });
+
+        hostStartBtn.addEventListener('click', () => {
+            if (!myName) return;
+            // Build player list: host first, then joined players
+            players = [myName];
+            lobbyPlayers.forEach(p => players.push(p.name));
+
+            if (players.length < 2) return;
+
+            gameStarted = true;
+            gameMode = 'host';
+            currentRound = 1;
+            rounds = [];
+            resetRoundState();
+            peerSubmissions = {};
+
+            // Broadcast game start
+            broadcastToAll({
+                type: 'game-start',
+                players: players,
+                currentRound: currentRound
+            });
+
+            showPhase(gamePhase);
+            showMpBanner();
+            renderGame();
+        });
+
+        // =====================================================================
+        // JOIN LOBBY - PEER.JS
+        // =====================================================================
+        joinConnectBtn.addEventListener('click', () => attemptJoin());
+
+        joinCodeInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                if (!joinNameInput.value.trim()) {
+                    joinNameInput.focus();
+                } else {
+                    attemptJoin();
+                }
+            }
+        });
+
+        joinNameInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                attemptJoin();
+            }
+        });
+
+        function attemptJoin() {
+            const code = joinCodeInput.value.trim().toUpperCase();
+            const name = joinNameInput.value.trim().substring(0, 20);
+            joinError.classList.add('hidden');
+
+            if (!code || code.length < 4) {
+                showJoinError('Please enter a valid room code.');
+                return;
+            }
+            if (!name) {
+                showJoinError('Please enter your name.');
+                return;
+            }
+
+            myName = name;
+            roomCode = code;
+            gameMode = 'peer';
+
+            joinForm.classList.add('hidden');
+            joinConnecting.classList.remove('hidden');
+
+            peer = new Peer(undefined, { debug: 0 });
+
+            peer.on('open', () => {
+                hostConn = peer.connect('flip7-' + code, { reliable: true });
+
+                const timeout = setTimeout(() => {
+                    showJoinError('Could not connect. Check the room code and try again.');
+                    joinConnecting.classList.add('hidden');
+                    joinForm.classList.remove('hidden');
+                    cleanupPeer();
+                }, 10000);
+
+                hostConn.on('open', () => {
+                    clearTimeout(timeout);
+                    hostConn.send({ type: 'join', name: myName });
+                });
+
+                hostConn.on('data', (data) => {
+                    handlePeerMessage(data);
+                });
+
+                hostConn.on('close', () => {
+                    if (gameStarted) {
+                        mpConnectionDot.classList.remove('connected');
+                        mpConnectionDot.classList.add('error');
+                        startAutoReconnect();
+                    } else {
+                        showJoinError('Disconnected from host.');
+                        joinConnecting.classList.add('hidden');
+                        joinWaiting.classList.add('hidden');
+                        joinForm.classList.remove('hidden');
+                    }
+                });
+
+                hostConn.on('error', () => {
+                    clearTimeout(timeout);
+                    if (gameStarted) {
+                        mpConnectionDot.classList.remove('connected');
+                        mpConnectionDot.classList.add('error');
+                        startAutoReconnect();
+                    } else {
+                        showJoinError('Connection error. Please try again.');
+                        joinConnecting.classList.add('hidden');
+                        joinForm.classList.remove('hidden');
+                        cleanupPeer();
+                    }
+                });
+            });
+
+            peer.on('error', (err) => {
+                console.error('Join peer error:', err);
+                if (err.type === 'peer-unavailable') {
+                    showJoinError('Room not found. Check the code and try again.');
+                } else {
+                    showJoinError('Connection error. Please try again.');
+                }
+                joinConnecting.classList.add('hidden');
+                joinForm.classList.remove('hidden');
+                cleanupPeer();
+            });
+        }
+
+        // =====================================================================
+        // AUTO-RECONNECT (peer side)
+        // =====================================================================
+        function startAutoReconnect() {
+            if (reconnectTimer) return; // already reconnecting
+            reconnectAttempts = 0;
+            showReconnectBanner('peer');
+            attemptReconnect();
+        }
+
+        function attemptReconnect() {
+            if (!gameStarted || !roomCode || !myName) return;
+            if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+                showReconnectFailed('peer');
+                return;
+            }
+
+            const delay = Math.min(1000 * Math.pow(1.5, reconnectAttempts), 15000);
+            reconnectAttempts++;
+            updateReconnectBanner(reconnectAttempts, MAX_RECONNECT_ATTEMPTS);
+
+            reconnectTimer = setTimeout(() => {
+                reconnectTimer = null;
+                doReconnect();
+            }, delay);
+        }
+
+        function doReconnect() {
+            if (!gameStarted || !roomCode || !myName) return;
+
+            // Destroy old peer cleanly
+            if (peer) {
+                try { peer.destroy(); } catch(e) {}
+                peer = null;
+            }
+            hostConn = null;
+
+            peer = new Peer(undefined, { debug: 0 });
+
+            peer.on('open', () => {
+                hostConn = peer.connect('flip7-' + roomCode, { reliable: true });
+
+                const timeout = setTimeout(() => {
+                    // This attempt failed, try again
+                    hostConn = null;
+                    attemptReconnect();
+                }, 8000);
+
+                hostConn.on('open', () => {
+                    clearTimeout(timeout);
+                    hostConn.send({ type: 'join', name: myName });
+                });
+
+                hostConn.on('data', (data) => {
+                    if (data.type === 'rejoin-ok') {
+                        // Successfully reconnected
+                        reconnectAttempts = 0;
+                        hideReconnectBanner();
+                        mpConnectionDot.classList.remove('error');
+                        mpConnectionDot.classList.add('connected');
+                    }
+                    handlePeerMessage(data);
+                });
+
+                hostConn.on('close', () => {
+                    if (gameStarted) {
+                        mpConnectionDot.classList.remove('connected');
+                        mpConnectionDot.classList.add('error');
+                        attemptReconnect();
+                    }
+                });
+
+                hostConn.on('error', () => {
+                    clearTimeout(timeout);
+                    if (gameStarted) {
+                        attemptReconnect();
+                    }
+                });
+            });
+
+            peer.on('error', (err) => {
+                console.error('Reconnect peer error:', err);
+                attemptReconnect();
+            });
+        }
+
+        // =====================================================================
+        // SHARED RECONNECT UI
+        // =====================================================================
+        function showReconnectBanner(mode) {
+            let banner = document.getElementById('reconnect-banner');
+            if (!banner) {
+                banner = document.createElement('div');
+                banner.id = 'reconnect-banner';
+                banner.style.cssText = 'background:rgba(196,162,78,0.15); border:1px solid var(--color-accent); border-radius:8px; padding:0.6rem 1rem; margin-bottom:1rem; display:flex; align-items:center; justify-content:space-between; font-size:0.85rem;';
+                const mpBannerEl = document.getElementById('mp-banner');
+                mpBannerEl.parentNode.insertBefore(banner, mpBannerEl.nextSibling);
+            }
+            banner.style.borderColor = 'var(--color-accent)';
+            banner.style.background = 'rgba(196,162,78,0.15)';
+            const label = mode === 'host' ? 'Re-establishing room...' : 'Reconnecting...';
+            banner.innerHTML = `
+                <div style="display:flex; align-items:center; gap:0.5rem;">
+                    <span class="spinner" style="width:16px; height:16px; border-width:2px;"></span>
+                    <span id="reconnect-text">${label}</span>
+                </div>
+                <button class="btn btn-sm" onclick="window._cancelReconnect()" style="font-size:0.75rem;">Cancel</button>
+            `;
+            banner.classList.remove('hidden');
+        }
+
+        function updateReconnectBanner(attempt, max) {
+            const text = document.getElementById('reconnect-text');
+            if (text) {
+                text.textContent = `Reconnecting... (attempt ${attempt}/${max})`;
+            }
+        }
+
+        function hideReconnectBanner() {
+            const banner = document.getElementById('reconnect-banner');
+            if (banner) banner.classList.add('hidden');
+        }
+
+        function showReconnectFailed(mode) {
+            const banner = document.getElementById('reconnect-banner');
+            if (banner) {
+                banner.style.borderColor = 'var(--color-error)';
+                banner.style.background = 'rgba(196,94,78,0.15)';
+                const label = mode === 'host' ? 'Lost connection to server' : 'Disconnected from host';
+                banner.innerHTML = `
+                    <div style="display:flex; align-items:center; gap:0.5rem;">
+                        <span style="color:var(--color-error); font-weight:600;">${label}</span>
+                    </div>
+                    <button class="btn btn-sm btn-primary" onclick="window._retryReconnect()" style="font-size:0.75rem;">Retry</button>
+                `;
+            }
+        }
+
+        window._cancelReconnect = function() {
+            if (gameMode === 'host') {
+                if (hostReconnectTimer) {
+                    clearTimeout(hostReconnectTimer);
+                    hostReconnectTimer = null;
+                }
+                hostReconnectAttempts = MAX_HOST_RECONNECT_ATTEMPTS;
+                showReconnectFailed('host');
+            } else {
+                if (reconnectTimer) {
+                    clearTimeout(reconnectTimer);
+                    reconnectTimer = null;
+                }
+                reconnectAttempts = MAX_RECONNECT_ATTEMPTS;
+                showReconnectFailed('peer');
+            }
+        };
+
+        window._retryReconnect = function() {
+            if (gameMode === 'host') {
+                hostReconnectAttempts = 0;
+                showReconnectBanner('host');
+                attemptHostReconnect();
+            } else {
+                reconnectAttempts = 0;
+                showReconnectBanner('peer');
+                attemptReconnect();
+            }
+        };
+
+        // Detect visibility change (screen on/off) to trigger reconnect check
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState !== 'visible' || !gameStarted) return;
+
+            if (gameMode === 'peer') {
+                if (!hostConn || !hostConn.open) {
+                    mpConnectionDot.classList.remove('connected');
+                    mpConnectionDot.classList.add('error');
+                    if (!reconnectTimer && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                        startAutoReconnect();
+                    }
+                }
+            } else if (gameMode === 'host') {
+                if (!peer || peer.disconnected || peer.destroyed) {
+                    mpConnectionDot.classList.remove('connected');
+                    mpConnectionDot.classList.add('error');
+                    if (!hostReconnectTimer && hostReconnectAttempts < MAX_HOST_RECONNECT_ATTEMPTS) {
+                        startHostReconnect();
+                    }
+                }
+            }
+        });
+
+        function showJoinError(msg) {
+            joinError.textContent = msg;
+            joinError.classList.remove('hidden');
+        }
+
+        function handlePeerMessage(data) {
+            if (data.type === 'join-ok') {
+                joinConnecting.classList.add('hidden');
+                joinWaiting.classList.remove('hidden');
+            } else if (data.type === 'rejoin-ok') {
+                // Reconnecting to an active game
+                reconnectAttempts = 0;
+                hideReconnectBanner();
+                mpConnectionDot.classList.remove('error');
+                mpConnectionDot.classList.add('connected');
+
+                players = data.players;
+                rounds = data.rounds;
+                currentRound = data.currentRound;
+                gameOver = data.gameOver;
+                gameStarted = true;
+                myScoreSubmitted = false;
+                resetRoundState();
+
+                showPhase(gamePhase);
+                showMpBanner();
+                renderGame();
+                if (gameOver) {
+                    checkWinner();
+                }
+            } else if (data.type === 'join-error') {
+                showJoinError(data.message || 'Could not join.');
+                joinConnecting.classList.add('hidden');
+                joinForm.classList.remove('hidden');
+                cleanupPeer();
+            } else if (data.type === 'lobby-update') {
+                renderJoinLobby(data.players);
+            } else if (data.type === 'game-start') {
+                players = data.players;
+                currentRound = data.currentRound;
+                rounds = [];
+                gameStarted = true;
+                gameOver = false;
+                resetRoundState();
+                myScoreSubmitted = false;
+
+                showPhase(gamePhase);
+                showMpBanner();
+                renderGame();
+            } else if (data.type === 'state-update') {
+                players = data.players;
+                rounds = data.rounds;
+                currentRound = data.currentRound;
+                gameOver = data.gameOver;
+                myScoreSubmitted = false;
+                resetRoundState();
+                renderGame();
+                if (gameOver) {
+                    checkWinner();
+                }
+            } else if (data.type === 'round-reset') {
+                rounds = data.rounds;
+                currentRound = data.currentRound;
+                gameOver = false;
+                myScoreSubmitted = false;
+                winnerBanner.classList.add('hidden');
+                resetRoundState();
+                renderGame();
+            } else if (data.type === 'game-reset') {
+                gameStarted = false;
+                gameOver = false;
+                cleanupPeer();
+                showPhase(modePhase);
+            }
+        }
+
+        function renderJoinLobby(playerList) {
+            joinLobbyPlayers.innerHTML = playerList.map(p =>
+                `<span class="lobby-player">${esc(p.name)}${p.isHost ? '<span class="host-badge">(host)</span>' : ''}</span>`
+            ).join('');
+        }
+
+        joinBackBtn.addEventListener('click', () => {
+            cleanupPeer();
+            showPhase(modePhase);
+        });
+
+        // =====================================================================
+        // MULTIPLAYER BANNER
+        // =====================================================================
+        function showMpBanner() {
+            if (gameMode === 'single') {
+                mpBanner.classList.add('hidden');
+                return;
+            }
+            mpBanner.classList.remove('hidden');
+            mpRoomCode.textContent = roomCode;
+            updateMpPlayerCount();
+        }
+
+        function updateMpPlayerCount() {
+            if (gameMode === 'host') {
+                const connected = Object.values(connections).filter(c => !c.disconnected).length;
+                mpPlayerCount.textContent = `${connected + 1} player${connected + 1 !== 1 ? 's' : ''} connected`;
+            } else {
+                mpPlayerCount.textContent = `${players.length} players`;
+            }
+        }
+
+        // =====================================================================
+        // CLEANUP
+        // =====================================================================
+        function cleanupPeer() {
+            if (peer) {
+                peer.destroy();
+                peer = null;
+            }
+            hostConn = null;
+            connections = {};
+            lobbyPlayers = [];
+            peerSubmissions = {};
+            myScoreSubmitted = false;
+            hostEditingPlayers.clear();
+            disconnectedPlayers.clear();
+            localPlayers.clear();
+            if (reconnectTimer) {
+                clearTimeout(reconnectTimer);
+                reconnectTimer = null;
+            }
+            reconnectAttempts = 0;
+            if (hostReconnectTimer) {
+                clearTimeout(hostReconnectTimer);
+                hostReconnectTimer = null;
+            }
+            hostReconnectAttempts = 0;
+            hideReconnectBanner();
+            myName = '';
+            roomCode = '';
+        }
+
+        // =====================================================================
+        // GAME LOGIC (shared)
+        // =====================================================================
         function getPlayerTotal(playerName) {
             let total = 0;
             for (const round of rounds) {
@@ -808,6 +2102,13 @@
             return (currentRound - 1) % players.length;
         }
 
+        function resetRoundState() {
+            roundState = {};
+        }
+
+        // =====================================================================
+        // RENDERING
+        // =====================================================================
         function renderGame() {
             renderStandings();
             renderRoundScoring();
@@ -823,7 +2124,7 @@
             standingsBody.innerHTML = sorted.map((p, i) => {
                 const pct = Math.min(100, (p.total / 200) * 100);
                 const isWinner = gameOver && p.total >= 200 && i === 0;
-                const roundScores = rounds.map((round, ri) => {
+                const roundScores = rounds.map((round) => {
                     const rd = round[p.name];
                     if (!rd) return `<span class="round-score-chip">-</span>`;
                     if (rd.bust) return `<span class="round-score-chip bust">0</span>`;
@@ -855,64 +2156,241 @@
             roundTitle.textContent = `Round ${currentRound}`;
             roundDealer.textContent = players[getDealerIndex()];
 
+            // Determine which players to show score cards for
+            if (gameMode === 'single' || gameMode === 'host') {
+                renderScoringForSingleOrHost();
+            } else {
+                renderScoringForPeer();
+            }
+        }
+
+        function renderScoringForSingleOrHost() {
             undoRoundBtn.classList.toggle('hidden', rounds.length === 0);
+            roundWaiting.classList.add('hidden');
+            roundActions.classList.remove('hidden');
 
-            scoringGrid.innerHTML = players.map(name => {
-                const id = nameToId(name);
-                return `<div class="player-score-card" id="card-${id}">
-                    <div class="player-score-header">
-                        <span class="name">${esc(name)}</span>
-                        <span class="round-total" id="total-${id}">0</span>
-                    </div>
-                    <div class="card-input-area">
-                        <div class="number-cards-grid" id="numbers-${id}">
-                            ${NUMBER_CARDS.map(n =>
-                                `<button class="card-btn" data-player="${id}" data-card="${n}" onclick="window._toggleCard('${id}', ${n})">${n}</button>`
-                            ).join('')}
-                        </div>
-                    </div>
-                    <div class="card-input-area" style="margin-top:0.5rem;">
-                        <div class="number-cards-grid">
-                            ${MODIFIER_CARDS.map(m =>
-                                `<button class="card-btn modifier" data-player="${id}" data-mod="${m}" onclick="window._toggleMod('${id}', '${m}')">${m}</button>`
-                            ).join('')}
-                            <button class="card-btn modifier" data-player="${id}" data-special="x2" onclick="window._toggleX2('${id}')">x2</button>
-                        </div>
-                    </div>
-                    <div class="score-toggles">
-                        <button class="toggle-btn" id="flip7-${id}" onclick="window._toggleFlip7('${id}')">Flip 7 (+15)</button>
-                        <button class="toggle-btn bust-toggle" id="bust-${id}" onclick="window._toggleBust('${id}')">Bust</button>
-                    </div>
-                    <div class="score-breakdown" id="breakdown-${id}"></div>
-                </div>`;
-            }).join('');
+            if (gameMode === 'host') {
+                // Show submission status
+                renderSubmissionStatus();
 
-            // Initialize round state for each player
+                // In host multiplayer, show host's own card as editable, remote players contextually
+                scoringGrid.innerHTML = players.map(name => {
+                    const isRemote = name !== myName;
+                    const isLocal = localPlayers.has(name);
+                    const hasSubmitted = isRemote && peerSubmissions[name];
+                    const isDisconnected = disconnectedPlayers.has(name);
+                    const isHostEditing = hostEditingPlayers.has(name);
+
+                    if (!isRemote || isLocal) {
+                        // Host's own card or local player - always editable by host
+                        return renderEditableCard(name);
+                    } else if (isHostEditing) {
+                        // Host is manually editing this remote player's score
+                        return renderEditableCard(name, true);
+                    } else if (hasSubmitted) {
+                        // Show submitted score with edit override button
+                        return renderSubmittedCard(name, peerSubmissions[name]);
+                    } else if (isDisconnected) {
+                        // Disconnected and hasn't submitted - show disconnected card with edit option
+                        return renderDisconnectedCard(name);
+                    } else {
+                        // Connected but waiting for submission
+                        return renderWaitingCard(name);
+                    }
+                }).join('');
+
+                // Update submit button - enable when all remote players have submitted, are local, or are being host-edited
+                submitRoundBtn.textContent = 'Submit Round';
+                const allRemoteReady = players.filter(n => n !== myName).every(n =>
+                    peerSubmissions[n] || hostEditingPlayers.has(n) || localPlayers.has(n)
+                );
+                submitRoundBtn.disabled = !allRemoteReady;
+            } else {
+                // Single device mode - all editable
+                submissionStatus.classList.add('hidden');
+                scoringGrid.innerHTML = players.map(name => renderEditableCard(name)).join('');
+                submitRoundBtn.textContent = 'Submit Round';
+                submitRoundBtn.disabled = false;
+            }
+
+            // Initialize round state and update display for editable cards
             players.forEach(name => {
                 const id = nameToId(name);
                 if (!roundState[id]) {
                     roundState[id] = { cards: [], modifiers: [], x2: false, flip7: false, bust: false };
                 }
-                updatePlayerRoundDisplay(id);
+                const isEditable = gameMode === 'single' || name === myName || hostEditingPlayers.has(name) || localPlayers.has(name);
+                if (isEditable) {
+                    updatePlayerRoundDisplay(id);
+                }
             });
         }
 
-        // Round input state
-        let roundState = {};
+        function renderScoringForPeer() {
+            // Peer only sees their own card
+            undoRoundBtn.classList.add('hidden');
 
-        function resetRoundState() {
-            roundState = {};
+            if (myScoreSubmitted) {
+                scoringGrid.innerHTML = '';
+                roundWaiting.classList.remove('hidden');
+                roundActions.classList.add('hidden');
+                submissionStatus.classList.add('hidden');
+                return;
+            }
+
+            roundWaiting.classList.add('hidden');
+            roundActions.classList.remove('hidden');
+            submissionStatus.classList.add('hidden');
+            submitRoundBtn.textContent = 'Submit Score';
+            submitRoundBtn.disabled = false;
+
+            scoringGrid.innerHTML = renderEditableCard(myName);
+
+            const id = nameToId(myName);
+            if (!roundState[id]) {
+                roundState[id] = { cards: [], modifiers: [], x2: false, flip7: false, bust: false };
+            }
+            updatePlayerRoundDisplay(id);
         }
 
+        function renderEditableCard(name, hostOverride) {
+            const id = nameToId(name);
+            const isDisconnected = disconnectedPlayers.has(name);
+            const showOverrideLabel = hostOverride && gameMode === 'host';
+            return `<div class="player-score-card" id="card-${id}">
+                <div class="player-score-header">
+                    <span class="name">${esc(name)}${showOverrideLabel ? '<span class="disconnected-badge">(editing)</span>' : ''}${isDisconnected && showOverrideLabel ? '<span class="disconnected-badge">DISCONNECTED</span>' : ''}</span>
+                    <span class="round-total" id="total-${id}">0</span>
+                </div>
+                <div class="card-input-area">
+                    <div class="number-cards-grid" id="numbers-${id}">
+                        ${NUMBER_CARDS.map(n =>
+                            `<button class="card-btn" data-player="${id}" data-card="${n}" onclick="window._toggleCard('${id}', ${n})">${n}</button>`
+                        ).join('')}
+                    </div>
+                </div>
+                <div class="card-input-area" style="margin-top:0.5rem;">
+                    <div class="number-cards-grid">
+                        ${MODIFIER_CARDS.map(m =>
+                            `<button class="card-btn modifier" data-player="${id}" data-mod="${m}" onclick="window._toggleMod('${id}', '${m}')">${m}</button>`
+                        ).join('')}
+                        <button class="card-btn modifier" data-player="${id}" data-special="x2" onclick="window._toggleX2('${id}')">x2</button>
+                    </div>
+                </div>
+                <div class="score-toggles">
+                    <button class="toggle-btn" id="flip7-${id}" onclick="window._toggleFlip7('${id}')">Flip 7 (+15)</button>
+                    <button class="toggle-btn bust-toggle" id="bust-${id}" onclick="window._toggleBust('${id}')">Bust</button>
+                </div>
+                <div class="score-breakdown" id="breakdown-${id}"></div>
+            </div>`;
+        }
+
+        function renderSubmittedCard(name, scoreData) {
+            const id = nameToId(name);
+            const score = scoreData.score;
+            const isBust = scoreData.bust;
+            return `<div class="player-score-card submitted ${isBust ? 'bust' : ''}" id="card-${id}">
+                <div class="player-score-header">
+                    <span class="name">${esc(name)}<button class="edit-score-btn" onclick="window._hostEditPlayer('${esc(name)}')">Edit</button></span>
+                    <span class="round-total ${isBust ? 'bust-text' : ''}">${isBust ? 'BUST' : score}</span>
+                </div>
+                <div class="score-breakdown" style="margin-top:0;">
+                    ${isBust ? 'Bust — 0 points' : formatScoreBreakdown(scoreData)}
+                </div>
+            </div>`;
+        }
+
+        function renderWaitingCard(name) {
+            const id = nameToId(name);
+            return `<div class="player-score-card" id="card-${id}" style="opacity:0.5;">
+                <div class="player-score-header">
+                    <span class="name">${esc(name)}<button class="edit-score-btn" onclick="window._hostEditPlayer('${esc(name)}')">Enter Score</button></span>
+                    <span class="round-total" style="color:var(--color-text-muted);">...</span>
+                </div>
+                <div class="waiting-message" style="padding:0.5rem 0;">
+                    <span class="spinner"></span> Waiting for score...
+                </div>
+            </div>`;
+        }
+
+        function renderDisconnectedCard(name) {
+            const id = nameToId(name);
+            return `<div class="player-score-card" id="card-${id}" style="border-color: var(--color-error); opacity:0.8;">
+                <div class="player-score-header">
+                    <span class="name">${esc(name)}<span class="disconnected-badge">DISCONNECTED</span></span>
+                    <span class="round-total" style="color:var(--color-text-muted);">...</span>
+                </div>
+                <div style="display:flex; align-items:center; gap:0.75rem; padding:0.5rem 0;">
+                    <span style="font-size:0.85rem; color:var(--color-text-muted);">Player disconnected.</span>
+                    <button class="btn btn-sm btn-primary" onclick="window._hostEditPlayer('${esc(name)}')">Enter Score</button>
+                </div>
+            </div>`;
+        }
+
+        window._hostEditPlayer = function(name) {
+            // Remove peer submission if any (host is overriding)
+            delete peerSubmissions[name];
+            hostEditingPlayers.add(name);
+            renderGame();
+        };
+
+        function formatScoreBreakdown(data) {
+            const parts = [];
+            const numberSum = data.cards.reduce((a, b) => a + b, 0);
+            if (data.cards.length > 0) {
+                parts.push(`Cards: ${[...data.cards].sort((a,b) => a-b).join('+')}`);
+                if (data.x2) parts.push(`= ${numberSum} x2 = ${numberSum * 2}`);
+            }
+            if (data.modifiers.length > 0) {
+                parts.push(`Mods: +${data.modifiers.reduce((a,b) => a+b, 0)}`);
+            }
+            if (data.flip7) parts.push('Flip 7: +15');
+            return parts.join(' | ');
+        }
+
+        function renderSubmissionStatus() {
+            if (gameMode !== 'host') {
+                submissionStatus.classList.add('hidden');
+                return;
+            }
+            submissionStatus.classList.remove('hidden');
+            const remotePlayers = players.filter(n => n !== myName && !localPlayers.has(n));
+            if (remotePlayers.length === 0) {
+                submissionStatus.classList.add('hidden');
+                return;
+            }
+            submissionStatus.innerHTML = remotePlayers.map(name => {
+                const submitted = !!peerSubmissions[name];
+                const isDisconnected = disconnectedPlayers.has(name);
+                const isHostEditing = hostEditingPlayers.has(name);
+                let cls = '';
+                let label = esc(name);
+                if (submitted) {
+                    cls = 'submitted';
+                    label += ' ✓';
+                } else if (isHostEditing) {
+                    cls = 'submitted';
+                    label += ' (host)';
+                } else if (isDisconnected) {
+                    cls = 'disconnected';
+                    label += ' ✗';
+                }
+                return `<span class="submission-chip ${cls}">${label}</span>`;
+            }).join('');
+        }
+
+        // =====================================================================
+        // SCORE INPUT HANDLERS
+        // =====================================================================
         window._toggleCard = function(id, num) {
             const state = roundState[id];
+            if (!state) return;
             const idx = state.cards.indexOf(num);
             if (idx >= 0) {
                 state.cards.splice(idx, 1);
             } else {
                 state.cards.push(num);
             }
-            // Auto-detect Flip 7
             state.flip7 = state.cards.length >= 7;
             updatePlayerRoundDisplay(id);
         };
@@ -920,6 +2398,7 @@
         window._toggleMod = function(id, mod) {
             const val = parseInt(mod);
             const state = roundState[id];
+            if (!state) return;
             const idx = state.modifiers.indexOf(val);
             if (idx >= 0) {
                 state.modifiers.splice(idx, 1);
@@ -930,32 +2409,34 @@
         };
 
         window._toggleX2 = function(id) {
+            if (!roundState[id]) return;
             roundState[id].x2 = !roundState[id].x2;
             updatePlayerRoundDisplay(id);
         };
 
         window._toggleFlip7 = function(id) {
+            if (!roundState[id]) return;
             roundState[id].flip7 = !roundState[id].flip7;
             updatePlayerRoundDisplay(id);
         };
 
         window._toggleBust = function(id) {
+            if (!roundState[id]) return;
             roundState[id].bust = !roundState[id].bust;
             updatePlayerRoundDisplay(id);
         };
 
         function updatePlayerRoundDisplay(id) {
             const state = roundState[id];
+            if (!state) return;
             const score = calculateRoundScore(state);
 
-            // Update total display
             const totalEl = document.getElementById(`total-${id}`);
             if (totalEl) {
                 totalEl.textContent = state.bust ? 'BUST' : score;
                 totalEl.classList.toggle('bust-text', state.bust);
             }
 
-            // Update card highlights
             const card = document.getElementById(`card-${id}`);
             if (card) {
                 card.classList.toggle('bust', state.bust);
@@ -972,33 +2453,34 @@
                 if (x2Btn) x2Btn.classList.toggle('selected', state.x2);
             }
 
-            // Update toggle buttons
             const flip7Btn = document.getElementById(`flip7-${id}`);
             if (flip7Btn) flip7Btn.classList.toggle('active', state.flip7);
 
             const bustBtn = document.getElementById(`bust-${id}`);
             if (bustBtn) bustBtn.classList.toggle('active', state.bust);
 
-            // Score breakdown
             const breakdownEl = document.getElementById(`breakdown-${id}`);
             if (breakdownEl && !state.bust) {
-                const parts = [];
-                const numberSum = state.cards.reduce((a, b) => a + b, 0);
-                if (state.cards.length > 0) {
-                    parts.push(`Cards: ${state.cards.sort((a,b) => a-b).join('+')}`);
-                    if (state.x2) parts.push(`= ${numberSum} x2 = ${numberSum * 2}`);
-                }
-                if (state.modifiers.length > 0) {
-                    parts.push(`Mods: +${state.modifiers.reduce((a,b) => a+b, 0)}`);
-                }
-                if (state.flip7) parts.push('Flip 7: +15');
-                breakdownEl.textContent = parts.join(' | ');
+                breakdownEl.textContent = formatScoreBreakdown(state);
             } else if (breakdownEl) {
                 breakdownEl.textContent = 'Bust — 0 points';
             }
         }
 
+        // =====================================================================
+        // ROUND SUBMISSION
+        // =====================================================================
         submitRoundBtn.addEventListener('click', () => {
+            if (gameMode === 'single') {
+                submitRoundSingle();
+            } else if (gameMode === 'host') {
+                submitRoundHost();
+            } else if (gameMode === 'peer') {
+                submitScorePeer();
+            }
+        });
+
+        function submitRoundSingle() {
             const roundResult = {};
             players.forEach(name => {
                 const id = nameToId(name);
@@ -1019,8 +2501,121 @@
             resetRoundState();
             renderGame();
             saveState();
-        });
+        }
 
+        function submitRoundHost() {
+            // Build round result from host's own score + peer submissions
+            const roundResult = {};
+
+            // Host's own score
+            const hostId = nameToId(myName);
+            const hostState = roundState[hostId];
+            if (hostState) {
+                const score = calculateRoundScore(hostState);
+                roundResult[myName] = {
+                    cards: [...hostState.cards],
+                    modifiers: [...hostState.modifiers],
+                    x2: hostState.x2,
+                    flip7: hostState.flip7,
+                    bust: hostState.bust,
+                    score
+                };
+            }
+
+            // Peer submissions, local players, and host-edited players
+            players.forEach(name => {
+                if (name === myName) return;
+                if (localPlayers.has(name) || hostEditingPlayers.has(name)) {
+                    // Host manually entered this player's score
+                    const id = nameToId(name);
+                    const state = roundState[id];
+                    if (state) {
+                        const score = calculateRoundScore(state);
+                        roundResult[name] = {
+                            cards: [...state.cards],
+                            modifiers: [...state.modifiers],
+                            x2: state.x2,
+                            flip7: state.flip7,
+                            bust: state.bust,
+                            score
+                        };
+                    } else {
+                        roundResult[name] = { cards: [], modifiers: [], x2: false, flip7: false, bust: true, score: 0 };
+                    }
+                } else if (peerSubmissions[name]) {
+                    roundResult[name] = peerSubmissions[name];
+                } else {
+                    // Player didn't submit - give them 0 (bust)
+                    roundResult[name] = { cards: [], modifiers: [], x2: false, flip7: false, bust: true, score: 0 };
+                }
+            });
+
+            rounds.push(roundResult);
+            currentRound++;
+            resetRoundState();
+            peerSubmissions = {};
+            hostEditingPlayers.clear();
+
+            // Broadcast state update to all peers
+            broadcastToAll({
+                type: 'state-update',
+                players: players,
+                rounds: rounds,
+                currentRound: currentRound,
+                gameOver: false
+            });
+
+            renderGame();
+
+            // Check for winner after render, then broadcast if game is over
+            if (gameOver) {
+                broadcastToAll({
+                    type: 'state-update',
+                    players: players,
+                    rounds: rounds,
+                    currentRound: currentRound,
+                    gameOver: true
+                });
+            }
+        }
+
+        function submitScorePeer() {
+            const id = nameToId(myName);
+            const state = roundState[id];
+            if (!state) return;
+
+            const score = calculateRoundScore(state);
+            const scoreData = {
+                cards: [...state.cards],
+                modifiers: [...state.modifiers],
+                x2: state.x2,
+                flip7: state.flip7,
+                bust: state.bust,
+                score
+            };
+
+            // Send to host
+            if (hostConn) {
+                hostConn.send({
+                    type: 'score-submit',
+                    playerName: myName,
+                    scoreData: scoreData
+                });
+            }
+
+            myScoreSubmitted = true;
+            renderRoundScoring();
+        }
+
+        function handleScoreSubmission(playerName, scoreData) {
+            // Host receives a peer's score
+            peerSubmissions[playerName] = scoreData;
+            renderGame();
+        }
+
+        // =====================================================================
+        // UNDO / RESET
+        // =====================================================================
         undoRoundBtn.addEventListener('click', () => {
             if (rounds.length === 0) return;
             rounds.pop();
@@ -1028,6 +2623,17 @@
             gameOver = false;
             winnerBanner.classList.add('hidden');
             resetRoundState();
+            peerSubmissions = {};
+            hostEditingPlayers.clear();
+
+            if (gameMode === 'host') {
+                broadcastToAll({
+                    type: 'round-reset',
+                    rounds: rounds,
+                    currentRound: currentRound
+                });
+            }
+
             renderGame();
             saveState();
         });
@@ -1035,20 +2641,17 @@
         function checkWinner() {
             if (rounds.length === 0) return;
 
-            // Check if any player reached 200+ in the last completed round
             const lastRound = rounds[rounds.length - 1];
             let anyReached200 = false;
 
             for (const name of players) {
                 const total = getPlayerTotal(name);
-                // Player must have reached 200 and not busted in the final round
                 if (total >= 200 && lastRound[name] && !lastRound[name].bust) {
                     anyReached200 = true;
                 }
             }
 
             if (anyReached200) {
-                // Find the winner (highest total)
                 let winner = null;
                 let highScore = -1;
                 for (const name of players) {
@@ -1070,10 +2673,18 @@
 
         resetGameBtn.addEventListener('click', () => {
             if (!confirm('Are you sure you want to reset the game? All scores will be lost.')) return;
+
+            if (gameMode === 'host') {
+                broadcastToAll({ type: 'game-reset' });
+            }
+
             resetAll();
         });
 
         newGameBtn.addEventListener('click', () => {
+            if (gameMode === 'host') {
+                broadcastToAll({ type: 'game-reset' });
+            }
             resetAll();
         });
 
@@ -1084,30 +2695,29 @@
             gameStarted = false;
             gameOver = false;
             resetRoundState();
+            peerSubmissions = {};
+            myScoreSubmitted = false;
             localStorage.removeItem('flip7-state');
-            setupPhase.classList.remove('hidden');
-            gamePhase.classList.add('hidden');
+
+            cleanupPeer();
+            gameMode = 'single';
+
+            showPhase(modePhase);
             winnerBanner.classList.add('hidden');
+            mpBanner.classList.add('hidden');
             renderPlayerTags();
             startGameBtn.disabled = true;
         }
 
-        // Utilities
-        function nameToId(name) {
-            return name.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
-        }
-
-        function esc(str) {
-            const div = document.createElement('div');
-            div.textContent = str;
-            return div.innerHTML;
-        }
-
-        // Init: try to restore saved game
+        // =====================================================================
+        // INIT
+        // =====================================================================
         if (loadState() && gameStarted) {
-            setupPhase.classList.add('hidden');
-            gamePhase.classList.remove('hidden');
+            // Restore single-device game in progress
+            showPhase(gamePhase);
             renderGame();
+        } else {
+            showPhase(modePhase);
         }
     })();
     </script>
