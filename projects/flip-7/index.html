@@ -369,6 +369,13 @@
             color: var(--color-bust);
         }
 
+        .player-score-header .running-total {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--color-text-muted);
+            font-weight: 600;
+        }
+
         .card-input-area {
             display: flex;
             flex-wrap: wrap;
@@ -982,7 +989,8 @@
                 <div class="winner-score" id="winner-score"></div>
                 <p>wins the game!</p>
                 <div class="actions-row" style="justify-content:center; margin-top:1rem;">
-                    <button class="btn btn-primary" id="new-game-btn">New Game</button>
+                    <button class="btn btn-primary" id="play-again-btn">Play Again</button>
+                    <button class="btn" id="new-game-btn">New Game</button>
                 </div>
             </div>
 
@@ -1076,7 +1084,7 @@
         let localPlayers = new Set(); // players added locally by host (no device)
         let reconnectAttempts = 0;
         let reconnectTimer = null;
-        const MAX_RECONNECT_ATTEMPTS = 10;
+        const MAX_RECONNECT_ATTEMPTS = 20;
 
         const NUMBER_CARDS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
         const MODIFIER_CARDS = ['+2', '+4', '+6', '+8', '+10'];
@@ -1104,6 +1112,7 @@
         const winnerName = document.getElementById('winner-name');
         const winnerScore = document.getElementById('winner-score');
         const newGameBtn = document.getElementById('new-game-btn');
+        const playAgainBtn = document.getElementById('play-again-btn');
         const roundSection = document.getElementById('round-section');
         const backToModeBtn = document.getElementById('back-to-mode-btn');
 
@@ -1339,10 +1348,13 @@
         // =====================================================================
         let hostReconnectAttempts = 0;
         let hostReconnectTimer = null;
-        const MAX_HOST_RECONNECT_ATTEMPTS = 15;
+        const MAX_HOST_RECONNECT_ATTEMPTS = 20;
 
         function startHostReconnect() {
-            if (hostReconnectTimer) return;
+            if (hostReconnectTimer) {
+                clearTimeout(hostReconnectTimer);
+                hostReconnectTimer = null;
+            }
             hostReconnectAttempts = 0;
             // Mark all remote peers as disconnected
             for (const [peerId, info] of Object.entries(connections)) {
@@ -1479,6 +1491,17 @@
                 updateHostStartBtn();
             } else if (data.type === 'score-submit' && gameStarted) {
                 handleScoreSubmission(data.playerName, data.scoreData);
+            } else if (data.type === 'ping') {
+                try { conn.send({ type: 'pong' }); } catch(e) {}
+            } else if (data.type === 'pong') {
+                // Peer is alive — if they were marked disconnected, restore them
+                const info = connections[conn.peer];
+                if (info && info.disconnected) {
+                    info.disconnected = false;
+                    disconnectedPlayers.delete(info.playerName);
+                    updateMpPlayerCount();
+                    renderGame();
+                }
             }
         }
 
@@ -1749,7 +1772,10 @@
         // AUTO-RECONNECT (peer side)
         // =====================================================================
         function startAutoReconnect() {
-            if (reconnectTimer) return; // already reconnecting
+            if (reconnectTimer) {
+                clearTimeout(reconnectTimer);
+                reconnectTimer = null;
+            }
             reconnectAttempts = 0;
             showReconnectBanner('peer');
             attemptReconnect();
@@ -1782,19 +1808,28 @@
             }
             hostConn = null;
 
+            // Timeout for the entire reconnect attempt (PeerJS open + connection)
+            const overallTimeout = setTimeout(() => {
+                if (!hostConn || !hostConn.open) {
+                    hostConn = null;
+                    attemptReconnect();
+                }
+            }, 12000);
+
             peer = new Peer(undefined, { debug: 0 });
 
             peer.on('open', () => {
                 hostConn = peer.connect('flip7-' + roomCode, { reliable: true });
 
-                const timeout = setTimeout(() => {
-                    // This attempt failed, try again
+                const connTimeout = setTimeout(() => {
+                    // Connection didn't open in time
                     hostConn = null;
                     attemptReconnect();
                 }, 8000);
 
                 hostConn.on('open', () => {
-                    clearTimeout(timeout);
+                    clearTimeout(connTimeout);
+                    clearTimeout(overallTimeout);
                     hostConn.send({ type: 'join', name: myName });
                 });
 
@@ -1810,6 +1845,8 @@
                 });
 
                 hostConn.on('close', () => {
+                    clearTimeout(connTimeout);
+                    clearTimeout(overallTimeout);
                     if (gameStarted) {
                         mpConnectionDot.classList.remove('connected');
                         mpConnectionDot.classList.add('error');
@@ -1818,7 +1855,8 @@
                 });
 
                 hostConn.on('error', () => {
-                    clearTimeout(timeout);
+                    clearTimeout(connTimeout);
+                    clearTimeout(overallTimeout);
                     if (gameStarted) {
                         attemptReconnect();
                     }
@@ -1826,6 +1864,7 @@
             });
 
             peer.on('error', (err) => {
+                clearTimeout(overallTimeout);
                 console.error('Reconnect peer error:', err);
                 attemptReconnect();
             });
@@ -1913,25 +1952,72 @@
             }
         };
 
-        // Detect visibility change (screen on/off) to trigger reconnect check
+        // =====================================================================
+        // PING/PONG HEALTH CHECK
+        // =====================================================================
+        let lastPongTime = 0;
+        let healthCheckTimer = null;
+
+        function sendPing() {
+            if (gameMode === 'peer' && hostConn && hostConn.open) {
+                try { hostConn.send({ type: 'ping' }); } catch(e) {}
+            } else if (gameMode === 'host') {
+                Object.values(connections).forEach(({ conn, disconnected }) => {
+                    if (!disconnected && conn.open) {
+                        try { conn.send({ type: 'ping' }); } catch(e) {}
+                    }
+                });
+            }
+        }
+
+        // Detect visibility change (screen on/off) to trigger reconnect
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState !== 'visible' || !gameStarted) return;
 
             if (gameMode === 'peer') {
-                if (!hostConn || !hostConn.open) {
+                // Always reset attempts when user comes back to the tab
+                // so we get a fresh set of retries
+                if (reconnectTimer) {
+                    clearTimeout(reconnectTimer);
+                    reconnectTimer = null;
+                }
+                reconnectAttempts = 0;
+
+                if (!hostConn || !hostConn.open || !peer || peer.destroyed || peer.disconnected) {
+                    // Connection is clearly dead
                     mpConnectionDot.classList.remove('connected');
                     mpConnectionDot.classList.add('error');
-                    if (!reconnectTimer && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-                        startAutoReconnect();
-                    }
+                    showReconnectBanner('peer');
+                    attemptReconnect();
+                } else {
+                    // Connection might look alive but could be stale — ping to verify
+                    lastPongTime = 0;
+                    sendPing();
+                    clearTimeout(healthCheckTimer);
+                    healthCheckTimer = setTimeout(() => {
+                        if (lastPongTime === 0) {
+                            // No pong received — connection is dead
+                            mpConnectionDot.classList.remove('connected');
+                            mpConnectionDot.classList.add('error');
+                            showReconnectBanner('peer');
+                            attemptReconnect();
+                        }
+                    }, 3000);
                 }
             } else if (gameMode === 'host') {
+                if (hostReconnectTimer) {
+                    clearTimeout(hostReconnectTimer);
+                    hostReconnectTimer = null;
+                }
+                hostReconnectAttempts = 0;
+
                 if (!peer || peer.disconnected || peer.destroyed) {
                     mpConnectionDot.classList.remove('connected');
                     mpConnectionDot.classList.add('error');
-                    if (!hostReconnectTimer && hostReconnectAttempts < MAX_HOST_RECONNECT_ATTEMPTS) {
-                        startHostReconnect();
-                    }
+                    startHostReconnect();
+                } else {
+                    // Host peer is alive, but check if peers need re-pinging
+                    sendPing();
                 }
             }
         });
@@ -2003,6 +2089,22 @@
                 myScoreSubmitted = false;
                 winnerBanner.classList.add('hidden');
                 resetRoundState();
+                renderGame();
+            } else if (data.type === 'ping') {
+                if (hostConn) {
+                    try { hostConn.send({ type: 'pong' }); } catch(e) {}
+                }
+            } else if (data.type === 'pong') {
+                lastPongTime = Date.now();
+                clearTimeout(healthCheckTimer);
+            } else if (data.type === 'play-again') {
+                players = data.players;
+                rounds = [];
+                currentRound = data.currentRound;
+                gameOver = false;
+                myScoreSubmitted = false;
+                resetRoundState();
+                winnerBanner.classList.add('hidden');
                 renderGame();
             } else if (data.type === 'game-reset') {
                 gameStarted = false;
@@ -2257,9 +2359,10 @@
             const id = nameToId(name);
             const isDisconnected = disconnectedPlayers.has(name);
             const showOverrideLabel = hostOverride && gameMode === 'host';
+            const prevTotal = getPlayerTotal(name);
             return `<div class="player-score-card" id="card-${id}">
                 <div class="player-score-header">
-                    <span class="name">${esc(name)}${showOverrideLabel ? '<span class="disconnected-badge">(editing)</span>' : ''}${isDisconnected && showOverrideLabel ? '<span class="disconnected-badge">DISCONNECTED</span>' : ''}</span>
+                    <span class="name">${esc(name)}${showOverrideLabel ? '<span class="disconnected-badge">(editing)</span>' : ''}${isDisconnected && showOverrideLabel ? '<span class="disconnected-badge">DISCONNECTED</span>' : ''}${prevTotal > 0 ? `<span class="running-total" style="margin-left:0.5rem;">Overall: ${prevTotal}</span>` : ''}</span>
                     <span class="round-total" id="total-${id}">0</span>
                 </div>
                 <div class="card-input-area">
@@ -2289,9 +2392,11 @@
             const id = nameToId(name);
             const score = scoreData.score;
             const isBust = scoreData.bust;
+            const prevTotal = getPlayerTotal(name);
+            const projectedTotal = prevTotal + score;
             return `<div class="player-score-card submitted ${isBust ? 'bust' : ''}" id="card-${id}">
                 <div class="player-score-header">
-                    <span class="name">${esc(name)}<button class="edit-score-btn" onclick="window._hostEditPlayer('${esc(name)}')">Edit</button></span>
+                    <span class="name">${esc(name)}<button class="edit-score-btn" onclick="window._hostEditPlayer('${esc(name)}')">Edit</button>${prevTotal > 0 ? `<span class="running-total" style="margin-left:0.5rem;">Overall: ${projectedTotal}</span>` : (score > 0 ? `<span class="running-total" style="margin-left:0.5rem;">Overall: ${projectedTotal}</span>` : '')}</span>
                     <span class="round-total ${isBust ? 'bust-text' : ''}">${isBust ? 'BUST' : score}</span>
                 </div>
                 <div class="score-breakdown" style="margin-top:0;">
@@ -2302,9 +2407,10 @@
 
         function renderWaitingCard(name) {
             const id = nameToId(name);
+            const prevTotal = getPlayerTotal(name);
             return `<div class="player-score-card" id="card-${id}" style="opacity:0.5;">
                 <div class="player-score-header">
-                    <span class="name">${esc(name)}<button class="edit-score-btn" onclick="window._hostEditPlayer('${esc(name)}')">Enter Score</button></span>
+                    <span class="name">${esc(name)}<button class="edit-score-btn" onclick="window._hostEditPlayer('${esc(name)}')">Enter Score</button>${prevTotal > 0 ? `<span class="running-total" style="margin-left:0.5rem;">Overall: ${prevTotal}</span>` : ''}</span>
                     <span class="round-total" style="color:var(--color-text-muted);">...</span>
                 </div>
                 <div class="waiting-message" style="padding:0.5rem 0;">
@@ -2315,9 +2421,10 @@
 
         function renderDisconnectedCard(name) {
             const id = nameToId(name);
+            const prevTotal = getPlayerTotal(name);
             return `<div class="player-score-card" id="card-${id}" style="border-color: var(--color-error); opacity:0.8;">
                 <div class="player-score-header">
-                    <span class="name">${esc(name)}<span class="disconnected-badge">DISCONNECTED</span></span>
+                    <span class="name">${esc(name)}<span class="disconnected-badge">DISCONNECTED</span>${prevTotal > 0 ? `<span class="running-total" style="margin-left:0.5rem;">Overall: ${prevTotal}</span>` : ''}</span>
                     <span class="round-total" style="color:var(--color-text-muted);">...</span>
                 </div>
                 <div style="display:flex; align-items:center; gap:0.75rem; padding:0.5rem 0;">
@@ -2437,8 +2544,30 @@
                 totalEl.classList.toggle('bust-text', state.bust);
             }
 
+            // Update the running total to show projected overall
             const card = document.getElementById(`card-${id}`);
             if (card) {
+                const runningTotalEl = card.querySelector('.running-total');
+                // Find player name from id
+                const playerName = players.find(n => nameToId(n) === id);
+                if (playerName) {
+                    const prevTotal = getPlayerTotal(playerName);
+                    const projected = prevTotal + score;
+                    if (runningTotalEl) {
+                        runningTotalEl.textContent = `Overall: ${projected}`;
+                        runningTotalEl.style.display = '';
+                    } else if (projected > 0) {
+                        const nameEl = card.querySelector('.player-score-header .name');
+                        if (nameEl) {
+                            const span = document.createElement('span');
+                            span.className = 'running-total';
+                            span.style.marginLeft = '0.5rem';
+                            span.textContent = `Overall: ${projected}`;
+                            nameEl.appendChild(span);
+                        }
+                    }
+                }
+
                 card.classList.toggle('bust', state.bust);
 
                 card.querySelectorAll('.card-btn[data-card]').forEach(btn => {
@@ -2639,7 +2768,11 @@
         });
 
         function checkWinner() {
-            if (rounds.length === 0) return;
+            if (rounds.length === 0) {
+                winnerBanner.classList.add('hidden');
+                gameOver = false;
+                return;
+            }
 
             const lastRound = rounds[rounds.length - 1];
             let anyReached200 = false;
@@ -2668,6 +2801,8 @@
                 winnerBanner.classList.remove('hidden');
                 roundSection.classList.add('hidden');
                 saveState();
+            } else {
+                winnerBanner.classList.add('hidden');
             }
         }
 
@@ -2681,12 +2816,41 @@
             resetAll();
         });
 
+        playAgainBtn.addEventListener('click', () => {
+            resetGameKeepPlayers();
+        });
+
         newGameBtn.addEventListener('click', () => {
             if (gameMode === 'host') {
                 broadcastToAll({ type: 'game-reset' });
             }
             resetAll();
         });
+
+        function resetGameKeepPlayers() {
+            rounds = [];
+            currentRound = 1;
+            gameOver = false;
+            resetRoundState();
+            peerSubmissions = {};
+            myScoreSubmitted = false;
+            hostEditingPlayers.clear();
+            winnerBanner.classList.add('hidden');
+
+            if (gameMode === 'host') {
+                broadcastToAll({
+                    type: 'play-again',
+                    players: players,
+                    currentRound: 1
+                });
+            }
+
+            if (gameMode === 'single') {
+                saveState();
+            }
+
+            renderGame();
+        }
 
         function resetAll() {
             players = [];
