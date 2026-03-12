@@ -20,7 +20,8 @@ projects/
 ├── uno-no-mercy/              # UNO No Mercy scoreboard
 ├── exploding-kittens/         # Exploding Kittens game assistant
 ├── herd-mentality/            # Herd Mentality game companion
-└── texas-holdem/              # Multiplayer Texas Hold'em poker
+├── texas-holdem/              # Multiplayer Texas Hold'em poker
+└── cards-against-humanity/    # P2P Cards Against Humanity party game
 tofu/                  # OpenTofu infrastructure (Cloudflare Pages + DNS)
 .github/workflows/
 ├── deploy.yml         # Infrastructure (tofu plan/apply) + production deployment
@@ -42,6 +43,7 @@ tofu/                  # OpenTofu infrastructure (Cloudflare Pages + DNS)
 | exploding-kittens | `projects/exploding-kittens/` | Static HTML/CSS/JS | Exploding Kittens game assistant with card reference and probability calculator |
 | herd-mentality | `projects/herd-mentality/` | Static HTML/CSS/JS | Herd Mentality game companion with question bank and answer collection |
 | texas-holdem | `projects/texas-holdem/` | Static HTML/CSS/JS, PeerJS | Multiplayer Texas Hold'em poker with peer-to-peer networking |
+| cards-against-humanity | `projects/cards-against-humanity/` | Static HTML/CSS/JS, PeerJS | P2P Cards Against Humanity party game |
 
 **When adding a new project:**
 1. Create `projects/<project-name>/` with a `README.md`

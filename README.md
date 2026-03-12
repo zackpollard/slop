@@ -27,6 +27,7 @@ projects/
 | [exploding-kittens](projects/exploding-kittens) | [exploding-kittens.slop.zackpollard.pro](https://exploding-kittens.slop.zackpollard.pro) | Exploding Kittens game assistant with card reference and probability calculator |
 | [herd-mentality](projects/herd-mentality) | [herd-mentality.slop.zackpollard.pro](https://herd-mentality.slop.zackpollard.pro) | Herd Mentality game companion with question bank and answer collection |
 | [texas-holdem](projects/texas-holdem) | [texas-holdem.slop.zackpollard.pro](https://texas-holdem.slop.zackpollard.pro) | Multiplayer Texas Hold'em poker with PeerJS networking |
+| [cards-against-humanity](projects/cards-against-humanity) | [cards-against-humanity.slop.zackpollard.pro](https://cards-against-humanity.slop.zackpollard.pro) | Peer-to-peer Cards Against Humanity party game |
 
 ## Adding a new project
 

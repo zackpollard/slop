@@ -1,0 +1,1312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cards Against Humanity — slop</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --color-bg: #0f0f0c;
+            --color-surface: #1a1a16;
+            --color-surface-hover: #222218;
+            --color-border: #2e2e24;
+            --color-text: #e8e4d4;
+            --color-text-muted: #9a9686;
+            --color-accent: #c4a24e;
+            --color-accent-dim: rgba(196, 162, 78, 0.15);
+            --color-error: #c45e4e;
+            --color-success: #4a9e6e;
+            --color-black-card: #1a1a1a;
+            --color-white-card: #f5f2e8;
+            --color-white-card-text: #1a1a16;
+            --font-body: 'Inter', sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+        }
+
+        body {
+            font-family: var(--font-body);
+            background: var(--color-bg);
+            color: var(--color-text);
+            line-height: 1.6;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 1.5rem 1rem;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 1.5rem;
+        }
+
+        header h1 {
+            font-size: 1.8rem;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+        }
+
+        header h1 .accent { color: var(--color-accent); }
+
+        header p {
+            color: var(--color-text-muted);
+            margin-top: 0.25rem;
+            font-size: 0.9rem;
+        }
+
+        /* Lobby */
+        .section {
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .section h2 {
+            font-size: 0.85rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--color-text-muted);
+            margin-bottom: 0.75rem;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.6rem 1.2rem;
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            background: var(--color-surface);
+            color: var(--color-text);
+            font-family: var(--font-body);
+            font-size: 0.9rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .btn:hover { background: var(--color-surface-hover); border-color: var(--color-accent); }
+
+        .btn-primary {
+            background: var(--color-accent);
+            color: #0f0f0c;
+            border-color: var(--color-accent);
+        }
+
+        .btn-primary:hover { background: #d4b25e; }
+
+        .btn-danger {
+            border-color: var(--color-error);
+            color: var(--color-error);
+        }
+
+        .btn-danger:hover { background: rgba(196, 94, 78, 0.15); }
+
+        .btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        input[type="text"] {
+            padding: 0.6rem 0.8rem;
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            background: var(--color-bg);
+            color: var(--color-text);
+            font-family: var(--font-body);
+            font-size: 0.9rem;
+            outline: none;
+            transition: border-color 0.15s;
+            width: 100%;
+        }
+
+        input[type="text"]:focus { border-color: var(--color-accent); }
+
+        .form-row {
+            display: flex;
+            gap: 0.75rem;
+            align-items: center;
+            margin-bottom: 0.75rem;
+        }
+
+        .form-row input { flex: 1; }
+
+        label {
+            font-size: 0.85rem;
+            color: var(--color-text-muted);
+            font-weight: 500;
+        }
+
+        /* Player list */
+        .player-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-top: 0.75rem;
+        }
+
+        .player-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.35rem 0.75rem;
+            background: var(--color-accent-dim);
+            border: 1px solid rgba(196, 162, 78, 0.3);
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+
+        .player-tag.is-czar {
+            background: var(--color-accent);
+            color: #0f0f0c;
+            border-color: var(--color-accent);
+        }
+
+        .player-tag .score {
+            font-family: var(--font-mono);
+            font-size: 0.8rem;
+            opacity: 0.8;
+        }
+
+        .player-tag .crown { font-size: 0.75rem; }
+
+        /* Game code display */
+        .game-code {
+            font-family: var(--font-mono);
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: var(--color-accent);
+            letter-spacing: 0.1em;
+            user-select: all;
+        }
+
+        .code-row {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+
+        /* Cards */
+        .black-card {
+            background: var(--color-black-card);
+            color: #fff;
+            border: 2px solid #333;
+            border-radius: 12px;
+            padding: 1.5rem;
+            font-size: 1.2rem;
+            font-weight: 600;
+            line-height: 1.5;
+            min-height: 160px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            position: relative;
+        }
+
+        .black-card .pick-badge {
+            display: inline-block;
+            margin-top: 0.75rem;
+            padding: 0.2rem 0.6rem;
+            background: #fff;
+            color: #000;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            align-self: flex-start;
+        }
+
+        .hand {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+            gap: 0.75rem;
+            margin-top: 1rem;
+        }
+
+        .white-card {
+            background: var(--color-white-card);
+            color: var(--color-white-card-text);
+            border: 2px solid transparent;
+            border-radius: 10px;
+            padding: 1rem;
+            font-size: 0.9rem;
+            font-weight: 500;
+            line-height: 1.4;
+            min-height: 120px;
+            cursor: pointer;
+            transition: all 0.15s;
+            position: relative;
+        }
+
+        .white-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+        }
+
+        .white-card.selected {
+            border-color: var(--color-accent);
+            box-shadow: 0 0 0 2px var(--color-accent), 0 6px 20px rgba(196, 162, 78, 0.3);
+            transform: translateY(-4px);
+        }
+
+        .white-card.selected::after {
+            content: attr(data-order);
+            position: absolute;
+            top: -8px;
+            right: -8px;
+            width: 24px;
+            height: 24px;
+            background: var(--color-accent);
+            color: #0f0f0c;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            font-weight: 700;
+        }
+
+        .white-card.disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            pointer-events: none;
+        }
+
+        /* Submitted cards for judging */
+        .submissions-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        .submission-group {
+            background: var(--color-surface-hover);
+            border: 2px solid var(--color-border);
+            border-radius: 12px;
+            padding: 1rem;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .submission-group:hover {
+            border-color: var(--color-accent);
+            transform: translateY(-2px);
+        }
+
+        .submission-group.winner {
+            border-color: var(--color-accent);
+            background: var(--color-accent-dim);
+            box-shadow: 0 0 20px rgba(196, 162, 78, 0.2);
+        }
+
+        .submission-group .sub-card {
+            background: var(--color-white-card);
+            color: var(--color-white-card-text);
+            border-radius: 8px;
+            padding: 0.75rem;
+            font-size: 0.85rem;
+            font-weight: 500;
+            margin-bottom: 0.5rem;
+        }
+
+        .submission-group .sub-card:last-child { margin-bottom: 0; }
+
+        .submission-group .author {
+            font-size: 0.75rem;
+            color: var(--color-text-muted);
+            margin-top: 0.5rem;
+            font-style: italic;
+        }
+
+        /* Status bar */
+        .status-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+            padding: 0.75rem 1rem;
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: 10px;
+        }
+
+        .status-text {
+            font-weight: 600;
+            font-size: 0.95rem;
+        }
+
+        .round-info {
+            font-family: var(--font-mono);
+            font-size: 0.8rem;
+            color: var(--color-text-muted);
+        }
+
+        /* Toast */
+        .toast {
+            position: fixed;
+            bottom: 1.5rem;
+            left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            background: var(--color-accent);
+            color: #0f0f0c;
+            padding: 0.75rem 1.5rem;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 0.9rem;
+            z-index: 1000;
+            transition: transform 0.3s ease;
+            text-align: center;
+            max-width: 90vw;
+        }
+
+        .toast.show { transform: translateX(-50%) translateY(0); }
+
+        /* Waiting overlay */
+        .waiting-text {
+            text-align: center;
+            padding: 2rem;
+            color: var(--color-text-muted);
+            font-size: 1.1rem;
+        }
+
+        .waiting-text .dots::after {
+            content: '';
+            animation: dots 1.5s steps(4, end) infinite;
+        }
+
+        @keyframes dots {
+            0%, 20% { content: ''; }
+            40% { content: '.'; }
+            60% { content: '..'; }
+            80%, 100% { content: '...'; }
+        }
+
+        /* Screens */
+        .screen { display: none; }
+        .screen.active { display: block; }
+
+        /* Winner banner */
+        .winner-banner {
+            text-align: center;
+            padding: 2rem;
+        }
+
+        .winner-banner h2 {
+            font-size: 1.5rem;
+            color: var(--color-accent);
+            text-transform: none;
+            letter-spacing: normal;
+            margin-bottom: 0.5rem;
+        }
+
+        .winner-banner .winning-cards {
+            margin: 1rem auto;
+            max-width: 400px;
+        }
+
+        /* Responsive */
+        @media (max-width: 600px) {
+            .hand { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+            .black-card { font-size: 1rem; min-height: 120px; padding: 1rem; }
+            header h1 { font-size: 1.4rem; }
+            .container { padding: 1rem 0.75rem; }
+        }
+
+        /* Log */
+        .log {
+            max-height: 150px;
+            overflow-y: auto;
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--color-text-muted);
+            margin-top: 0.5rem;
+            padding: 0.5rem;
+            background: var(--color-bg);
+            border-radius: 6px;
+        }
+
+        .log-entry { padding: 0.15rem 0; }
+
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Cards Against <span class="accent">Humanity</span></h1>
+            <p>Peer-to-peer party game for horrible people</p>
+        </header>
+
+        <!-- LOBBY SCREEN -->
+        <div id="screen-lobby" class="screen active">
+            <div class="section">
+                <h2>Your Name</h2>
+                <div class="form-row">
+                    <input type="text" id="player-name" placeholder="Enter your name" maxlength="20" autocomplete="off">
+                </div>
+            </div>
+
+            <div class="section">
+                <h2>Create a Game</h2>
+                <p style="color: var(--color-text-muted); font-size: 0.85rem; margin-bottom: 0.75rem;">
+                    Start a new game and share the code with friends.
+                </p>
+                <div class="form-row">
+                    <label for="score-limit">Score to win:</label>
+                    <input type="text" id="score-limit" value="7" style="width: 60px; text-align: center;" maxlength="2">
+                </div>
+                <button class="btn btn-primary" id="btn-create">Create Game</button>
+            </div>
+
+            <div class="section">
+                <h2>Join a Game</h2>
+                <p style="color: var(--color-text-muted); font-size: 0.85rem; margin-bottom: 0.75rem;">
+                    Enter the game code shared by the host.
+                </p>
+                <div class="form-row">
+                    <input type="text" id="join-code" placeholder="Game code" maxlength="10" autocomplete="off" style="text-transform: uppercase; font-family: var(--font-mono);">
+                    <button class="btn btn-primary" id="btn-join">Join</button>
+                </div>
+            </div>
+
+            <div id="connection-log" class="section hidden">
+                <h2>Connection</h2>
+                <div class="log" id="log"></div>
+            </div>
+        </div>
+
+        <!-- WAITING ROOM SCREEN -->
+        <div id="screen-waiting" class="screen">
+            <div class="section">
+                <h2>Game Lobby</h2>
+                <div class="code-row">
+                    <span>Share this code:</span>
+                    <span class="game-code" id="display-code"></span>
+                    <button class="btn" id="btn-copy-code" style="font-size: 0.8rem; padding: 0.4rem 0.8rem;">Copy</button>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2>Players</h2>
+                <div class="player-list" id="waiting-players"></div>
+            </div>
+
+            <div id="host-controls">
+                <button class="btn btn-primary" id="btn-start" disabled>Start Game (need 3+)</button>
+            </div>
+        </div>
+
+        <!-- GAME SCREEN -->
+        <div id="screen-game" class="screen">
+            <div class="status-bar">
+                <span class="status-text" id="game-status"></span>
+                <div>
+                    <span class="round-info" id="round-info"></span>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2>Players</h2>
+                <div class="player-list" id="game-players"></div>
+            </div>
+
+            <div class="section" id="black-card-section">
+                <h2>Black Card</h2>
+                <div class="black-card" id="black-card"></div>
+            </div>
+
+            <!-- Player's hand (non-czar) -->
+            <div class="section" id="hand-section">
+                <h2>Your Hand <span id="pick-hint" style="font-weight: 400; text-transform: none; font-size: 0.8rem;"></span></h2>
+                <div class="hand" id="hand"></div>
+                <div style="margin-top: 1rem; display: flex; gap: 0.75rem;">
+                    <button class="btn btn-primary" id="btn-submit" disabled>Submit</button>
+                </div>
+            </div>
+
+            <!-- Waiting for submissions -->
+            <div id="waiting-section" class="hidden">
+                <div class="waiting-text">
+                    <span>Waiting for players to submit cards</span><span class="dots"></span>
+                    <div id="submitted-count" style="margin-top: 0.5rem; font-size: 0.85rem;"></div>
+                </div>
+            </div>
+
+            <!-- Czar judging -->
+            <div class="section hidden" id="judging-section">
+                <h2>Pick the Winner</h2>
+                <div class="submissions-grid" id="submissions"></div>
+                <button class="btn btn-primary hidden" id="btn-pick-winner" style="margin-top: 1rem;">Pick Winner</button>
+            </div>
+
+            <!-- Round result -->
+            <div class="section hidden" id="result-section">
+                <div class="winner-banner">
+                    <h2 id="result-title"></h2>
+                    <div class="winning-cards" id="result-cards"></div>
+                    <button class="btn btn-primary" id="btn-next-round" style="margin-top: 1rem;">Next Round</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- GAME OVER SCREEN -->
+        <div id="screen-gameover" class="screen">
+            <div class="section">
+                <div class="winner-banner">
+                    <h2 id="gameover-title"></h2>
+                    <p id="gameover-subtitle" style="color: var(--color-text-muted);"></p>
+                    <div class="player-list" id="final-scores" style="justify-content: center; margin-top: 1rem;"></div>
+                    <button class="btn btn-primary" id="btn-new-game" style="margin-top: 1.5rem;">New Game</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+    // ==================== CARD DATA ====================
+    const CARD_DATA = {"black":[{"t":"_?  There's an app for that.","p":1},{"t":"Why can't I sleep at night?","p":1},{"t":"What's that smell?","p":1},{"t":"I got 99 problems but _ ain't one.","p":1},{"t":"Maybe she's born with it.  Maybe it's _.","p":1},{"t":"What's the next Happy Meal&copy; toy?","p":1},{"t":"Anthropologists have recently discovered a primitive tribe that worships _.","p":1},{"t":"It's a pity that kids these days are all getting involved with _.","p":1},{"t":"During Picasso's often-overlooked Brown Period, he produced hundreds of paintings of _.","p":1},{"t":"Alternative medicine is now embracing the curative powers of _.","p":1},{"t":"And the Academy Award for _ goes to _.","p":2},{"t":"What's that sound?","p":1},{"t":"What ended my last relationship?","p":1},{"t":"MTV's new reality show features eight washed-up celebrities living with _.","p":1},{"t":"I drink to forget _.","p":1},{"t":"I'm sorry professor, but I couldn't complete my homework because of _.","p":1},{"t":"What is Batman's guilty pleasure?","p":1},{"t":"This is the way the world ends <br> This is the way the world ends <br> Not with a bang but with _.","p":1},{"t":"What's a girl's best friend?","p":1},{"t":"TSA guidelines now prohibit _ on airplanes.","p":1},{"t":"_.  That's how I want to die.","p":1},{"t":"For my next trick, I will pull _ out of _.","p":2},{"t":"In the new Disney Channel Original Movie, Hannah Montana struggles with _ for the first time.","p":1},{"t":"_ is a slippery slope that leads to _.","p":2},{"t":"What does Dick Cheney prefer?","p":1},{"t":"Dear Abby, I'm having some trouble with _ and would like your advice.","p":1},{"t":"Instead of coal, Santa now gives the bad children _.","p":1},{"t":"What's the most emo?","p":1},{"t":"In 1,000 years when paper money is but a distant memory, _ will be our currency.","p":1},{"t":"What's the next superhero/sidekick duo?","p":2},{"t":"In M. Night Shyamalan's new movie, Bruce Willis discovers that _ had really been _ all along.","p":2},{"t":"A romantic, candlelit dinner would be incomplete without _.","p":1},{"t":"_.  Becha can't have just one!","p":1},{"t":"White people like _.","p":1},{"t":"_.  High five, bro.","p":1},{"t":"Next from J.K. Rowling: Harry Potter and the Chamber of _.","p":1},{"t":"BILLY MAYS HERE FOR _.","p":1},{"t":"In a world ravaged by _, our only solace is _.","p":2},{"t":"War!  What is it good for?","p":1},{"t":"During sex, I like to think about _.","p":1},{"t":"What are my parents hiding from me?","p":1},{"t":"What will always get you laid?","p":1},{"t":"In L.A. County Jail, word is you can trade 200 cigarettes for _.","p":1},{"t":"What did I bring back from Mexico?","p":1},{"t":"What don't you want to find in your Chinese food?","p":1},{"t":"What will I bring back in time to convince people that I am a powerful wizard?","p":1},{"t":"How am I maintaining my relationship status?","p":1},{"t":"_.  It's a trap!","p":1},{"t":"Coming to Broadway this season, _: The Musical.","p":1},{"t":"While the United States raced the Soviet Union to the moon, the Mexican government funneled millions of pesos into research on _.","p":1},{"t":"After the earthquake, Sean Penn brought _ to the people of Haiti.","p":1},{"t":"Next on ESPN2, the World Series of _.","p":1},{"t":"Step 1: _.  Step 2: _.  Step 3: Profit.","p":2},{"t":"Rumor has it that Vladimir Putin's favorite dish is _ stuffed with _.","p":2},{"t":"But before I kill you, Mr. Bond, I must show you _.","p":1},{"t":"What gives me uncontrollable gas?","p":1},{"t":"What do old people smell like?","p":1},{"t":"The class field trip was completely ruined by _.","p":1},{"t":"When Pharaoh remained unmoved, Moses called down a Plague of _.","p":1},{"t":"What's my secret power?","p":1},{"t":"What's there a ton of in heaven?","p":1},{"t":"What would grandma find disturbing, yet oddly charming?","p":1},{"t":"I never truly understood _ until I encountered _.","p":2},{"t":"What did the U.S. airdrop to the children of Afghanistan?","p":1},{"t":"What helps Obama unwind?","p":1},{"t":"What did Vin Diesel eat for dinner?","p":1},{"t":"_: good to the last drop.","p":1},{"t":"Why am I sticky?","p":1},{"t":"What gets better with age?","p":1},{"t":"_: kid-tested, mother-approved.","p":1},{"t":"What's the crustiest?","p":1},{"t":"What's Teach for America using to inspire inner city students to succeed?","p":1},{"t":"Studies show that lab rats navigate mazes 50% faster after being exposed to _.","p":1},{"t":"Life for American Indians was forever changed when the White Man introduced them to _.","p":1},{"t":"Make a haiku.","p":3},{"t":"I do not know with what weapons World War III will be fought, but World War IV will be fought with _.","p":1},{"t":"Why do I hurt all over?","p":1},{"t":"What am I giving up for Lent?","p":1},{"t":"In Michael Jackson's final moments, he thought about _.","p":1},{"t":"In an attempt to reach a wider audience, the Smithsonian Museum of Natural History has opened an interactive exhibit on _.","p":1},{"t":"When I am President of the United States, I will create the Department of _.","p":1},{"t":"Lifetime&copy; presents _, the story of _.","p":2},{"t":"When I am a billionaire, I shall erect a 50-foot statue to commemorate _.","p":1},{"t":"When I was tripping on acid, _ turned into _.","p":2},{"t":"That's right, I killed _.  How, you ask?  _.","p":2},{"t":"What's my anti-drug?","p":1},{"t":"_ + _ = _.","p":3},{"t":"What never fails to liven up the party?","p":1},{"t":"What's the new fad diet?","p":1},{"t":"Major League Baseball has banned _ for giving players an unfair advantage.","p":1},{"t":"My plan for world domination begins with _.","p":1},{"t":"The CIA now interrogates enemy agents by repeatedly subjecting them to _.","p":1},{"t":"Dear Sir or Madam, We regret to inform you that the Office of _ has denied your request for _","p":2},{"t":"In Rome, there are whisperings that the Vatican has a secret room devoted to _.","p":1},{"t":"Science will never explain _.","p":1},{"t":"When all else fails, I can always masturbate to _.","p":1},{"t":"I learned the hard way that you can't cheer up a grieving friend with _.","p":1},{"t":"In its new tourism campaign, Detroit proudly proclaims that it has finally eliminated _.","p":1},{"t":"An international tribunal has found _ guilty of _.","p":2},{"t":"The socialist governments of Scandinavia have declared that access to _ is a basic human right.","p":1},{"t":"In his new self-produced album, Kanye West raps over the sounds of _.","p":1},{"t":"What's the gift that keeps on giving?","p":1},{"t":"Next season on Man vs. Wild, Bear Grylls must survive in the depths of the Amazon with only _ and his wits.","p":1},{"t":"When I pooped, what came out of my butt?","p":1},{"t":"In the distant future, historians will agree that _ marked the beginning of America's decline.","p":1},{"t":"In a pinch, _ can be a suitable substitute for _.","p":2},{"t":"What has been making life difficult at the nudist colony?","p":1},{"t":"Michael Bay's new three-hour action epic pits _ against _.","p":2},{"t":"And I would have gotten away with it, too, if it hadn't been for _.","p":1},{"t":"What brought the orgy to a grinding halt?","p":1},{"t":"During his midlife crisis, my dad got really into _.","p":1},{"t":"_ would be woefully incomplete without _.","p":2},{"t":"My new favorite porn star is Joey &#34;_&#34; McGee.","p":1},{"t":"Before I run for president, I must destroy all evidence of my involvement with _.","p":1},{"t":"This is your captain speaking. Fasten your seatbelts and prepare for _.","p":1},{"t":"In his newest and most difficult stunt, David Blaine must escape from _.","p":1},{"t":"The Five Stages of Grief: denial, anger, bargaining, _, and acceptance.","p":1},{"t":"My mom freaked out when she looked at my browser history and found _.com/_.","p":2},{"t":"I went from _ to _, all thanks to _.","p":3},{"t":"Members of New York's social elite are paying thousands of dollars just to experience _.","p":1},{"t":"This month's Cosmo: &#34;Spice up your sex life by bringing _ into the bedroom.&#34;","p":1},{"t":"Little Miss Muffet Sat on a tuffet, Eating her curds and _.","p":1},{"t":"If God didn't want us to enjoy _, he wouldn't have given us _.","p":2},{"t":"My country, 'tis of thee, sweet land of _.","p":1},{"t":"After months of debate, the Occupy Wall Street General Assembly could only agree on &#34;More _!&#34;","p":1},{"t":"I spent my whole life working toward _, only to have it ruined by _.","p":2},{"t":"Next time on Dr. Phil: How to talk to your child about _.","p":1},{"t":"Only two things in life are certain: death and _.","p":1},{"t":"Everyone down on the ground! We don't want to hurt anyone. We're just here for _.","p":1},{"t":"The healing process began when I joined a support group for victims of _.","p":1},{"t":"The votes are in, and the new high school mascot is _.","p":1},{"t":"Charades was ruined for me forever when my mom had to act out _.","p":1},{"t":"Before _, all we had was _.","p":2},{"t":"Tonight on 20/20: What you don't know about _ could kill you.","p":1},{"t":"You haven't truly lived until you've experienced _ and _ at the same time.","p":2},{"t":"D&D 4.0 isn't real D&D because of the _.","p":1},{"t":"It's a D&D retroclone with _ added.","p":1},{"t":"Storygames aren't RPGs because of the _.","p":1},{"t":"The Slayer's Guide to _.","p":1},{"t":"Worst character concept ever: _, but with _.","p":2},{"t":"Alightment: Chaotic _","p":1},{"t":"It's a D&D retroclone with _ added.","p":1},{"t":"What made the paladin fall? _","p":1},{"t":"The portal leads to the quasi-elemental plane of _.","p":1},{"t":"The Temple of Elemental _.","p":1},{"t":"Pathfinder is basically D&D _ Edition.","p":1},{"t":"_ : The Storytelling Game.","p":1},{"t":"People are wondering why Steve Jackson published GURPS _.","p":1},{"t":"Linear Fighter, Quadratic _.","p":1},{"t":"You start with 1d4 _ points.","p":1},{"t":"Back when I was 12 and I was just starting playing D&D, the game had _.","p":1},{"t":"Big Eyes, Small _.","p":1},{"t":"In the grim darkness of the future there is only _.","p":1},{"t":"My innovative new RPG has a stat for _.","p":1},{"t":"A true gamer has no problem with _.","p":1},{"t":"Elminster cast a potent _ spell and then had sex with _.","p":2},{"t":"The Deck of Many _.","p":1},{"t":"You are all at a tavern when _ approach you.","p":1},{"t":"For the convention I cosplayed as Sailor Moon, except with _.","p":1},{"t":"The worst part of Grave of the Fireflies is all the _.","p":1},{"t":"In the Evangelion remake, Shinji has to deal with _.","p":1},{"t":"Worst anime convention purchase ever? _.","p":1},{"t":"While powering up Vegeta screamed, _!","p":1},{"t":"You evaded my _ attack. Most impressive.","p":1},{"t":"I downloaded a doujin where _ got into _.","p":2},{"t":"The magical girl found out that the Power of Love is useless against _.","p":1},{"t":"The Japanese government has spent billions of yen researching _.","p":1},{"t":"In the dubbed version they changed _ into _.","p":2},{"t":"_ is Best Pony.","p":1},{"t":"The _ of Haruhi Suzumiya.","p":1},{"t":"The new thing in Akihabara is fetish cafes where you can see girls dressed up as _.","p":1},{"t":"Your drill can pierce _!","p":1},{"t":"Avatar: The Last _ bender.","p":1},{"t":"In the name of _ Sailor Moon will punish you!","p":1},{"t":"No harem anime is complete without _.","p":1},{"t":"My boyfriend's a _ now.","p":1},{"t":"The _ of _ has left me in despair!","p":2},{"t":"_.tumblr.com","p":1},{"t":"Somehow they made a cute mascot girl out of _.","p":1},{"t":"Haruko hit Naoto in the head with her bass guitar and _ came out.","p":1},{"t":"After blacking out during New year's Eve, I was awoken by _.","p":1},{"t":"This holiday season, Tim Allen must overcome his fear of _ to save Christmas.","p":1},{"t":"Jesus is _.","p":1},{"t":"Every Christmas, my uncle gets drunk and tells the story about _.","p":1},{"t":"What keeps me warm during the cold, cold, winter?","p":1},{"t":"On the third day of Christmas, my true love gave to me: three French hens, two turtle doves, and _.","p":1},{"t":"Wake up, America. Christmas is under attack by secular liberals and their _.","p":1},{"t":"We got the third rope, now where's the fourth?","p":1},{"t":"Tonights main event, _ vs. _.","p":2},{"t":"Tackle, Dropdown, _.","p":1},{"t":"Christopher Daniels is late on his _.","p":1},{"t":"Instead of booking _, they should have booked _.","p":2},{"t":"Genius is 10% inspiration, 90% _.","p":1},{"t":"They found _ in the dumpster behind _.","p":2},{"t":"The best thing I ever got for Christmas was _.","p":1},{"t":"There's no crying in _.","p":1},{"t":"Mastodon! Pterodactyl! Triceratops! Sabretooth Tiger! _!","p":1},{"t":"Don't eat the _.","p":1},{"t":"He did _ with the _!?!","p":2},{"t":"SOOOOO hot, want to touch the _.","p":1},{"t":"Stop looking at me _!","p":1},{"t":"I'm cuckoo for _ puffs.","p":1},{"t":"Silly rabbit, _ are for kids.","p":1},{"t":"Between love and madness lies _.","p":1},{"t":"Instead of chess, the Grim Reaper now gambles for your soul with a game of _.","p":1},{"t":"My father gave his life fighting to protect _ from _.","p":2},{"t":"Why is my throat sore?","p":1},{"t":"_ sparked a city-wide riot that only ended with _.","p":2},{"t":"I\u2019m very sorry Mrs. Smith, but Little Billy has tested positive for _.","p":1},{"t":"Instead of beating them, Chris Brown now does _ to women.","p":1},{"t":"Instead of cutting, trendy young emo girls now engage in _.","p":1},{"t":"The definition of rock bottom is gambling away _.","p":1},{"t":"The Mayan prophecies really heralded the coming of _ in 2012.","p":1},{"t":"The next US election will be fought on the key issues of _ against _.","p":2},{"t":"When I was 10 I wrote to Santa wishing for _.","p":1},{"t":"Where or How I met my last signifigant other: _.","p":1},{"t":"_, Never leave home without it.","p":1},{"t":"_. This is my fetish.","p":1},{"t":"David Icke's newest conspiracy theory states that _ caused _.","p":2},{"t":"I did _ so you don't have to!","p":1},{"t":"I need your clothes, your bike, and _.","p":1},{"t":"In a new Cold War retro movie, the red menace tries to conquer the world through the cunning use of _.","p":1},{"t":"In college, our lecturer made us write a report comparing _ to _.","p":2},{"t":"In The Hangover part 3, those four guys have to deal with _, _, and _.","p":3},{"t":"My zombie survival kit includes food, water, and _.","p":1},{"t":"The way to a man's heart is through _.","p":1},{"t":"What was the theme of my second wedding?","p":1},{"t":"What's the newest Japanese craze to head West?","p":1},{"t":"Everybody loves _.","p":1},{"t":"I can only express myself through _.","p":1},{"t":"My new porn DVD was completely ruined by the inclusion of _","p":1},{"t":"My three wishes will be for _, _, and _.","p":3},{"t":"The latest horrifying school shooting was inspired by _.","p":1},{"t":"I got fired because of my not-so-secret obsession over _.","p":1},{"t":"My new favourite sexual position is _","p":1},{"t":"A successful job interview begins with a firm handshake and ends with _.","p":1},{"t":"Lovin' you is easy 'cause you're _.","p":1},{"t":"My life is ruled by a vicious cycle of _ and _.","p":2},{"t":"The blind date was going horribly until we discovered our shared interest in _.","p":1},{"t":"_. Awesome in theory, kind of a mess in practice.","p":1},{"t":"I'm not like the rest of you. I'm too rich and busy for _.","p":1},{"t":"In the seventh circle of Hell, sinners must endure _ for all eternity.","p":1},{"t":"_: Hours of fun. Easy to use. Perfect for _!","p":2},{"t":"What left this stain on my couch?","p":1},{"t":"Call the law offices of Goldstein & Goldstein, because no one should have to tolerate _ in the workplace.","p":1},{"t":"When you get right down to it, _ is just _.","p":2},{"t":"Turns out that _-Man was neither the hero we needed nor wanted.","p":1},{"t":"As part of his daily regimen, Anderson Cooper sets aside 15 minutes for _.","p":1},{"t":"Money can't buy me love, but it can buy me _.","p":1},{"t":"With enough time and pressure, _ will turn into _.","p":2},{"t":"And what did you bring for show and tell?","p":1},{"t":"During high school, I never really fit in until I found _ club.","p":1},{"t":"Hey, baby, come back to my place and I'll show you _.","p":1},{"t":"After months of practice with _, I think I'm finally ready for _.","p":2},{"t":"To prepare for his upcoming role, Daniel Day-Lewis immersed himself in the world of _.","p":1},{"t":"Finally! A service that delivers _ right to your door.","p":1},{"t":"My gym teacher got fired for adding _ to the obstacle course.","p":1},{"t":"Having problems with _? Try _!","p":2},{"t":"As part of his contract, Prince won't perform without _ in his dressing room.","p":1},{"t":"Listen, son. If you want to get involved with _, I won't stop you. Just steer clear of _.","p":2},{"t":"I just met you and this is crazy, but here's _, so _ maybe","p":2},{"t":"It's only _ if you get caught!","p":1},{"t":"_: The Next Generation","p":1},{"t":"Terminator 4: _","p":1},{"t":"Disney presents _ on ice!","p":1},{"t":"_. The other white meat.","p":1},{"t":"A _ a day keeps the _ away.","p":2},{"t":"I'm sweating like a _ at a _.","p":2},{"t":"I love the smell of _ in the morning.","p":1},{"t":"You're not gonna believe this, but _.","p":1},{"t":"_. All the cool kids are doing it.","p":1},{"t":"So I was _ in my cubicle at work, and suddenly _!","p":2},{"t":"Baskin Robbins just added a 32nd flavor: _!","p":1},{"t":"I can drive and ____ at the same time.","p":1},{"t":"_ ain't nothin' to fuck wit'!","p":1}],"white":["Flying sex snakes.","Michelle Obama's arms.","German dungeon porn.","White people.","Getting so angry that you pop a boner.","Tasteful sideboob.","Praying the gay away.","Two midgets shitting into a bucket.","MechaHitler.","Being a motherfucking sorcerer.","A disappointing birthday party.","Puppies!","A windmill full of corpses.","Guys who don't call.","Racially-biased SAT questions.","Dying.","Steven Hawking talking dirty.","Being on fire.","A lifetime of sadness.","An erection that lasts longer than four hours.","AIDS","Same-sex ice dancing.","Glenn Beck catching his scrotum on a curtain hook.","The Rapture.","Pterodactyl eggs.","Crippling debt.","Eugenics.","Exchanging pleasantries.","Dying of dysentery.","Roofies.","Getting naked and watching Nickelodeon.","The forbidden fruit.","Republicans.","The Big Bang.","Anal beads.","Amputees.","Men.","Surprise sex!","Kim Jong-il.","Concealing a boner","Agriculture.","Glenn Beck being harried by a swarm of buzzards.","Making a pouty face.","A salty surprise.","The Jews.","Charisma.","YOU MUST CONSTRUCT ADDITIONAL PYLONS.","Panda sex.","Taking off your shirt.","A drive-by shooting.","Ronald Reagan.","Morgan Freeman's voice.","Breaking out into song and dance.","Jewish fraternities.","Dead babies.","Masturbation.","Hormone injections.","All-you-can-eat shrimp for $4.99.","Incest.","Scalping.","Soup that is too hot.","The &Uuml;bermensch.","Nazis.","Tom Cruise.","Stifling a giggle at the mention of Hutus and Tutsis.","Edible underpants.","The Hustle.","A Super Soaker&trade; full of cat pee.","Figgy pudding.","Object permanence.","Consultants.","Intelligent design.","Nocturnal emissions.","Uppercuts.","Being marginalized.","The profoundly handicapped.","Obesity.","Chutzpah.","Unfathomable stupidity.","Repression.","Attitude.","Passable transvestites.","Party poopers.","The American Dream","Child beauty pageants.","Puberty.","Testicular torsion.","The folly of man.","Nickelback.","Swooping.","Goats eating cans.","The KKK.","Kamikaze pilots.","Horrifying laser hair removal accidents.","Adderall&trade;.","A look-see.","Doing the right thing.","The taint; the grundle; the fleshy fun-bridge.","Lactation.","Pabst Blue Ribbon.","Powerful thighs.","Saxophone solos.","The gays.","A middle-aged man on roller skates.","A foul mouth.","The thing that electrocutes your abs.","Heteronormativity.","Cuddling.","Coat hanger abortions.","A big hoopla about nothing.","Boogers.","A hot mess.","Raptor attacks.","My collection of high-tech sex toys.","Fear itself.","<i>Bees?</i>","Getting drunk on mouthwash.","Sniffing glue.","Oversized lollipops.","An icepick lobotomy.","Being rich.","Friends with benefits.","Teaching a robot to love.","Women's suffrage.","Me time.","The heart of a child.","Smallpox blankets.","The clitoris.","John Wilkes Booth.","The glass ceiling.","Sarah Palin.","Sexy pillow fights.","Yeast.","Full frontal nudity.","Parting the Red Sea.","A Bop It&trade;.","Michael Jackson.","Team-building exercises.","Harry Potter erotica.","Authentic Mexican cuisine.","Frolicking.","Sexting.","Grandma.","Not giving a shit about the Third World.","Licking things to claim them as your own.","Genghis Khan.","The hardworking Mexican.","RoboCop.","My relationship status.","Scrubbing under the folds.","Porn Stars.","Horse meat.","Sunshine and rainbows.","Expecting a burp and vomiting on the floor.","Barack Obama.","Spontaneous human combustion.","Natural selection.","Mouth herpes.","Flash flooding.","Goblins.","A monkey smoking a cigar.","Spectacular abs.","A good sniff.","Wiping her butt.","The Three-Fifths compromise.","Pedophiles.","Doin' it in the butt.","Being fabulous.","Mathletes.","Wearing underwear inside-out to avoid doing laundry.","Nipple blades.","An M. Night Shyamalan plot twist.","A bag of magic beans.","Vigorous jazz hands.","A defective condom.","Skeletor.","Vikings.","Leaving an awkward voicemail.","Teenage pregnancy.","Dead parents.","Hot cheese.","My sex life.","A mopey zoo lion.","Assless chaps.","Riding off into the sunset.","Lance Armstrong's missing testicle.","Sweet, sweet vengeance.","Genital piercings.","Keg stands.","Darth Vader.","Viagra&copy;.","Necrophilia.","A really cool hat.","Toni Morrison's vagina.","An Oedipus complex.","The Tempur-Pedic&copy; Swedish Sleep System&trade;.","Preteens.","Dick fingers.","A cooler full of organs.","Shapeshifters.","The Care Bear Stare.","Erectile dysfunction.","Keanu Reeves.","The Virginia Tech Massacre.","The Underground Railroad.","The chronic.","Queefing.","Heartwarming orphans.","A thermonuclear detonation.","Cheating in the Special Olympics.","Tangled Slinkys.","A moment of silence.","Civilian casualties.","Catapults.","Sharing needles.","Ethnic cleansing.","Emotions.","Children on leashes.","Balls.","Homeless people.","Eating all of the cookies before the AIDS bake-sale.","Old-people smell.","Farting and walking away.","The inevitable heat death of the universe.","The violation of our most basic human rights.","Fingering.","The placenta.","The Rev. Dr. Martin Luther King, Jr.","Leprosy.","Sperm whales.","Multiple stab wounds.","Flightless birds.","Grave robbing.","Home video of Oprah sobbing into a Lean Cuisine&copy;.","Oompa-Loompas.","A murder most foul.","Tentacle porn.","Daddy issues.","Bill Nye the Science Guy.","Peeing a little bit.","The miracle of childbirth.","Tweeting.","Another goddamn vampire movie.","Britney Spears at 55.","New Age music.","The Make-A-Wish&reg; Foundation.","Firing a rifle into the air while balls deep in a squealing hog.","Active listening.","Nicolas Cage.","72 virgins.","Stranger danger.","Hope.","A gassy antelope.","BATMAN!!!","Chivalry.","Passing a kidney stone.","Black people.","Natalie Portman.","A mime having a stroke.","Classist undertones.","Sean Penn.","A mating display.","The Holy Bible.","Hot Pockets&copy;.","A sad handjob.","Pulling out.","Serfdom.","Pixelated bukkake.","Dropping a chandelier on your enemies and riding the rope up.","Jew-fros.","Waiting 'til marriage.","Euphoria&trade; by Calvin Klein.","The World of Warcraft.","Lunchables&trade;.","The Kool-Aid Man.","The Trail of Tears.","Self-loathing.","A falcon with a cap on its head.","Historically black colleges.","Not reciprocating oral sex.","Global warming.","Ghosts.","World peace.","A can of whoop-ass.","The Dance of the Sugar Plum Fairy.","A zesty breakfast burrito.","Switching to Geico&reg;.","Aaron Burr.","Picking up girls at the abortion clinic.","Land mines.","Former President George W. Bush.","Geese.","Mutually-assured destruction.","College.","Date rape.","Bling.","A gentle caress of the inner thigh.","A time travel paradox.","Seppuku.","Poor life choices.","Waking up half-naked in a Denny's parking lot.","Italians.","GoGurt&reg;.","Finger painting.","Robert Downey, Jr.","My soul.","Smegma.","Embryonic stem cells.","The South.","Christopher Walken.","Gloryholes.","Pretending to care.","Public ridicule.","A tiny horse.","Arnold Schwarzenegger.","A stray pube.","Jerking off into a pool of children's tears.","Child abuse.","Glenn Beck convulsively vomiting as a brood of crab spiders hatches in his brain and erupts from his tear ducts.","Menstruation.","A sassy black woman.","Re-gifting.","Penis envy.","A sausage festival.","Getting really high.","Drinking alone.","Too much hair gel.","Hulk Hogan.","Overcompensation.","Foreskin.","Free samples.","Shaquille O'Neal's acting career.","Five-Dollar Footlongs&trade;.","Whipping it out.","A snapping turtle biting the tip of your penis.","Muhammad (Praise Be Unto Him).","Half-assed foreplay.","Dental dams.","Being a dick to children.","Famine.","Chainsaws for hands.","A gypsy curse.","AXE Body Spray.","The Force.","Explosions.","Cybernetic enhancements.","Customer service representatives.","White privilege.","Gandhi.","Road head.","God.","Poorly-timed Holocaust jokes.","8 oz. of sweet Mexican black-tar heroin.","Judge Judy.","The Little Engine That Could.","Altar boys.","Mr. Clean, right behind you.","Vehicular manslaughter.","Dwarf tossing.","Friction.","Lady Gaga.","Scientology.","Justin Bieber.","A death ray.","Vigilante justice.","The Pope.","A sea of troubles.","Alcoholism.","Poor people.","A fetus.","Women in yogurt commercials.","Exactly what you'd expect.","Flesh-eating bacteria.","My genitals.","A balanced breakfast.","Dick Cheney.","Lockjaw.","Natural male enhancement.","Take-backsies.","Winking at old people.","Opposable thumbs.","Flying sex snakes.","Passive-aggressive Post-it notes.","Inappropriate yodeling.","Golden showers.","Racism.","Copping a feel.","Auschwitz.","Elderly Japanese men.","Raping and pillaging.","Kids with ass cancer.","Pictures of boobs.","The homosexual agenda.","A homoerotic volleyball montage.","Sexual tension.","Hurricane Katrina.","Fiery poops.","Science.","Dry heaving.","Cards Against Humanity.","Fancy Feast&copy;.","A bleached asshole.","Lumberjack fantasies.","American Gladiators.","Autocannibalism.","Sean Connery.","William Shatner.","Domino's&trade; Oreo&trade; Dessert Pizza.","An asymmetric boob job.","Centaurs.","A micropenis.","Asians who aren't good at math.","The milk man.","Waterboarding.","Wifely duties.","Loose lips.","The Blood of Christ.","Actually taking candy from a baby.","The token minority.","Jibber-jabber.","A brain tumor.","Bingeing and purging.","A clandestine butt scratch.","The Chinese gymnastics team.","Prancing.","The Hamburglar.","Police brutality.","Man meat.","Forgetting the Alamo.","Eating the last known bison.","Crystal meth.","Booby-trapping the house to foil burglars.","My inner demons.","Third base.","Soiling oneself.","Laying an egg.","Giving 110%.","Hot people.","Friendly fire.","Count Chocula.","Pac-Man uncontrollably guzzling cum.","Estrogen.","My vagina.","Kanye West.","A robust mongoloid.","The Donald Trump Seal of Approval&trade;.","The true meaning of Christmas.","Her Royal Highness, Queen Elizabeth II.","An honest cop with nothing left to lose.","Feeding Rosie O'Donnell.","The Amish.","The terrorists.","When you fart and a little bit comes out.","Pooping back and forth. Forever.","Friends who eat all the snacks.","Cockfights.","Bitches.","Seduction.","A big black dick.","A beached whale.","A bloody pacifier.","A crappy little hand.","A low standard of living.","A nuanced critique.","Panty raids.","A passionate Latino lover.","A rival dojo.","A web of lies.","A woman scorned.","Clams.","Apologizing.","A plunger to the face.","Neil Patrick Harris.","Beating your wives.","Being a dinosaur.","Shaft.","Bosnian chicken farmers.","Nubile slave boys.","Carnies.","Coughing into a vagina.","Suicidal thoughts.","The ooze.","Deflowering the princess.","Dorito breath.","Eating an albino.","Enormous Scandinavian women.","Fabricating statistics.","Finding a skeleton.","Gandalf.","Genetically engineered super-soldiers.","George Clooney's musk.","Getting abducted by Peter Pan.","Getting in her pants, politely.","Gladiatorial combat.","Clenched butt cheeks.","Hipsters.","Historical revisionism.","Insatiable bloodlust.","Jafar.","Jean-Claude Van Damme.","Just the tip.","Mad hacky-sack skills.","Leveling up.","Literally eating shit.","Making the penises kiss.","24-hour media coverage.","Medieval Times&copy; Dinner & Tournament.","Moral ambiguity.","My machete.","One thousand Slim Jims.","Ominous background music.","Overpowering your father.","Stockholm Syndrome.","Quiche.","Quivering jowls.","Revenge fucking.","Ripping into a man's chest and pulling out his still-beating heart.","Ryan Gosling riding in on a white horse.","Santa Claus.","Scrotum tickling.","Sexual humiliation.","Sexy Siamese twins.","Saliva.","Space muffins.","Statistically validated stereotypes.","Sudden Poop Explosion Disease.","The boners of the elderly.","The economy.","Syphilitic insanity.","The Gulags.","The harsh light of day.","The hiccups.","The shambling corpse of Larry King.","The four arms of Vishnu.","Being a busy adult with many important things to do.","Tripping balls.","Words, words, words.","Zeus's sexual appetites.","A bigger, blacker dick.","The mere concept of Applebee's&reg;.","A sad fat dragon with no friends.","Catastrophic urethral trauma.","Hillary Clinton's death stare.","Existing.","A pinata full of scorpions.","Mooing.","Swiftly achieving orgasm.","Daddy's belt.","Double penetration.","Weapons-grade plutonium.","Some really fucked-up shit.","Subduing a grizzly bear and making her your wife.","Rising from the grave.","The mixing of the races.","Taking a man's eyes and balls out and putting his eyes where his balls go and then his balls in the eye holes.","Scrotal frostbite.","All of this blood.","Loki, the trickster god.","Whining like a little bitch.","Pumping out a baby every nine months.","Tongue.","Finding Waldo.","Upgrading homeless people to mobile hotspots.","Wearing an octopus for a hat.","An unhinged ferris wheel rolling toward the sea.","Living in a trashcan.","The corporations.","A magic hippie love cloud.","Fuck Mountain.","Survivor's guilt.","Me.","Getting hilariously gang-banged by the Blue Man Group.","Jeff Goldblum.","Making a friend.","A soulful rendition of &#34;Ol' Man River.&#34;","Intimacy problems.","A sweaty, panting leather daddy.","Spring break!","Being awesome at sex.","Dining with cardboard cutouts of the cast of &#34;Friends.&#34;","Another shot of morphine.","Beefin' over turf.","A squadron of moles wearing aviator goggles.","Bullshit.","The Google.","Pretty Pretty Princess Dress-Up Board Game&#174;.","The new Radiohead album.","An army of skeletons.","A man in yoga pants with a ponytail and feather earrings.","Mild autism.","Nunchuck moves.","Whipping a disobedient slave.","An ether-soaked rag.","A sweet spaceship.","A 55-gallon drum of lube.","Special musical guest, Cher.","The human body.","Boris the Soviet Love Hammer.","The grey nutrient broth that sustains Mitt Romney.","Tiny nipples.","Power.","Oncoming traffic.","A dollop of sour cream.","A slightly shittier parallel universe.","My first kill.","Graphic violence, adult language, and some sexual content.","Fetal alcohol syndrome.","The day the birds attacked.","One Ring to rule them all.","Grandpa's ashes.","Basic human decency.","A Burmese tiger pit.","Death by Steven Seagal","Dragon boobs.","Verisimilitude.","Dissociated mechanics.","Rape.","Storygames.","Random chargen","RPG.net.","Dice inserted somewhere painful.","FATAL.","Ron Edwards' brain damage.","Boob plate armor.","Gamer chicks.","GNS theory.","Drizzt.","The entire Palladium Books&reg; Megaverse&trade;","BadWrongFun.","Misogynerds.","Cultural Marxism.","Pissing on Gary Gygax's grave.","Steve Jackson's beard.","Natural 20.","Rapenards.","The Crisis of Treachery&trade;.","Game balance.","Fishmalks.","A kick to the dicebags.","Bearded dwarven women.","Owlbear's tears.","Magic missile.","THAC0.","Bigby's Groping Hands.","Drow blackface.","Save or die.","Swine.","The Forge.","Healing Surges.","Gelatinous Cubes.","Total Party Kill.","Quoting Monty Python.","Dumbed down shit for ADD WoW babies.","Mike Mearls.","Comeliness.","Vampire: The Masquerade.","Rifts&trade;.","The random prostitute table.","Dildo of Enlightenment +2","Grognards Against Humanity.","Cthulhu.","The naked succubus in the Monster Manual.","Role-playing and roll-playing.","Fun Tyrant.","4rries.","Martial dailies.","Black Tokyo.","Killfuck Soulshitter.","Cheetoism.","Grimdark.","Kobolds.","Oozemaster.","Rocks fall, everyone dies.","Mark Rein&middot;Hagen.","Maid RPG.","Splugorth blind warrior women.","Dying during chargen.","Slaughtering innocent orc children.","Lesbian stripper ninjas.","Magical tea party.","Grinding levels.","Dice animism.","White privilege.","Githyanki therapy.","Amber Diceless Roleplaying.","A ratcatcher with a small but vicious dog.","Bribing the GM with sexual favors.","Eurocentric fantasy.","Sacred cows.","Gygaxian naturalism.","Special snowflakes.","Neckbeards.","Gazebos.","Lorraine Williams.","Nude larping.","Portable holes.","Steampunk bullshit.","Dump stats.","Ale and whores.","Japanese schoolgirl porn.","Horny catgirls.","Japanese people.","Cimo.","ZA WARUDO!","40 gigs of lolicon.","Goku's hair.","Slashfic.","Star Gentle Uterus","Naruto headbands.","Homestuck troll horns.","Hayao Miyazaki.","The tsunami.","Death Note.","Small breasts.","Asians being racist against each other.","Weeaboo bullshit.","Tsundere.","Body pillows.","A lifelike silicone love doll.","Anime figures drenched in jizz.","Surprise sex.","Yaoi.","Girls with glasses.","Bronies.","Blue and white striped panties.","4chan.","Hello Kitty vibrator.","Finishing attack.","Keikaku* *(keikaku means plan).","Hatsune Miku's screams.","School swimsuits.","Lovingly animated bouncing boobs.","Dragon Balls.","Zangief's chest hair.","DeviantArt.","Giant fucking robots.","Crossplay.","Moeblob.","Carl Macek's rotting corpse.","My waifu.","Voice actress Megumi Hayashibara.","Lynn Minmei.","Panty shots.","Love and Justice.","Consensual tentacle rape.","Gundam.","Captain Bright slapping Amuro.","The Wave Undulation Cannon.","Having sex in the P.E. equipment shed.","Tainted sushi.","Shitty eurobeat music.","Bad dubbing.","Fangirls.","Kawaii desu uguu.","Futanari.","Lesbian schoolgirls.","Osamu Tezuka, rolling in his grave forever.","FUNimation.","Underage cosplayers in bondage gear.","Jackie Chan.","Exchanging Pocky for sexual favors.","Shipping.","Chiyo's father.","Magikarp.","Derpy.","Nanoha and her special friend Fate.","The marbles from Ramune bottles.","Wideface.","Spoilers.","Man-Faye.","Oppai mousepads.","Another dimension.","Homura sniffing Madoka's panties.","Hadouken.","Asian ball-jointed dolls.","J-list.","Childhood friends.","Monkey D. Luffy's rubbery cock.","Cloud's giant fucking Buster Swords.","Taking a dump in Char's helmet.","Hentai marathons.","Gothic Lolita.","Onaholes.","Super Saiyan Level 2.","Gaia Online.","Santa's heavy sack.","Clearing a bloody path through Walmart with a scimitar.","Another shitty year.","Whatever Kwanzaa is supposed to be about.","A Christmas stocking full of coleslaw.","Elf cum.","The tiny, calloused hands of the Chinese children that made this card.","Taking down Santa with a surface-to-air missile.","Socks.","Pretending to be happy.","Krampus, the Austrian Christmas monster.","The Star Wars Holiday Special.","My hot cousin.","Mall Santa.","Several intertwining love stories featuring Hugh Grant.","A Hungry-Man&trade; Frozen Christmas Dinner for one.","Gift-wrapping a live hamster.","Space Jam on VHS.","Immaculate conception.","Fucking up 'Silent Night' in front of 300 parents.","A visually arresting turtleneck.","A toxic family environment.","Eating an entire snowman.","Bumpses.","A Vin Gerard H8 X 10.","Harry Acropolis.","Under the ring.","Afa The Wild Samoan.","Peanut Butter and Baby sandwiches.","Yard Tards.","Two girls, one cup.","Ugly Mexican Hookers.","Duct tape.","Sodaj.","Steve The Teacher.","Jefferee.","Autoerotic Asphyxiation.","Sonic The Hedgehog.","Lotto Money.","Jailbait.","Prison rape.","Two And A Half Men.","Anne Frank.","Black Santa.","Jesus Christ (our lord and saviour).","Farting with your armpits.","Poopsicles.","Slaughtering innocent children.","Sex with vegetables.","My gay ex-husband.","Accidentally sexting your mom.","Tabasco in your pee-hole.","Pee Wee Herman.","A breath of fresh air.","A great big floppy donkey dick.","A pyramid scheme.","A school bus surrounded by cop cars.","A short walk in the desert with shovels.","All the boys staring at your chest.","An amorous stallion.","Being so wet it just slides out of you.","Being tarred and feathered.","Catching 'em all.","Chained to the bed and whipped to orgasmic bliss by a leather-clad woman.","Child-bearing hips.","Defenestration.","Dungeons and/or dragons.","Ecco the Dolphin.","George Washington riding on a giant eagle.","Getting abducted and probed by aliens.","Going viral on YouTube.","Gushing.","Making the baby Jesus cry.","More than you can chew.","Napalm.","Pancake bitches.","Playing God with the power of lightning.","Playing tonsil-hockey.","Racing cheese wheels downhill.","Riding the bomb.","Settling arguments with dance-offs.","Sheer spite.","Sinister laughter.","SS Girls.","Stealing your sister's underwear.","Stroking a cat the wrong way.","Sucking and blowing.","The bullet with your name on it.","The entire rest of eternity, spent in fucking Bruges.","The oceans rising to reclaim the land.","A cocained-fuelled sex orgy heart attack.","A cocktail umbrella ","A murder/suicide pact.","A squirming mass of kittens.","An angry mob with torches and pitchforks.","Biting my girlfriend like a vampire during sex.","Dropping your pants and saluting.","Frankenstein's Monster","Getting a blowjob in a theater.","Going full retard.","Going slob-slob-slob all over that knob.","Leaking implants.","Low-flying planes.","Monkies flinging their own shit.","My robot duplicate.","Other people\u2019s children.","People who can't take a joke. Seriously.","Popping a boner during Sex Ed class.","Projectile vomiting.","Pulling down panties with your teeth.","Saying ","Shedding skin like a snake.","Shooting Valley Girls for like, saying like all the time. Really.","Slow seductive tentacle rape.","Talking like a pirate, y\u2019arr!","Tenderly kissing a unicorn's horn.","That bastard Jesus!","The last shreads of dignity.","The power of friendship.","This card intentionally left blank.","Throwing water on a braless woman in a white t-shirt","Upskirts.","Wasting all your money on hookers and booze.","Winning.","A foot fetish.","A powerful gag reflex.","A tight, Asian pussy.","Explosive decompression.","Extraordinary Rendition.","Forgetting the safety word.","Greeting Christmas carollers naked.","Handcuffs, without the key.","Having a drill for a penis.","Hot Jailbait Ass.","Liposuction gone horrible wrong.","My harem of scantily clad women.","Nazi Zombie Robot Ninjas.","Redneck gypsies.","Scissoring.","A guy and two robots who won\u2019t shut up.","A shotgun wedding.","Anne Frank's diary","Autoerotic asphyxiation.","Blow Up Bianca the Latex Lovedoll.","Endlessly tumbling down an up escalator.","Fun with nuns.","Getting it all over the walls.","Holiday Dinner by Jack Daniels.","Nailgun fights.","Teaching the bitch a lesson.","Nazi super science.","Making a human centipede.","The primal, ball-slapping sex your parents are having right now.","A cat video so cute that your eyes roll back and your spine slides out of your anus.","Cock.","A cop who is also a dog.","Dying alone and in pain.","Gay aliens.","The way white people is.","Reverse cowgirl.","The Quesadilla Explosion Salad&trade; from Chili's&copy;.","Actually getting shot, for real.","Not having sex.","Vietnam flashbacks.","Running naked through a mall, pissing and shitting everywhere.","Nothing.","Warm, velvety muppet sex.","Self-flagellation.","The systematic destruction of an entire people and their way of life.","Samuel L. Jackson.","A boo-boo.","Going around punching people.","The entire Internet.","Some kind of bird-man.","Chugging a lava lamp.","Having sex on top of a pizza.","Indescribable loneliness.","An ass disaster.","Shutting the fuck up.","All my friends dying.","Putting an entire peanut butter and jelly sandwich into the VCR.","Spending lots of money.","Some douche with an acoustic guitar.","Flying robots that kill people.","A greased-up Matthew McConaughey.","An unstoppable wave of fire ants.","Not contributing to society in any meaningful way.","An all-midget production of Shakespeare's Richard III.","Screaming like a maniac.","The moist, demanding chasm of his mouth.","Filling every orifice with butterscotch pudding.","Unlimited soup, salad, and breadsticks.","Crying into the pages of Sylvia Plath.","Velcro&trade;.","A PowerPoint presentation.","A surprising amount of hair.","Eating Tom Selleck's mustache to gain his powers.","Roland the Farter, flatulist to the king.","That ass.","A pile of squirming bodies.","Buying the right pants to be cool.","Blood farts.","Three months in the hole.","A botched circumcision.","The Land of Chocolate.","Slapping a racist old lady.","A lamprey swimming up the toilet and latching onto your taint.","Jumping out at people.","A black male in his early 20s, last seen wearing a hoodie.","Mufasa's death scene.","Bill Clinton, naked on a bearskin rug with a saxophone.","Demonic possession.","The Harlem Globetrotters.","Vomiting mid-blowjob.","My manservant, Claude.","Having shotguns for legs.","Letting everyone down.","A spontaneous conga line.","A vagina that leads to another dimension.","Disco fever.","Getting your dick stuck in a Chinese finger trap with another dick.","Fisting.","The thin veneer of situational causality that underlies porn.","Girls that always be textin'.","Blowing some dudes in an alley.","Drinking ten 5-hour ENERGYs&reg; to get fifty continuous hours of energy.","Sneezing, farting, and coming at the same time.","A freshly-filled diaper","Glue","An unusually-attractive transvestite","Hand-me-down adult diapers","A stillborn fetus","A disgraced pelican","Three buckets of urine, free for 2 nights, with no late fee","My testicles","A black woman's vagina","My asshole","A whale's blowhole","2 Girls 1 Cup","The Big Bang Theory (TV)","Teen pregnancy","Ass hair","Vaginal warts","Ellen Degeneres","Jews Against Humanity","Indy wrestling","Cunt","Beating a crowd of delightful parents to death with a steel dildo","Beating a crowd of delightful parents to death with a steel dildo while dressed as Ru Paul's brother, Ron.","A roll in the hay","\"Get 'em, Steve-Dave!\"","God Hates You","Manboobs.","Daniel Benoit","Vomiting in the shower","An intellectually superior overlord","Dwight Schrute","Casey Anthony","Clubbin seals","Stunt cock","Anal lice","Lightsaber Dildos"]};
+
+    // ==================== GAME STATE ====================
+    const state = {
+        peer: null,
+        connections: [],     // host only: array of { conn, name, id }
+        hostConn: null,      // client only: connection to host
+        isHost: false,
+        myName: '',
+        myId: '',
+        gameCode: '',
+        // Game state (authoritative on host)
+        players: [],         // [{ id, name, score }]
+        blackDeck: [],
+        whiteDeck: [],
+        hands: {},           // host: { playerId: [card, ...] }
+        myHand: [],          // client: own hand
+        currentBlack: null,
+        czarIndex: 0,
+        round: 0,
+        submissions: {},     // { playerId: [cards] }
+        scoreLimit: 7,
+        phase: 'lobby',      // lobby, playing, judging, result, gameover
+        selectedCards: [],
+        submissionOrder: [],
+        revealedAuthor: null,
+        nextRoundTimer: null,
+    };
+
+    // ==================== HELPERS ====================
+    function $(id) { return document.getElementById(id); }
+    function show(id) { $(id).classList.add('active'); $(id).classList.remove('hidden'); }
+    function hide(id) { $(id).classList.remove('active'); $(id).classList.add('hidden'); }
+
+    function showScreen(name) {
+        document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+        $('screen-' + name).classList.add('active');
+    }
+
+    function toast(msg) {
+        const t = $('toast');
+        t.textContent = msg;
+        t.classList.add('show');
+        setTimeout(() => t.classList.remove('show'), 3000);
+    }
+
+    function log(msg) {
+        $('connection-log').classList.remove('hidden');
+        const l = $('log');
+        const d = document.createElement('div');
+        d.className = 'log-entry';
+        d.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+        l.appendChild(d);
+        l.scrollTop = l.scrollHeight;
+    }
+
+    function generateCode() {
+        const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+        let code = '';
+        for (let i = 0; i < 5; i++) code += chars[Math.floor(Math.random() * chars.length)];
+        return code;
+    }
+
+    function shuffle(arr) {
+        const a = [...arr];
+        for (let i = a.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [a[i], a[j]] = [a[j], a[i]];
+        }
+        return a;
+    }
+
+    function formatBlackCard(text) {
+        return text.replace(/_+/g, '<span style="border-bottom: 2px solid #fff; padding: 0 0.5rem;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>');
+    }
+
+    // ==================== PEER SETUP ====================
+    function initPeer(id) {
+        return new Promise((resolve, reject) => {
+            const peerId = id ? `cah-${id}` : undefined;
+            const peer = new Peer(peerId, {
+                debug: 0,
+            });
+
+            peer.on('open', (id) => {
+                state.myId = id;
+                log('Connected to signaling server: ' + id);
+                resolve(peer);
+            });
+
+            peer.on('error', (err) => {
+                log('Peer error: ' + err.type + ' - ' + err.message);
+                if (err.type === 'unavailable-id') {
+                    reject(new Error('Game code already in use, try again'));
+                } else if (err.type === 'peer-unavailable') {
+                    reject(new Error('Game not found. Check the code and try again.'));
+                } else {
+                    reject(err);
+                }
+            });
+
+            state.peer = peer;
+        });
+    }
+
+    // ==================== HOST LOGIC ====================
+    async function createGame() {
+        const name = $('player-name').value.trim();
+        if (!name) { toast('Enter your name first'); return; }
+
+        state.myName = name;
+        state.isHost = true;
+        state.scoreLimit = Math.max(1, Math.min(20, parseInt($('score-limit').value) || 7));
+        state.gameCode = generateCode();
+
+        try {
+            $('btn-create').disabled = true;
+            log('Creating game ' + state.gameCode + '...');
+            await initPeer(state.gameCode);
+
+            state.peer.on('connection', handleNewConnection);
+
+            state.players = [{ id: state.myId, name: state.myName, score: 0 }];
+            $('display-code').textContent = state.gameCode;
+            showScreen('waiting');
+            renderWaitingPlayers();
+        } catch (e) {
+            toast(e.message);
+            $('btn-create').disabled = false;
+            if (state.peer) { state.peer.destroy(); state.peer = null; }
+        }
+    }
+
+    function handleNewConnection(conn) {
+        conn.on('open', () => {
+            log('Player connecting: ' + conn.peer);
+
+            conn.on('data', (data) => {
+                handleHostMessage(conn, data);
+            });
+
+            conn.on('close', () => {
+                handlePlayerDisconnect(conn);
+            });
+        });
+    }
+
+    function handleHostMessage(conn, data) {
+        switch (data.type) {
+            case 'join': {
+                const player = { id: conn.peer, name: data.name, score: 0 };
+                state.connections.push({ conn, name: data.name, id: conn.peer });
+                state.players.push(player);
+                log(data.name + ' joined');
+
+                // Send full state
+                conn.send({ type: 'joined', players: state.players, scoreLimit: state.scoreLimit });
+
+                // Broadcast to all
+                broadcast({ type: 'player-list', players: state.players });
+                renderWaitingPlayers();
+
+                if (state.phase !== 'lobby') {
+                    // Late join during game — deal hand and sync
+                    const hand = dealHand(10);
+                    state.hands[conn.peer] = hand;
+                    conn.send({ type: 'game-start', hand, black: state.currentBlack, czarId: state.players[state.czarIndex].id, round: state.round, phase: state.phase });
+                }
+                break;
+            }
+            case 'submit': {
+                if (state.submissions[conn.peer]) break;
+                state.submissions[conn.peer] = data.cards;
+
+                // Remove played cards from player's hand on host
+                if (state.hands[conn.peer]) {
+                    state.hands[conn.peer] = state.hands[conn.peer].filter(c => !data.cards.includes(c));
+                }
+
+                const needed = state.players.length - 1; // everyone except czar
+                const got = Object.keys(state.submissions).length;
+
+                broadcast({ type: 'submit-count', count: got, needed });
+
+                if (got >= needed) {
+                    startJudging();
+                }
+                break;
+            }
+            case 'pick-winner': {
+                const czar = state.players[state.czarIndex];
+                if (conn.peer !== czar.id) break;
+                const winnerId = data.playerId || state.submissionOrder[data.index];
+                if (winnerId) announceWinner(winnerId);
+                break;
+            }
+            case 'next-round': {
+                nextRound();
+                break;
+            }
+        }
+    }
+
+    function handlePlayerDisconnect(conn) {
+        const idx = state.connections.findIndex(c => c.id === conn.peer);
+        if (idx !== -1) {
+            const name = state.connections[idx].name;
+            state.connections.splice(idx, 1);
+            state.players = state.players.filter(p => p.id !== conn.peer);
+            delete state.hands[conn.peer];
+            delete state.submissions[conn.peer];
+            log(name + ' disconnected');
+            broadcast({ type: 'player-list', players: state.players });
+            renderWaitingPlayers();
+            renderGamePlayers();
+        }
+    }
+
+    function broadcast(data, excludeId) {
+        state.connections.forEach(c => {
+            if (c.id !== excludeId) {
+                try { c.conn.send(data); } catch (e) {}
+            }
+        });
+    }
+
+    function dealHand(count) {
+        const hand = [];
+        for (let i = 0; i < count; i++) {
+            if (state.whiteDeck.length === 0) {
+                state.whiteDeck = shuffle(CARD_DATA.white);
+            }
+            hand.push(state.whiteDeck.pop());
+        }
+        return hand;
+    }
+
+    function drawBlack() {
+        if (state.blackDeck.length === 0) {
+            state.blackDeck = shuffle(CARD_DATA.black);
+        }
+        return state.blackDeck.pop();
+    }
+
+    function startGame() {
+        if (state.players.length < 3) { toast('Need at least 3 players'); return; }
+
+        state.blackDeck = shuffle(CARD_DATA.black);
+        state.whiteDeck = shuffle(CARD_DATA.white);
+        state.czarIndex = 0;
+        state.round = 0;
+        state.players.forEach(p => p.score = 0);
+
+        // Deal hands
+        state.hands = {};
+        state.hands[state.myId] = dealHand(10);
+        state.myHand = state.hands[state.myId];
+
+        state.connections.forEach(c => {
+            const hand = dealHand(10);
+            state.hands[c.id] = hand;
+            c.conn.send({ type: 'game-start', hand, black: null, czarId: null, round: 0 });
+        });
+
+        nextRound();
+    }
+
+    function nextRound() {
+        if (state.nextRoundTimer) { clearTimeout(state.nextRoundTimer); state.nextRoundTimer = null; }
+
+        state.round++;
+        if (state.round > 1) {
+            state.czarIndex = (state.czarIndex + 1) % state.players.length;
+        }
+        state.submissions = {};
+        state.currentBlack = drawBlack();
+        state.phase = 'playing';
+        state.selectedCards = [];
+
+        const czarId = state.players[state.czarIndex].id;
+
+        // Replenish hands
+        const pick = state.currentBlack.p || 1;
+        state.players.forEach(p => {
+            if (p.id === czarId) return;
+            const hand = state.hands[p.id] || [];
+            const need = 10 - hand.length;
+            for (let i = 0; i < need; i++) {
+                hand.push(dealHand(1)[0]);
+            }
+            state.hands[p.id] = hand;
+        });
+
+        state.myHand = state.hands[state.myId] || [];
+
+        // Send round info to all clients
+        state.connections.forEach(c => {
+            c.conn.send({
+                type: 'new-round',
+                black: state.currentBlack,
+                czarId,
+                round: state.round,
+                hand: state.hands[c.id] || [],
+                players: state.players,
+            });
+        });
+
+        // Update host UI
+        showScreen('game');
+        renderRound();
+    }
+
+    function startJudging() {
+        state.phase = 'judging';
+
+        // Shuffle submission order for anonymity
+        const playerIds = Object.keys(state.submissions);
+        state.submissionOrder = shuffle(playerIds);
+
+        broadcast({ type: 'judging', submissions: state.submissionOrder.map(id => ({ cards: state.submissions[id] })) });
+
+        renderRound();
+    }
+
+    function announceWinner(winnerId) {
+        const winner = state.players.find(p => p.id === winnerId);
+        if (!winner) return;
+
+        winner.score++;
+        state.phase = 'result';
+        state.revealedAuthor = { id: winnerId, name: winner.name, cards: state.submissions[winnerId] };
+
+        const winData = {
+            type: 'round-winner',
+            winnerId,
+            winnerName: winner.name,
+            winningCards: state.submissions[winnerId],
+            players: state.players,
+        };
+
+        if (winner.score >= state.scoreLimit) {
+            winData.gameOver = true;
+        }
+
+        broadcast(winData);
+        renderRound();
+
+        if (winner.score >= state.scoreLimit) {
+            state.phase = 'gameover';
+            setTimeout(() => {
+                broadcast({ type: 'game-over', players: state.players, winnerName: winner.name });
+                showGameOver(winner.name);
+            }, 4000);
+        }
+    }
+
+    // ==================== CLIENT LOGIC ====================
+    async function joinGame() {
+        const name = $('player-name').value.trim();
+        const code = $('join-code').value.trim().toUpperCase();
+        if (!name) { toast('Enter your name first'); return; }
+        if (!code) { toast('Enter a game code'); return; }
+
+        state.myName = name;
+        state.gameCode = code;
+        state.isHost = false;
+
+        try {
+            $('btn-join').disabled = true;
+            log('Connecting to game ' + code + '...');
+            await initPeer();
+
+            const conn = state.peer.connect('cah-' + code, { reliable: true });
+            state.hostConn = conn;
+
+            conn.on('open', () => {
+                log('Connected to host');
+                conn.send({ type: 'join', name: state.myName });
+            });
+
+            conn.on('data', (data) => {
+                handleClientMessage(data);
+            });
+
+            conn.on('close', () => {
+                log('Disconnected from host');
+                toast('Disconnected from game');
+                showScreen('lobby');
+                $('btn-join').disabled = false;
+            });
+
+            conn.on('error', (err) => {
+                log('Connection error: ' + err);
+                toast('Connection failed');
+                $('btn-join').disabled = false;
+            });
+        } catch (e) {
+            toast(e.message);
+            $('btn-join').disabled = false;
+            if (state.peer) { state.peer.destroy(); state.peer = null; }
+        }
+    }
+
+    function handleClientMessage(data) {
+        switch (data.type) {
+            case 'joined':
+                state.players = data.players;
+                state.scoreLimit = data.scoreLimit;
+                state.myId = state.peer.id;
+                showScreen('waiting');
+                $('display-code').textContent = state.gameCode;
+                renderWaitingPlayers();
+                break;
+
+            case 'player-list':
+                state.players = data.players;
+                renderWaitingPlayers();
+                renderGamePlayers();
+                break;
+
+            case 'game-start':
+                state.myHand = data.hand;
+                if (data.phase && data.phase !== 'lobby') {
+                    state.currentBlack = data.black;
+                    state.round = data.round;
+                    showScreen('game');
+                    renderRound();
+                }
+                break;
+
+            case 'new-round':
+                state.currentBlack = data.black;
+                state.round = data.round;
+                state.myHand = data.hand;
+                state.players = data.players;
+                state.phase = 'playing';
+                state.selectedCards = [];
+                state.submissions = {};
+                const czarId = data.czarId;
+                state.czarIndex = state.players.findIndex(p => p.id === czarId);
+                showScreen('game');
+                renderRound();
+                break;
+
+            case 'submit-count':
+                $('submitted-count').textContent = `${data.count} / ${data.needed} submitted`;
+                break;
+
+            case 'judging':
+                state.phase = 'judging';
+                state.submissionOrder = data.submissions;
+                renderRound();
+                break;
+
+            case 'round-winner':
+                state.phase = 'result';
+                state.players = data.players;
+                state.revealedAuthor = { name: data.winnerName, cards: data.winningCards, id: data.winnerId };
+                renderRound();
+                if (data.gameOver) {
+                    setTimeout(() => showGameOver(data.winnerName), 4000);
+                }
+                break;
+
+            case 'game-over':
+                state.players = data.players;
+                showGameOver(data.winnerName);
+                break;
+        }
+    }
+
+    function sendToHost(data) {
+        if (state.isHost) {
+            // Host handles locally
+            handleHostMessage({ peer: state.myId }, data);
+        } else if (state.hostConn) {
+            state.hostConn.send(data);
+        }
+    }
+
+    // ==================== RENDERING ====================
+    function renderWaitingPlayers() {
+        const el = $('waiting-players');
+        el.innerHTML = state.players.map(p =>
+            `<span class="player-tag">${p.name}${p.id === state.myId ? ' (you)' : ''}</span>`
+        ).join('');
+
+        if (state.isHost) {
+            $('btn-start').disabled = state.players.length < 3;
+            $('btn-start').textContent = state.players.length < 3
+                ? `Start Game (need ${3 - state.players.length} more)`
+                : `Start Game (${state.players.length} players)`;
+            $('host-controls').classList.remove('hidden');
+        } else {
+            $('host-controls').classList.add('hidden');
+        }
+    }
+
+    function renderGamePlayers() {
+        const el = $('game-players');
+        if (!el) return;
+        const czarId = state.players[state.czarIndex]?.id;
+        el.innerHTML = state.players.map(p => {
+            const isCzar = p.id === czarId;
+            const isMe = p.id === state.myId;
+            return `<span class="player-tag${isCzar ? ' is-czar' : ''}">
+                ${isCzar ? '<span class="crown">&#9813;</span>' : ''}
+                ${p.name}${isMe ? ' (you)' : ''}
+                <span class="score">${p.score}</span>
+            </span>`;
+        }).join('');
+    }
+
+    function renderRound() {
+        const czar = state.players[state.czarIndex];
+        if (!czar) return;
+        const isCzar = czar.id === state.myId;
+
+        renderGamePlayers();
+        $('round-info').textContent = `Round ${state.round} · First to ${state.scoreLimit}`;
+
+        // Black card
+        if (state.currentBlack) {
+            const pick = state.currentBlack.p || 1;
+            $('black-card').innerHTML = formatBlackCard(state.currentBlack.t) +
+                (pick > 1 ? `<span class="pick-badge">PICK ${pick}</span>` : '');
+        }
+
+        // Phase-specific rendering
+        $('hand-section').classList.add('hidden');
+        $('waiting-section').classList.add('hidden');
+        $('judging-section').classList.add('hidden');
+        $('result-section').classList.add('hidden');
+
+        if (state.phase === 'playing') {
+            if (isCzar) {
+                $('game-status').textContent = "You're the Card Czar. Wait for submissions...";
+                $('waiting-section').classList.remove('hidden');
+                $('submitted-count').textContent = '';
+            } else {
+                const pick = state.currentBlack?.p || 1;
+                $('game-status').textContent = `Pick ${pick} card${pick > 1 ? 's' : ''} to play`;
+                $('pick-hint').textContent = `— select ${pick}`;
+                $('hand-section').classList.remove('hidden');
+                renderHand();
+            }
+        } else if (state.phase === 'judging') {
+            if (isCzar) {
+                $('game-status').textContent = 'Pick the funniest answer!';
+                $('judging-section').classList.remove('hidden');
+                renderSubmissionsForCzar();
+            } else {
+                $('game-status').textContent = 'The Card Czar is choosing...';
+                $('judging-section').classList.remove('hidden');
+                renderSubmissionsForPlayer();
+            }
+        } else if (state.phase === 'result') {
+            renderResult();
+        }
+    }
+
+    function renderHand() {
+        const el = $('hand');
+        const pick = state.currentBlack?.p || 1;
+        const alreadySubmitted = state.isHost ? !!state.submissions[state.myId] : false;
+
+        el.innerHTML = state.myHand.map((card, i) => {
+            const selIdx = state.selectedCards.indexOf(i);
+            const isSelected = selIdx !== -1;
+            return `<div class="white-card${isSelected ? ' selected' : ''}${alreadySubmitted ? ' disabled' : ''}"
+                         data-index="${i}" data-order="${selIdx + 1}"
+                         onclick="selectCard(${i})">${card}</div>`;
+        }).join('');
+
+        $('btn-submit').disabled = state.selectedCards.length !== pick || alreadySubmitted;
+    }
+
+    function selectCard(index) {
+        const pick = state.currentBlack?.p || 1;
+        const pos = state.selectedCards.indexOf(index);
+        if (pos !== -1) {
+            state.selectedCards.splice(pos, 1);
+        } else if (state.selectedCards.length < pick) {
+            state.selectedCards.push(index);
+        }
+        renderHand();
+    }
+
+    function submitCards() {
+        const cards = state.selectedCards.map(i => state.myHand[i]);
+        sendToHost({ type: 'submit', cards });
+
+        // Remove from hand locally
+        state.myHand = state.myHand.filter((_, i) => !state.selectedCards.includes(i));
+        state.selectedCards = [];
+
+        // Show waiting
+        $('hand-section').classList.add('hidden');
+        $('waiting-section').classList.remove('hidden');
+        $('game-status').textContent = 'Cards submitted! Waiting for others...';
+        toast('Cards submitted!');
+    }
+
+    function renderSubmissionsForCzar() {
+        const el = $('submissions');
+        let subs;
+        if (state.isHost) {
+            subs = state.submissionOrder.map(id => ({ cards: state.submissions[id], id }));
+        } else {
+            subs = state.submissionOrder;
+        }
+
+        el.innerHTML = subs.map((sub, i) => {
+            const cards = sub.cards || sub;
+            const cardsArr = Array.isArray(cards) ? cards : [cards];
+            return `<div class="submission-group" data-idx="${i}" onclick="selectSubmission(${i})">
+                ${cardsArr.map(c => `<div class="sub-card">${c}</div>`).join('')}
+            </div>`;
+        }).join('');
+
+        $('btn-pick-winner').classList.add('hidden');
+    }
+
+    function renderSubmissionsForPlayer() {
+        const el = $('submissions');
+        const subs = state.isHost
+            ? state.submissionOrder.map(id => ({ cards: state.submissions[id] }))
+            : state.submissionOrder;
+
+        el.innerHTML = subs.map((sub) => {
+            const cards = sub.cards || sub;
+            const cardsArr = Array.isArray(cards) ? cards : [cards];
+            return `<div class="submission-group">
+                ${cardsArr.map(c => `<div class="sub-card">${c}</div>`).join('')}
+            </div>`;
+        }).join('');
+    }
+
+    let selectedSubmission = -1;
+
+    function selectSubmission(idx) {
+        const czar = state.players[state.czarIndex];
+        if (czar.id !== state.myId) return;
+
+        selectedSubmission = idx;
+        document.querySelectorAll('.submission-group').forEach((el, i) => {
+            el.style.borderColor = i === idx ? 'var(--color-accent)' : '';
+        });
+        $('btn-pick-winner').classList.remove('hidden');
+    }
+
+    function pickWinner() {
+        if (selectedSubmission < 0) return;
+
+        if (state.isHost) {
+            const winnerId = state.submissionOrder[selectedSubmission];
+            announceWinner(winnerId);
+        } else {
+            // Client czar sends index, host resolves via submissionOrder
+            state.hostConn.send({ type: 'pick-winner', index: selectedSubmission });
+        }
+    }
+
+    function renderResult() {
+        $('result-section').classList.remove('hidden');
+        $('judging-section').classList.add('hidden');
+        $('game-status').textContent = 'Round over!';
+
+        const winnerName = state.revealedAuthor?.name || 'Someone';
+        const winnerCards = state.revealedAuthor?.cards || [];
+
+        $('result-title').textContent = `${winnerName} wins this round!`;
+        $('result-cards').innerHTML = (Array.isArray(winnerCards) ? winnerCards : [winnerCards])
+            .map(c => `<div class="sub-card" style="background: var(--color-white-card); color: var(--color-white-card-text); border-radius: 8px; padding: 0.75rem; margin: 0.5rem 0; font-weight: 500;">${c}</div>`)
+            .join('');
+
+        // Host or czar can trigger next round
+        const czar = state.players[state.czarIndex];
+        const isCzar = czar?.id === state.myId;
+        $('btn-next-round').classList.toggle('hidden', !isCzar && !state.isHost);
+    }
+
+    function triggerNextRound() {
+        if (state.isHost) {
+            nextRound();
+        } else {
+            state.hostConn.send({ type: 'next-round' });
+        }
+    }
+
+    function showGameOver(winnerName) {
+        showScreen('gameover');
+        $('gameover-title').textContent = `${winnerName} wins the game!`;
+        $('gameover-subtitle').textContent = `First to ${state.scoreLimit} points`;
+
+        const sorted = [...state.players].sort((a, b) => b.score - a.score);
+        $('final-scores').innerHTML = sorted.map((p, i) =>
+            `<span class="player-tag${i === 0 ? ' is-czar' : ''}">
+                ${i === 0 ? '&#127942; ' : ''}${p.name}
+                <span class="score">${p.score}</span>
+            </span>`
+        ).join('');
+    }
+
+    // ==================== EVENT HANDLERS ====================
+    $('btn-create').addEventListener('click', createGame);
+    $('btn-join').addEventListener('click', joinGame);
+    $('btn-start').addEventListener('click', startGame);
+    $('btn-submit').addEventListener('click', submitCards);
+    $('btn-pick-winner').addEventListener('click', pickWinner);
+    $('btn-next-round').addEventListener('click', triggerNextRound);
+    $('btn-new-game').addEventListener('click', () => location.reload());
+
+    $('btn-copy-code').addEventListener('click', () => {
+        navigator.clipboard.writeText(state.gameCode).then(() => toast('Code copied!'));
+    });
+
+    $('player-name').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') $('btn-create').click();
+    });
+
+    $('join-code').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') $('btn-join').click();
+    });
+
+    </script>
+</body>
+</html>

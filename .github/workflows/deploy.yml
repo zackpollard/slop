@@ -162,6 +162,9 @@ jobs:
           - name: texas-holdem
             pages-project: slop-texas-holdem
             directory: projects/texas-holdem
+          - name: cards-against-humanity
+            pages-project: slop-cards-against-humanity
+            directory: projects/cards-against-humanity
     steps:
       - name: Checkout
         uses: actions/checkout@v4
