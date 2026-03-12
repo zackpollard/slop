@@ -9,6 +9,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
     <script src="lib/slopnet.js"></script>
+    <script src="lib/sloplobby.js"></script>
     <link rel="stylesheet" href="lib/slop-theme.css">
     <style>
         /* Game-specific styles — base theme loaded from lib/slop-theme.css */
@@ -908,6 +909,8 @@
 
     <script>
     (function() {
+        const { esc } = SlopLobby;
+
         // =====================================================================
         // STATE
         // =====================================================================
@@ -920,8 +923,7 @@
 
         // Multiplayer state
         let gameMode = 'single'; // 'single' | 'host' | 'peer'
-        let host = null;   // SlopNet.PeerHost instance (host mode)
-        let client = null;  // SlopNet.PeerClient instance (peer mode)
+        let lobby = null;  // SlopLobby instance
         let roomCode = '';
         let myName = '';
         let lobbyPlayers = []; // [{name, isHost, clientId}]
@@ -930,8 +932,6 @@
         let hostEditingPlayers = new Set(); // host manually editing these remote players
         let disconnectedPlayers = new Set(); // players currently disconnected
         let localPlayers = new Set(); // players added locally by host (no device)
-        // Map clientId -> { name, ... } for host to track remote players
-        let clientMap = {};
 
         const NUMBER_CARDS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
         const MODIFIER_CARDS = ['+2', '+4', '+6', '+8', '+10'];
@@ -1000,12 +1000,6 @@
         // =====================================================================
         function nameToId(name) {
             return name.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
-        }
-
-        function esc(str) {
-            const div = document.createElement('div');
-            div.textContent = str;
-            return div.innerHTML;
         }
 
         // Room code generation is handled by SlopNet
@@ -1122,126 +1116,86 @@
             hostConnecting.classList.remove('hidden');
             hostReady.classList.add('hidden');
 
-            host = new SlopNet.PeerHost({ roomPrefix: 'flip7-' });
+            lobby = new SlopLobby.SlopLobby({
+                roomPrefix: 'flip7-',
+                storageKey: 'flip7-client-id',
+                onHostData: (clientId, data) => {
+                    if (data.type === 'score-submit' && gameStarted) {
+                        handleScoreSubmission(data.playerName, data.scoreData);
+                    }
+                },
+                onPlayerJoined: (clientId, metadata) => {
+                    const name = (metadata && metadata.name || '').trim().substring(0, 20);
+                    if (!name) return 'Name is required';
 
-            // --- SlopNet events ---
-            host.on('client-joined', (clientId, metadata) => {
-                const name = (metadata.name || '').trim().substring(0, 20);
-                if (!name) return;
-
-                // Block new players after game has started
-                if (gameStarted) {
-                    host.send(clientId, { type: 'join-error', message: 'Game already in progress. You can only rejoin with your original name.' });
-                    host.removeClient(clientId);
-                    return;
-                }
-
-                // Check for duplicate names in lobby
-                const allNames = lobbyPlayers.map(p => p.name);
-                if (myName) allNames.push(myName);
-                if (allNames.includes(name)) {
-                    host.send(clientId, { type: 'join-error', message: 'Name already taken' });
-                    host.removeClient(clientId);
-                    return;
-                }
-
-                clientMap[clientId] = { name };
-                lobbyPlayers.push({ name, isHost: false, clientId });
-
-                host.send(clientId, { type: 'join-ok' });
-                broadcastLobbyUpdate();
-                renderHostLobby();
-                updateHostStartBtn();
-            });
-
-            host.on('client-rejoined', (clientId, metadata) => {
-                const name = (metadata.name || '').trim().substring(0, 20);
-                if (!name) return;
-
-                if (gameStarted && players.includes(name) && name !== myName) {
-                    clientMap[clientId] = { name };
-                    disconnectedPlayers.delete(name);
-
-                    // Update lobby player entry
-                    const lobbyEntry = lobbyPlayers.find(p => p.name === name);
-                    if (lobbyEntry) {
-                        lobbyEntry.clientId = clientId;
+                    // Block new players after game has started
+                    if (gameStarted) {
+                        return 'Game already in progress. You can only rejoin with your original name.';
                     }
 
-                    // Send rejoin-ok with current game state
-                    host.send(clientId, {
-                        type: 'rejoin-ok',
-                        players: players,
-                        rounds: rounds,
-                        currentRound: currentRound,
-                        gameOver: gameOver
-                    });
+                    // Check for duplicate names in lobby
+                    const allNames = lobbyPlayers.map(p => p.name);
+                    if (myName) allNames.push(myName);
+                    if (allNames.includes(name)) {
+                        return 'Name already taken';
+                    }
 
-                    // If host was manually editing this player, stop
-                    hostEditingPlayers.delete(name);
+                    // Accept — SlopLobby adds to lobby.players automatically
+                    lobbyPlayers.push({ name, isHost: false, clientId });
 
-                    updateMpPlayerCount();
-                    renderGame();
-                }
-            });
-
-            host.on('client-left', (clientId, metadata) => {
-                const info = clientMap[clientId];
-                if (!info) return;
-
-                if (!gameStarted) {
-                    lobbyPlayers = lobbyPlayers.filter(p => p.clientId !== clientId);
-                    delete clientMap[clientId];
+                    lobby.send(clientId, { type: 'join-ok' });
                     broadcastLobbyUpdate();
                     renderHostLobby();
                     updateHostStartBtn();
-                } else {
-                    // During game, mark as disconnected but keep player
-                    disconnectedPlayers.add(info.name);
-                    updateMpPlayerCount();
-                    renderGame();
-                }
-            });
+                },
+                onPlayerRejoined: (clientId, metadata) => {
+                    const name = (metadata && metadata.name || '').trim().substring(0, 20);
+                    if (!name) return;
 
-            host.on('data', (clientId, data) => {
-                if (data.type === 'score-submit' && gameStarted) {
-                    handleScoreSubmission(data.playerName, data.scoreData);
-                }
-            });
+                    if (gameStarted && players.includes(name) && name !== myName) {
+                        disconnectedPlayers.delete(name);
 
-            host.on('reconnecting', (attempt, max) => {
-                // Mark all remote peers as disconnected
-                for (const [cid, info] of Object.entries(clientMap)) {
-                    disconnectedPlayers.add(info.name);
-                }
-                mpConnectionDot.classList.remove('connected');
-                mpConnectionDot.classList.add('error');
-                updateMpPlayerCount();
-                renderGame();
-                showReconnectBanner('host');
-                updateReconnectBanner(attempt, max);
-            });
+                        // Update lobby player entry
+                        const lobbyEntry = lobbyPlayers.find(p => p.name === name);
+                        if (lobbyEntry) {
+                            lobbyEntry.clientId = clientId;
+                        }
 
-            host.on('reconnected', () => {
-                hideReconnectBanner();
-                mpConnectionDot.classList.remove('error');
-                mpConnectionDot.classList.add('connected');
-                updateMpPlayerCount();
-            });
+                        // Send rejoin-ok with current game state
+                        lobby.send(clientId, {
+                            type: 'rejoin-ok',
+                            players: players,
+                            rounds: rounds,
+                            currentRound: currentRound,
+                            gameOver: gameOver
+                        });
 
-            host.on('reconnect-failed', () => {
-                showReconnectFailed('host');
-            });
+                        // If host was manually editing this player, stop
+                        hostEditingPlayers.delete(name);
 
-            host.on('error', (err) => {
-                console.error('Host error:', err);
-                if (!gameStarted) {
-                    hostConnecting.innerHTML = `<span class="connection-dot error"></span><span>Failed to create room. Please try again.</span>`;
-                }
+                        updateMpPlayerCount();
+                        renderGame();
+                    }
+                },
+                onPlayerLeft: (clientId, meta) => {
+                    if (!meta) return;
+
+                    if (!gameStarted) {
+                        lobbyPlayers = lobbyPlayers.filter(p => p.clientId !== clientId);
+                        broadcastLobbyUpdate();
+                        renderHostLobby();
+                        updateHostStartBtn();
+                    } else {
+                        // During game, mark as disconnected but keep player
+                        disconnectedPlayers.add(meta.name);
+                        updateMpPlayerCount();
+                        renderGame();
+                    }
+                },
             });
 
             try {
-                roomCode = await host.start();
+                roomCode = await lobby.createRoom(myName || '_pending_');
                 hostConnecting.classList.add('hidden');
                 hostReady.classList.remove('hidden');
                 roomCodeDisplay.textContent = roomCode;
@@ -1259,14 +1213,14 @@
             if (myName) playerList.push({ name: myName, isHost: true });
             lobbyPlayers.forEach(p => playerList.push({ name: p.name, isHost: false }));
 
-            if (host) {
-                host.broadcast({ type: 'lobby-update', players: playerList });
+            if (lobby) {
+                lobby.broadcast({ type: 'lobby-update', players: playerList });
             }
         }
 
         function broadcastToAll(data) {
-            if (host) {
-                host.broadcast(data);
+            if (lobby) {
+                lobby.broadcast(data);
             }
         }
 
@@ -1431,48 +1385,36 @@
             joinForm.classList.add('hidden');
             joinConnecting.classList.remove('hidden');
 
-            client = new SlopNet.PeerClient({ roomPrefix: 'flip7-' });
-            const clientId = sessionStorage.getItem('flip7-client-id') || ('p' + Date.now() + Math.random().toString(36).slice(2, 5));
-            sessionStorage.setItem('flip7-client-id', clientId);
-
-            // --- SlopNet client events ---
-            client.on('data', (data) => {
-                handlePeerMessage(data);
-            });
-
-            client.on('disconnected', () => {
-                if (gameStarted) {
-                    mpConnectionDot.classList.remove('connected');
-                    mpConnectionDot.classList.add('error');
-                    showReconnectBanner('peer');
-                } else {
-                    showJoinError('Disconnected from host.');
-                    joinConnecting.classList.add('hidden');
-                    joinWaiting.classList.add('hidden');
-                    joinForm.classList.remove('hidden');
-                }
-            });
-
-            client.on('reconnecting', (attempt, max) => {
-                updateReconnectBanner(attempt, max);
-            });
-
-            client.on('reconnected', () => {
-                hideReconnectBanner();
-                mpConnectionDot.classList.remove('error');
-                mpConnectionDot.classList.add('connected');
-            });
-
-            client.on('reconnect-failed', () => {
-                showReconnectFailed('peer');
-            });
-
-            client.on('error', (err) => {
-                console.error('Client error:', err);
+            lobby = new SlopLobby.SlopLobby({
+                roomPrefix: 'flip7-',
+                storageKey: 'flip7-client-id',
+                onClientData: (data) => {
+                    handlePeerMessage(data);
+                },
+                onStateChange: (status) => {
+                    if (status === 'disconnected') {
+                        if (gameStarted) {
+                            mpConnectionDot.classList.remove('connected');
+                            mpConnectionDot.classList.add('error');
+                            showReconnectBanner('peer');
+                        } else {
+                            showJoinError('Disconnected from host.');
+                            joinConnecting.classList.add('hidden');
+                            joinWaiting.classList.add('hidden');
+                            joinForm.classList.remove('hidden');
+                        }
+                    } else if (status === 'reconnected') {
+                        hideReconnectBanner();
+                        mpConnectionDot.classList.remove('error');
+                        mpConnectionDot.classList.add('connected');
+                    } else if (status === 'reconnect-failed') {
+                        showReconnectFailed('peer');
+                    }
+                },
             });
 
             try {
-                await client.connect(roomCode, clientId, { name: myName });
+                await lobby.joinRoom(roomCode, myName);
                 // Connection established, wait for join-ok/join-error from host via 'data' event
             } catch (err) {
                 console.error('Join error:', err);
@@ -1539,12 +1481,12 @@
         }
 
         window._retryReconnect = function() {
-            if (gameMode === 'host' && host) {
+            if (gameMode === 'host' && lobby) {
                 // SlopNet handles reconnection internally; we can't easily reset it
                 // but we can show the banner again
                 showReconnectBanner('host');
-            } else if (gameMode === 'peer' && client) {
-                client.reconnect();
+            } else if (gameMode === 'peer' && lobby && lobby.client) {
+                lobby.client.reconnect();
                 showReconnectBanner('peer');
             }
         };
@@ -1553,10 +1495,10 @@
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState !== 'visible' || !gameStarted) return;
 
-            if (gameMode === 'peer' && client) {
+            if (gameMode === 'peer' && lobby && lobby.client) {
                 // SlopNet handles reconnection, but we can nudge it on visibility change
-                if (!client.isConnected) {
-                    client.reconnect();
+                if (!lobby.client.isConnected) {
+                    lobby.client.reconnect();
                 }
             }
         });
@@ -1666,8 +1608,8 @@
         }
 
         function updateMpPlayerCount() {
-            if (gameMode === 'host' && host) {
-                const connected = host.getConnectedClientIds().length;
+            if (gameMode === 'host' && lobby) {
+                const connected = lobby.getConnectedClientIds().length;
                 const total = connected + 1; // +1 for host
                 mpPlayerCount.textContent = `${total} player${total !== 1 ? 's' : ''} connected`;
             } else {
@@ -1679,15 +1621,10 @@
         // CLEANUP
         // =====================================================================
         function cleanupMultiplayer() {
-            if (host) {
-                host.destroy();
-                host = null;
+            if (lobby) {
+                lobby.destroy();
+                lobby = null;
             }
-            if (client) {
-                client.destroy();
-                client = null;
-            }
-            clientMap = {};
             lobbyPlayers = [];
             peerSubmissions = {};
             myScoreSubmitted = false;
@@ -2245,8 +2182,8 @@
             };
 
             // Send to host
-            if (client) {
-                client.send({
+            if (lobby) {
+                lobby.sendToHost({
                     type: 'score-submit',
                     playerName: myName,
                     scoreData: scoreData

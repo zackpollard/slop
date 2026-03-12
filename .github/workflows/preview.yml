@@ -39,6 +39,7 @@ jobs:
             if [ -d "_preview/$project" ]; then
               mkdir -p "_preview/$project/lib"
               cp lib/slopnet/slopnet.js "_preview/$project/lib/slopnet.js"
+              cp lib/sloplobby/sloplobby.js "_preview/$project/lib/sloplobby.js"
               cp lib/slop-theme.css "_preview/$project/lib/slop-theme.css"
             fi
           done

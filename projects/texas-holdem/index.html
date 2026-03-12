@@ -9,6 +9,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
     <script src="lib/slopnet.js"></script>
+    <script src="lib/sloplobby.js"></script>
     <link rel="stylesheet" href="lib/slop-theme.css">
     <style>
         /* Game-specific styles — base theme loaded from lib/slop-theme.css */
@@ -641,13 +642,7 @@
     const $ = (sel, ctx = document) => ctx.querySelector(sel);
     const $$ = (sel, ctx = document) => [...ctx.querySelectorAll(sel)];
 
-    function toast(msg) {
-        const el = document.createElement('div');
-        el.className = 'toast';
-        el.textContent = msg;
-        $('#toasts').appendChild(el);
-        setTimeout(() => el.remove(), 3000);
-    }
+    const toast = SlopLobby.toast;
 
     function showScreen(id) {
         $$('.screen').forEach(s => s.classList.remove('active'));
@@ -1295,25 +1290,18 @@
     /* ══════════════════════════════════════════════════════════════
        NETWORKING (SlopNet)
        ══════════════════════════════════════════════════════════════ */
-    let hostInstance = null;   // SlopNet.PeerHost (host only)
-    let clientInstance = null; // SlopNet.PeerClient (client only)
+    let lobby = null;
     let isHost = false;
     let myPlayerId = null;
     let myName = '';
     let game = null;
     let roomCode = '';
 
-    // Host state: clientId -> { playerId, name }
-    let clientPlayerMap = {};
-
     // Client state
     let lastGameState = null;
 
     /* ── HOST ── */
     async function hostGame(name, config) {
-        hostInstance = new SlopNet.PeerHost({ roomPrefix: 'slop-holdem-' });
-        roomCode = await hostInstance.start();
-
         isHost = true;
         myPlayerId = 'host';
         myName = name;
@@ -1328,71 +1316,74 @@
 
         game.onGameOver = (winner) => {
             const msg = { type: 'gameOver', winner: winner ? { name: winner.name, chips: winner.chips } : null };
-            hostInstance.broadcast(msg);
+            lobby.broadcast(msg);
             showGameOver(winner);
         };
 
-        hostInstance.on('client-joined', (clientId, metadata) => {
-            const playerName = metadata.name || 'Player';
-            if (game.phase !== PHASE.WAITING) {
-                hostInstance.send(clientId, { type: 'error', message: 'Game already in progress' });
-                hostInstance.removeClient(clientId);
-                return;
-            }
-            const playerId = 'p' + Date.now() + Math.random().toString(36).slice(2, 5);
-            if (!game.addPlayer(playerId, playerName)) {
-                hostInstance.send(clientId, { type: 'error', message: 'Table is full' });
-                hostInstance.removeClient(clientId);
-                return;
-            }
-            clientPlayerMap[clientId] = { playerId, name: playerName };
-            toast(playerName + ' joined');
-            hostInstance.send(clientId, { type: 'joined', playerId });
-            updateWaitingRoom();
-            broadcastWaitingRoom();
-        });
-
-        hostInstance.on('client-rejoined', (clientId, metadata) => {
-            const entry = clientPlayerMap[clientId];
-            if (entry) {
-                game.setDisconnected(entry.playerId, false);
-                toast(entry.name + ' reconnected');
-                if (game.phase !== PHASE.WAITING) {
-                    hostInstance.send(clientId, { type: 'state', state: game.getStateForPlayer(entry.playerId) });
-                    game.onStateChange();
-                } else {
-                    hostInstance.send(clientId, { type: 'joined', playerId: entry.playerId });
-                }
-                updateWaitingRoom();
-                broadcastWaitingRoom();
-            }
-        });
-
-        hostInstance.on('client-left', (clientId, metadata) => {
-            const entry = clientPlayerMap[clientId];
-            if (entry) {
-                game.setDisconnected(entry.playerId, true);
-                toast(entry.name + ' disconnected');
-                if (game.phase !== PHASE.WAITING) {
-                    const pIdx = game.players.findIndex(p => p.id === entry.playerId);
-                    if (pIdx === game.currentPlayerIndex) {
-                        game._checkAutoActions();
+        lobby = new SlopLobby.SlopLobby({
+            roomPrefix: 'slop-holdem-',
+            storageKey: 'holdem-client-id',
+            onHostData: (clientId, data) => {
+                if (data.type === 'action') {
+                    const entry = lobby.players.get(clientId);
+                    if (entry) {
+                        game.handleAction(entry.playerId, data.action, data.amount);
                     }
-                    game.onStateChange();
                 }
+            },
+            onPlayerJoined: (clientId, metadata) => {
+                const playerName = metadata.name || 'Player';
+                if (game.phase !== PHASE.WAITING) {
+                    lobby.send(clientId, { type: 'error', message: 'Game already in progress' });
+                    lobby.removeClient(clientId);
+                    return;
+                }
+                const playerId = 'p' + Date.now() + Math.random().toString(36).slice(2, 5);
+                if (!game.addPlayer(playerId, playerName)) {
+                    lobby.send(clientId, { type: 'error', message: 'Table is full' });
+                    lobby.removeClient(clientId);
+                    return;
+                }
+                // Store playerId in the player metadata managed by SlopLobby
+                lobby.players.set(clientId, { name: playerName, playerId });
+                toast(playerName + ' joined');
+                lobby.send(clientId, { type: 'joined', playerId });
                 updateWaitingRoom();
                 broadcastWaitingRoom();
-            }
+            },
+            onPlayerRejoined: (clientId, metadata) => {
+                const entry = lobby.players.get(clientId);
+                if (entry) {
+                    game.setDisconnected(entry.playerId, false);
+                    toast(entry.name + ' reconnected');
+                    if (game.phase !== PHASE.WAITING) {
+                        lobby.send(clientId, { type: 'state', state: game.getStateForPlayer(entry.playerId) });
+                        game.onStateChange();
+                    } else {
+                        lobby.send(clientId, { type: 'joined', playerId: entry.playerId });
+                    }
+                    updateWaitingRoom();
+                    broadcastWaitingRoom();
+                }
+            },
+            onPlayerLeft: (clientId, meta) => {
+                if (meta) {
+                    game.setDisconnected(meta.playerId, true);
+                    toast(meta.name + ' disconnected');
+                    if (game.phase !== PHASE.WAITING) {
+                        const pIdx = game.players.findIndex(p => p.id === meta.playerId);
+                        if (pIdx === game.currentPlayerIndex) {
+                            game._checkAutoActions();
+                        }
+                        game.onStateChange();
+                    }
+                    updateWaitingRoom();
+                    broadcastWaitingRoom();
+                }
+            },
         });
 
-        hostInstance.on('data', (clientId, data) => {
-            if (data.type === 'action') {
-                const entry = clientPlayerMap[clientId];
-                if (entry) {
-                    game.handleAction(entry.playerId, data.action, data.amount);
-                }
-            }
-        });
+        roomCode = await lobby.createRoom(name);
 
         showScreen('waiting-room');
         $('#display-code').textContent = roomCode;
@@ -1400,14 +1391,14 @@
     }
 
     function broadcastState() {
-        for (const [clientId, entry] of Object.entries(clientPlayerMap)) {
-            hostInstance.send(clientId, { type: 'state', state: game.getStateForPlayer(entry.playerId) });
+        for (const [clientId, entry] of lobby.players) {
+            lobby.send(clientId, { type: 'state', state: game.getStateForPlayer(entry.playerId) });
         }
     }
 
     function broadcastWaitingRoom() {
         const players = game.players.map(p => ({ name: p.name, id: p.id, disconnected: p.disconnected }));
-        hostInstance.broadcast({ type: 'waitingRoom', players, roomCode });
+        lobby.broadcast({ type: 'waitingRoom', players, roomCode });
     }
 
     /* ── CLIENT ── */
@@ -1416,63 +1407,49 @@
         myName = name;
         isHost = false;
 
-        clientInstance = new SlopNet.PeerClient({ roomPrefix: 'slop-holdem-' });
-
-        // Generate a stable clientId for reconnection
-        const clientId = sessionStorage.getItem('holdem-client-id') || ('p' + Date.now() + Math.random().toString(36).slice(2, 5));
-        sessionStorage.setItem('holdem-client-id', clientId);
-
-        clientInstance.on('data', (data) => {
-            if (data.type === 'joined') {
-                myPlayerId = data.playerId;
-                showScreen('waiting-room');
-                $('#display-code').textContent = roomCode;
-                $('#btn-start-game').style.display = 'none';
-            } else if (data.type === 'waitingRoom') {
-                renderWaitingPlayers(data.players);
-            } else if (data.type === 'state') {
-                lastGameState = data.state;
-                if ($('#game').classList.contains('active') || data.state.phase !== PHASE.WAITING) {
+        lobby = new SlopLobby.SlopLobby({
+            roomPrefix: 'slop-holdem-',
+            storageKey: 'holdem-client-id',
+            onClientData: (data) => {
+                if (data.type === 'joined') {
+                    myPlayerId = data.playerId;
+                    showScreen('waiting-room');
+                    $('#display-code').textContent = roomCode;
+                    $('#btn-start-game').style.display = 'none';
+                } else if (data.type === 'waitingRoom') {
+                    renderWaitingPlayers(data.players);
+                } else if (data.type === 'state') {
+                    lastGameState = data.state;
+                    if ($('#game').classList.contains('active') || data.state.phase !== PHASE.WAITING) {
+                        showScreen('game');
+                        renderGame(data.state);
+                    }
+                } else if (data.type === 'gameStart') {
                     showScreen('game');
-                    renderGame(data.state);
+                } else if (data.type === 'gameOver') {
+                    showGameOver(data.winner);
+                } else if (data.type === 'error') {
+                    toast(data.message);
+                    resetToLobby();
                 }
-            } else if (data.type === 'gameStart') {
-                showScreen('game');
-            } else if (data.type === 'gameOver') {
-                showGameOver(data.winner);
-            } else if (data.type === 'error') {
-                toast(data.message);
-                resetToLobby();
-            }
+            },
+            onStateChange: (status) => {
+                if (status === 'disconnected') {
+                    toast('Disconnected from host');
+                } else if (status === 'reconnected') {
+                    toast('Reconnected!');
+                } else if (status === 'reconnect-failed') {
+                    toast('Could not reconnect to host');
+                    resetToLobby();
+                }
+            },
         });
 
-        clientInstance.on('disconnected', () => {
-            toast('Disconnected from host');
-        });
-
-        clientInstance.on('reconnected', () => {
-            toast('Reconnected!');
-        });
-
-        clientInstance.on('reconnect-failed', () => {
-            toast('Could not reconnect to host');
-            resetToLobby();
-        });
-
-        clientInstance.on('error', (err) => {
-            if (err.type === 'peer-unavailable') {
-                toast('Room not found — check the code');
-                resetToLobby();
-            }
-        });
-
-        await clientInstance.connect(roomCode, clientId, { name: myName });
+        await lobby.joinRoom(roomCode, myName);
     }
 
     function resetToLobby() {
-        if (hostInstance) { hostInstance.destroy(); hostInstance = null; }
-        if (clientInstance) { clientInstance.destroy(); clientInstance = null; }
-        clientPlayerMap = {};
+        if (lobby) { lobby.destroy(); lobby = null; }
         showScreen('lobby');
         $('#btn-join').disabled = false;
         $('#btn-join').textContent = 'Join Table';
@@ -1484,8 +1461,8 @@
         const msg = { type: 'action', action, amount };
         if (isHost) {
             game.handleAction(myPlayerId, action, amount);
-        } else if (clientInstance) {
-            clientInstance.send(msg);
+        } else if (lobby) {
+            lobby.sendToHost(msg);
         }
     }
 
@@ -1848,7 +1825,7 @@
         }
         showScreen('game');
         // Tell clients
-        hostInstance.broadcast({ type: 'gameStart' });
+        lobby.broadcast({ type: 'gameStart' });
         game.startHand();
     });
 
@@ -1860,15 +1837,13 @@
         $('#game-menu').classList.remove('show');
     });
     $('#btn-leave').addEventListener('click', () => {
-        if (hostInstance) hostInstance.destroy();
-        if (clientInstance) clientInstance.destroy();
+        if (lobby) lobby.destroy();
         location.reload();
     });
 
     // Game over - back to lobby
     $('#btn-back-lobby').addEventListener('click', () => {
-        if (hostInstance) hostInstance.destroy();
-        if (clientInstance) clientInstance.destroy();
+        if (lobby) lobby.destroy();
         location.reload();
     });
 

@@ -177,6 +177,7 @@ jobs:
             if [ -d "projects/$project" ]; then
               mkdir -p "projects/$project/lib"
               cp lib/slopnet/slopnet.js "projects/$project/lib/slopnet.js"
+              cp lib/sloplobby/sloplobby.js "projects/$project/lib/sloplobby.js"
               cp lib/slop-theme.css "projects/$project/lib/slop-theme.css"
             fi
           done
