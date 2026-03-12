@@ -9,39 +9,48 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
     <script src="lib/slopnet.js"></script>
+    <link rel="stylesheet" href="lib/slop-theme.css">
     <style>
-        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        /* Game-specific styles — base theme loaded from lib/slop-theme.css */
 
         :root {
-            --color-bg: #0f0f0c;
-            --color-surface: #1a1a16;
-            --color-surface-hover: #222218;
-            --color-border: #2e2e24;
-            --color-text: #e8e4d4;
-            --color-text-muted: #9a9686;
-            --color-accent: #c4a24e;
-            --color-accent-dim: rgba(196, 162, 78, 0.15);
-            --color-error: #c45e4e;
-            --color-success: #4a9e6e;
             --color-red: #d44;
             --color-green: #2a6e3f;
-            --font-body: 'Inter', sans-serif;
-            --font-mono: 'JetBrains Mono', monospace;
         }
 
+        /* Full-screen app overrides */
         html, body {
             height: 100%;
-            background: var(--color-bg);
-            color: var(--color-text);
-            font-family: var(--font-body);
-            -webkit-tap-highlight-color: transparent;
             overflow: hidden;
+            -webkit-tap-highlight-color: transparent;
         }
 
-        /* ── Lobby Screen ── */
         .screen { display: none; flex-direction: column; height: 100%; }
         .screen.active { display: flex; }
 
+        /* ── Button overrides ── */
+        .btn {
+            font-size: 0.95rem;
+            font-weight: 500;
+            transition: background 0.15s, border-color 0.15s;
+            -webkit-user-select: none;
+        }
+        .btn:hover { background: var(--color-surface); border-color: var(--color-border); }
+        .btn:active { background: var(--color-surface-hover); }
+        .btn-primary { color: var(--color-bg); }
+        .btn-primary:hover { background: var(--color-accent); border-color: var(--color-accent); }
+        .btn-primary:active { background: #b3932e; }
+        .btn-success { color: var(--color-success); border-color: var(--color-success); }
+        .btn-full { width: 100%; margin-top: 0.75rem; }
+
+        /* ── Input overrides ── */
+        input[type="text"], input[type="number"] {
+            font-family: var(--font-mono);
+            font-size: 1rem;
+            padding: 0.6rem 0.75rem;
+        }
+
+        /* ── Lobby Screen ── */
         #lobby {
             justify-content: center;
             align-items: center;
@@ -75,55 +84,10 @@
 
         .lobby-section label {
             display: block;
-            font-size: 0.85rem;
-            color: var(--color-text-muted);
             margin-bottom: 0.25rem;
             margin-top: 0.5rem;
         }
         .lobby-section label:first-of-type { margin-top: 0; }
-
-        input[type="text"], input[type="number"] {
-            width: 100%;
-            padding: 0.6rem 0.75rem;
-            border: 1px solid var(--color-border);
-            border-radius: 8px;
-            background: var(--color-bg);
-            color: var(--color-text);
-            font-family: var(--font-mono);
-            font-size: 1rem;
-            outline: none;
-        }
-        input:focus { border-color: var(--color-accent); }
-
-        .btn {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            padding: 0.6rem 1.2rem;
-            border: 1px solid var(--color-border);
-            border-radius: 8px;
-            background: var(--color-surface);
-            color: var(--color-text);
-            font-family: var(--font-body);
-            font-size: 0.95rem;
-            font-weight: 500;
-            cursor: pointer;
-            transition: background 0.15s, border-color 0.15s;
-            -webkit-user-select: none;
-            user-select: none;
-        }
-        .btn:active { background: var(--color-surface-hover); }
-        .btn-primary {
-            background: var(--color-accent);
-            color: var(--color-bg);
-            border-color: var(--color-accent);
-            font-weight: 600;
-        }
-        .btn-primary:active { background: #b3932e; }
-        .btn-danger { color: var(--color-error); border-color: var(--color-error); }
-        .btn-success { color: var(--color-success); border-color: var(--color-success); }
-        .btn:disabled { opacity: 0.4; pointer-events: none; }
-        .btn-full { width: 100%; margin-top: 0.75rem; }
 
         /* ── Waiting Room ── */
         #waiting-room {
@@ -131,18 +95,8 @@
             align-items: center;
         }
 
-        .room-code-display {
-            text-align: center;
-            margin: 1rem 0;
-        }
-        .room-code-display .code {
-            font-family: var(--font-mono);
-            font-size: 2.5rem;
-            font-weight: 700;
-            color: var(--color-accent);
-            letter-spacing: 0.15em;
-            cursor: pointer;
-        }
+        .room-code-display { margin: 1rem 0; }
+        .room-code-display .code { letter-spacing: 0.15em; }
         .room-code-display p {
             font-size: 0.85rem;
             color: var(--color-text-muted);
@@ -153,6 +107,8 @@
             width: 100%;
             max-width: 400px;
             margin: 1rem 0;
+            flex-wrap: nowrap;
+            flex-direction: column;
         }
         .player-list h3 {
             font-size: 0.9rem;
@@ -515,7 +471,7 @@
         .game-over-overlay h2 { color: var(--color-accent); font-size: 1.8rem; }
         .game-over-overlay p { color: var(--color-text-muted); font-size: 1rem; }
 
-        /* Toast notifications */
+        /* Toast notifications — override shared bottom-toast with top-toast system */
         .toast-container {
             position: fixed;
             top: 0.5rem;
@@ -528,11 +484,18 @@
             pointer-events: none;
         }
         .toast {
+            position: static;
+            transform: none;
+            transition: none;
+            bottom: auto;
+            left: auto;
+            max-width: none;
             background: var(--color-surface);
             border: 1px solid var(--color-border);
             border-radius: 8px;
             padding: 0.5rem 1rem;
             font-size: 0.85rem;
+            font-weight: normal;
             color: var(--color-text);
             animation: toastIn 0.3s ease, toastOut 0.3s ease 2.7s forwards;
             pointer-events: auto;

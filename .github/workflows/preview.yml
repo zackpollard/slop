@@ -34,11 +34,12 @@ jobs:
             cp -r "$dir" "_preview/$project_name"
           done
 
-          # Copy slopnet.js into projects that use PeerJS networking
+          # Copy shared libraries into projects that use PeerJS networking
           for project in texas-holdem cards-against-humanity herd-mentality flip-7; do
             if [ -d "_preview/$project" ]; then
               mkdir -p "_preview/$project/lib"
               cp lib/slopnet/slopnet.js "_preview/$project/lib/slopnet.js"
+              cp lib/slop-theme.css "_preview/$project/lib/slop-theme.css"
             fi
           done
 

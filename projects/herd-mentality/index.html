@@ -9,156 +9,30 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
     <script src="lib/slopnet.js"></script>
+    <link rel="stylesheet" href="lib/slop-theme.css">
     <style>
+        /* Game-specific styles — base theme loaded from lib/slop-theme.css */
+
         :root {
-            --color-bg: #0f0f0c;
-            --color-surface: #1a1a16;
-            --color-surface-hover: #222218;
-            --color-border: #2e2e24;
-            --color-text: #e8e4d4;
-            --color-text-muted: #9a9686;
-            --color-accent: #c4a24e;
-            --color-accent-dim: rgba(196, 162, 78, 0.15);
-            --color-error: #c45e4e;
-            --color-success: #4a9e6e;
             --color-pink: #d4619b;
             --color-pink-dim: rgba(212, 97, 155, 0.15);
-            --font-body: 'Inter', sans-serif;
-            --font-mono: 'JetBrains Mono', monospace;
         }
 
-        * { box-sizing: border-box; margin: 0; padding: 0; }
+        .container { max-width: 700px; }
 
-        body {
-            font-family: var(--font-body);
-            background: var(--color-bg);
-            color: var(--color-text);
-            min-height: 100vh;
-            line-height: 1.6;
-        }
-
-        .container {
-            max-width: 700px;
-            margin: 0 auto;
-            padding: 2rem 1.5rem;
-        }
-
-        header {
-            text-align: center;
-            margin-bottom: 2rem;
-        }
-
-        header h1 {
-            font-size: 2rem;
-            font-weight: 800;
-            letter-spacing: -0.03em;
-        }
-
-        header h1 .accent { color: var(--color-accent); }
-
-        header .subtitle {
-            color: var(--color-text-muted);
-            font-size: 0.95rem;
-            margin-top: 0.25rem;
-        }
-
-        .section {
-            background: var(--color-surface);
-            border: 1px solid var(--color-border);
-            border-radius: 12px;
-            padding: 1.5rem;
-            margin-bottom: 1.25rem;
-        }
+        .section { margin-bottom: 1.25rem; }
 
         .section h2 {
             font-size: 1.1rem;
             font-weight: 700;
-            margin-bottom: 1rem;
+            text-transform: none;
             letter-spacing: -0.01em;
-        }
-
-        .btn {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 0.5rem;
-            padding: 0.65rem 1.25rem;
-            border: 1px solid var(--color-border);
-            border-radius: 8px;
-            background: var(--color-surface);
             color: var(--color-text);
-            font-family: var(--font-body);
-            font-size: 0.9rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.15s ease;
+            margin-bottom: 1rem;
         }
-
-        .btn:hover { background: var(--color-surface-hover); border-color: var(--color-accent); }
-
-        .btn-primary {
-            background: var(--color-accent);
-            color: #0f0f0c;
-            border-color: var(--color-accent);
-        }
-
-        .btn-primary:hover { background: #d4b25e; border-color: #d4b25e; }
-
-        .btn-danger {
-            color: var(--color-error);
-            border-color: var(--color-error);
-        }
-
-        .btn-danger:hover { background: rgba(196, 94, 78, 0.15); }
-
-        .btn-sm {
-            padding: 0.35rem 0.75rem;
-            font-size: 0.8rem;
-        }
-
-        .btn-wide { width: 100%; }
-
-        .btn:disabled {
-            opacity: 0.4;
-            cursor: not-allowed;
-            pointer-events: none;
-        }
-
-        input[type="text"] {
-            width: 100%;
-            padding: 0.65rem 0.85rem;
-            background: var(--color-bg);
-            border: 1px solid var(--color-border);
-            border-radius: 8px;
-            color: var(--color-text);
-            font-family: var(--font-body);
-            font-size: 0.95rem;
-            outline: none;
-            transition: border-color 0.15s ease;
-        }
-
-        input[type="text"]:focus { border-color: var(--color-accent); }
-        input[type="text"]::placeholder { color: var(--color-text-muted); }
 
         /* Player tags */
-        .player-tags {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.5rem;
-            margin-bottom: 0.5rem;
-        }
-
-        .player-tag {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.4rem;
-            padding: 0.35rem 0.75rem;
-            background: var(--color-accent-dim);
-            border: 1px solid rgba(196, 162, 78, 0.3);
-            border-radius: 20px;
-            font-size: 0.85rem;
-            font-weight: 500;
-        }
+        .player-tags { margin-bottom: 0.5rem; }
 
         .player-tag.has-cow {
             background: var(--color-pink-dim);
@@ -243,29 +117,6 @@
 
         .scoreboard tr.is-cow td {
             color: var(--color-pink);
-        }
-
-        /* Room code display */
-        .room-code-display {
-            text-align: center;
-            margin-bottom: 1.25rem;
-        }
-
-        .room-code-display .label {
-            font-size: 0.8rem;
-            color: var(--color-text-muted);
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            margin-bottom: 0.25rem;
-        }
-
-        .room-code {
-            font-family: var(--font-mono);
-            font-size: 2.5rem;
-            font-weight: 700;
-            letter-spacing: 0.2em;
-            color: var(--color-accent);
-            user-select: all;
         }
 
         /* Home screen */
@@ -463,19 +314,7 @@
             margin-bottom: 0.25rem;
         }
 
-        .status-msg .spinner {
-            display: inline-block;
-            width: 1.2rem;
-            height: 1.2rem;
-            border: 2px solid var(--color-border);
-            border-top-color: var(--color-accent);
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-            vertical-align: middle;
-            margin-right: 0.5rem;
-        }
-
-        @keyframes spin { to { transform: rotate(360deg); } }
+        .status-msg .spinner { margin-right: 0.5rem; }
 
         .submitted-check { font-size: 3rem; margin-bottom: 0.5rem; }
 
@@ -539,10 +378,6 @@
         }
 
         .error-banner.visible { display: block; }
-
-        /* Screens */
-        .screen { display: none; }
-        .screen.active { display: block; }
 
         @media (max-width: 500px) {
             .container { padding: 1.25rem 1rem; }
