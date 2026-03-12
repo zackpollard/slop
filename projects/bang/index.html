@@ -7,60 +7,49 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="lib/slop-theme.css">
 <style>
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{
-  --color-bg:#0f0f0c;--color-surface:#1a1a16;--color-surface-alt:#22221c;
-  --color-border:#2e2e26;--color-accent:#c4a24e;--color-accent-dim:#8a7235;
-  --color-text:#e8e4d4;--color-text-muted:#9a9686;
-  --color-error:#d94545;--color-success:#45a85a;--color-warning:#d9a045;
+/* Game-specific styles — base theme loaded from lib/slop-theme.css */
+
+:root {
+  --color-surface-alt:#22221c;
+  --color-accent-dim-solid:#8a7235;
+  --color-warning:#d9a045;
   --color-sheriff:#c4a24e;--color-deputy:#5b9bd5;--color-outlaw:#d94545;--color-renegade:#9b59b6;
   --radius:10px;--radius-sm:6px;
 }
-html{font-size:16px}
-body{font-family:'Inter',sans-serif;background:var(--color-bg);color:var(--color-text);line-height:1.6;min-height:100vh}
-.container{max-width:960px;margin:0 auto;padding:1.5rem 1rem 3rem}
+
+.container{max-width:960px;padding:1.5rem 1rem 3rem}
 a{color:var(--color-accent);text-decoration:none}
 a:hover{text-decoration:underline}
 
-header{text-align:center;padding:2rem 0 1.5rem;border-bottom:1px solid var(--color-border);margin-bottom:2rem}
-header h1{font-size:2rem;font-weight:800;letter-spacing:-0.5px;margin-bottom:.25rem}
+header{padding:2rem 0 1.5rem;border-bottom:1px solid var(--color-border);margin-bottom:2rem}
 header h1 .icon{display:inline-block}
-header .subtitle{color:var(--color-text-muted);font-size:.95rem}
 
+/* Tabs */
 .tabs{display:flex;gap:.5rem;margin-bottom:1.5rem;flex-wrap:wrap}
 .tab{padding:.5rem 1rem;background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-sm);cursor:pointer;font-size:.85rem;font-weight:600;color:var(--color-text-muted);transition:all .15s;user-select:none}
-.tab:hover{color:var(--color-text);border-color:var(--color-accent-dim)}
+.tab:hover{color:var(--color-text);border-color:var(--color-accent-dim-solid)}
 .tab.active{background:var(--color-accent);color:#0f0f0c;border-color:var(--color-accent)}
 .tab-content{display:none}
 .tab-content.active{display:block}
 
-.section{background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius);padding:1.25rem;margin-bottom:1rem}
 .section-title{font-size:1.05rem;font-weight:700;margin-bottom:.75rem;display:flex;align-items:center;gap:.5rem}
 .section-title .icon{font-size:1.2rem}
 
-.btn{display:inline-flex;align-items:center;gap:.4rem;padding:.5rem 1rem;border:1px solid var(--color-border);border-radius:var(--radius-sm);background:var(--color-surface-alt);color:var(--color-text);font-family:inherit;font-size:.85rem;font-weight:600;cursor:pointer;transition:all .15s;white-space:nowrap}
-.btn:hover{border-color:var(--color-accent-dim);background:var(--color-border)}
-.btn-primary{background:var(--color-accent);color:#0f0f0c;border-color:var(--color-accent)}
-.btn-primary:hover{background:#d4b25e;border-color:#d4b25e}
-.btn-danger{background:var(--color-error);color:#fff;border-color:var(--color-error)}
-.btn-danger:hover{background:#c93030;border-color:#c93030}
 .btn-success{background:var(--color-success);color:#fff;border-color:var(--color-success)}
 .btn-success:hover{background:#38944a}
-.btn-sm{padding:.35rem .7rem;font-size:.8rem}
-.btn:disabled{opacity:.4;cursor:not-allowed}
 .btn-group{display:flex;gap:.5rem;flex-wrap:wrap}
 
-input[type="text"],input[type="number"],select{padding:.5rem .75rem;background:var(--color-bg);border:1px solid var(--color-border);border-radius:var(--radius-sm);color:var(--color-text);font-family:inherit;font-size:.9rem;width:100%}
-input:focus,select:focus{outline:none;border-color:var(--color-accent)}
-label{font-size:.85rem;font-weight:600;color:var(--color-text-muted);display:block;margin-bottom:.25rem}
+select{padding:.5rem .75rem;background:var(--color-bg);border:1px solid var(--color-border);border-radius:var(--radius-sm);color:var(--color-text);font-family:inherit;font-size:.9rem;width:100%}
+select:focus{outline:none;border-color:var(--color-accent)}
 
 /* Setup */
 .setup-row{display:flex;gap:1rem;align-items:flex-end;margin-bottom:1rem;flex-wrap:wrap}
 .setup-row .field{flex:1;min-width:150px}
 .player-setup-list{display:flex;flex-direction:column;gap:.5rem;margin:1rem 0}
 .player-setup-item{display:flex;align-items:center;gap:.75rem;background:var(--color-bg);padding:.6rem .75rem;border-radius:var(--radius-sm);border:1px solid var(--color-border)}
-.player-setup-item .player-num{font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--color-accent);min-width:24px}
+.player-setup-item .player-num{font-family:var(--font-mono);font-weight:700;color:var(--color-accent);min-width:24px}
 .player-setup-item input{flex:1}
 .player-setup-item .remove-player{background:none;border:none;color:var(--color-text-muted);cursor:pointer;font-size:1.1rem;padding:0 .25rem}
 .player-setup-item .remove-player:hover{color:var(--color-error)}
@@ -78,15 +67,14 @@ label{font-size:.85rem;font-weight:600;color:var(--color-text-muted);display:blo
 .table-center{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center}
 .table-center .turn-label{font-size:.7rem;text-transform:uppercase;letter-spacing:1px;color:var(--color-accent);font-weight:700}
 .table-center .turn-name{font-size:1.1rem;font-weight:800}
-.table-center .turn-phase{font-size:.75rem;color:var(--color-text-muted)}
 
 .seat{position:absolute;transform:translate(-50%,-50%);text-align:center;cursor:pointer;transition:all .2s;z-index:2}
 .seat .seat-ring{width:72px;height:72px;border-radius:50%;border:3px solid var(--color-border);background:var(--color-surface);display:flex;align-items:center;justify-content:center;flex-direction:column;transition:all .2s;position:relative}
 .seat.current .seat-ring{border-color:var(--color-accent);box-shadow:0 0 16px rgba(196,162,78,.35)}
 .seat.eliminated .seat-ring{opacity:.35;border-style:dashed}
 .seat.selected .seat-ring{border-color:var(--color-accent);background:var(--color-surface-alt)}
-.seat .seat-hp{font-family:'JetBrains Mono',monospace;font-size:1rem;font-weight:700;line-height:1}
-.seat .seat-hp-max{font-family:'JetBrains Mono',monospace;font-size:.6rem;color:var(--color-text-muted)}
+.seat .seat-hp{font-family:var(--font-mono);font-size:1rem;font-weight:700;line-height:1}
+.seat .seat-hp-max{font-family:var(--font-mono);font-size:.6rem;color:var(--color-text-muted)}
 .seat .seat-name{font-size:.7rem;font-weight:700;margin-top:.35rem;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .seat .seat-role{font-size:.6rem;font-weight:600;margin-top:.1rem}
 .seat .seat-character{font-size:.6rem;color:var(--color-text-muted);margin-top:.1rem;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -128,7 +116,7 @@ label{font-size:.85rem;font-weight:600;color:var(--color-text-muted);display:blo
 .distance-table{width:100%;border-collapse:collapse;margin-top:.75rem;font-size:.8rem}
 .distance-table th,.distance-table td{padding:.4rem .6rem;text-align:center;border:1px solid var(--color-border)}
 .distance-table th{background:var(--color-surface-alt);font-weight:700;color:var(--color-accent)}
-.distance-table td{font-family:'JetBrains Mono',monospace}
+.distance-table td{font-family:var(--font-mono)}
 .distance-table td.in-range{color:var(--color-success);font-weight:700}
 .distance-table td.out-range{color:var(--color-text-muted)}
 .distance-table td.self{background:var(--color-surface-alt);color:var(--color-text-muted)}
@@ -138,7 +126,7 @@ label{font-size:.85rem;font-weight:600;color:var(--color-text-muted);display:blo
 .card-filters input,.card-filters select{width:auto;min-width:150px;flex:1}
 .card-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:.75rem}
 .card-entry{background:var(--color-bg);border:1px solid var(--color-border);border-radius:var(--radius-sm);padding:.75rem;transition:border-color .15s}
-.card-entry:hover{border-color:var(--color-accent-dim)}
+.card-entry:hover{border-color:var(--color-accent-dim-solid)}
 .card-entry .card-header{display:flex;align-items:center;gap:.5rem;margin-bottom:.35rem;flex-wrap:wrap}
 .card-entry .card-name{font-weight:700;font-size:.9rem}
 .card-entry .card-type{font-size:.7rem;padding:.1rem .4rem;border-radius:99px;font-weight:600}
@@ -146,25 +134,25 @@ label{font-size:.85rem;font-weight:600;color:var(--color-text-muted);display:blo
 .card-entry .card-type.blue{background:rgba(70,130,180,.2);color:#7cb9e8;border:1px solid rgba(70,130,180,.3)}
 .card-entry .card-type.green{background:rgba(69,168,90,.15);color:var(--color-success);border:1px solid rgba(69,168,90,.3)}
 .card-entry .card-desc{font-size:.8rem;color:var(--color-text-muted);line-height:1.5}
-.card-entry .card-set{font-size:.7rem;color:var(--color-accent-dim);margin-top:.3rem}
+.card-entry .card-set{font-size:.7rem;color:var(--color-accent-dim-solid);margin-top:.3rem}
 
 /* Character reference */
 .char-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:.75rem}
 .char-card{background:var(--color-bg);border:1px solid var(--color-border);border-radius:var(--radius-sm);padding:.75rem;transition:border-color .15s}
-.char-card:hover{border-color:var(--color-accent-dim)}
+.char-card:hover{border-color:var(--color-accent-dim-solid)}
 .char-card .char-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:.35rem}
 .char-card .char-name{font-weight:700;font-size:.9rem}
-.char-card .char-hp{font-family:'JetBrains Mono',monospace;font-size:.8rem;color:var(--color-error);font-weight:700}
+.char-card .char-hp{font-family:var(--font-mono);font-size:.8rem;color:var(--color-error);font-weight:700}
 .char-card .char-ability{font-size:.8rem;color:var(--color-text-muted);line-height:1.5}
-.char-card .char-set{font-size:.7rem;color:var(--color-accent-dim);margin-top:.3rem}
+.char-card .char-set{font-size:.7rem;color:var(--color-accent-dim-solid);margin-top:.3rem}
 
 /* Event log */
-.event-log{max-height:200px;overflow-y:auto;font-size:.8rem;font-family:'JetBrains Mono',monospace;background:var(--color-bg);border-radius:var(--radius-sm);padding:.75rem}
+.event-log{max-height:200px;overflow-y:auto;font-size:.8rem;font-family:var(--font-mono);background:var(--color-bg);border-radius:var(--radius-sm);padding:.75rem}
 .event-log::-webkit-scrollbar{width:6px}
 .event-log::-webkit-scrollbar-thumb{background:var(--color-border);border-radius:3px}
 .event-entry{padding:.25rem 0;border-bottom:1px solid var(--color-border);color:var(--color-text-muted)}
 .event-entry:last-child{border:none}
-.event-entry .event-time{color:var(--color-accent-dim)}
+.event-entry .event-time{color:var(--color-accent-dim-solid)}
 
 /* Role reveal overlay */
 .reveal-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.92);z-index:100;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:1.5rem;padding:2rem}
@@ -178,26 +166,24 @@ label{font-size:.85rem;font-weight:600;color:var(--color-text-muted);display:blo
 .reveal-card .reveal-role.renegade{color:var(--color-renegade)}
 .reveal-card .reveal-character{font-size:1.1rem;font-weight:700;color:var(--color-text);margin-top:.75rem}
 .reveal-card .reveal-ability{font-size:.85rem;color:var(--color-accent);margin-top:.25rem;font-style:italic}
-.reveal-card .reveal-hp{font-family:'JetBrains Mono',monospace;font-size:.9rem;color:var(--color-error);margin-top:.5rem}
+.reveal-card .reveal-hp{font-family:var(--font-mono);font-size:.9rem;color:var(--color-error);margin-top:.5rem}
 .reveal-card .reveal-hidden{font-size:1.2rem;color:var(--color-text-muted);padding:2rem 0}
 .reveal-nav{display:flex;gap:1rem}
 
-/* Toast */
+/* Toast — override shared theme for multi-toast support */
 .toast-container{position:fixed;top:1rem;right:1rem;z-index:1000;display:flex;flex-direction:column;gap:.5rem}
-.toast{padding:.6rem 1rem;border-radius:var(--radius-sm);font-size:.85rem;font-weight:600;max-width:320px;box-shadow:0 4px 12px rgba(0,0,0,.4);animation:fadeIn .3s ease}
-.toast.info{background:var(--color-surface);border:1px solid var(--color-accent);color:var(--color-accent)}
-.toast.danger{background:#2a1010;border:1px solid var(--color-error);color:var(--color-error)}
-.toast.success{background:#102a14;border:1px solid var(--color-success);color:var(--color-success)}
-
-footer{text-align:center;padding:2rem 0 1rem;color:var(--color-text-muted);font-size:.8rem;border-top:1px solid var(--color-border);margin-top:2rem}
-@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
-.fade-in{animation:fadeIn .3s ease}
+.toast-container .toast{position:static;transform:none;pointer-events:auto;padding:.6rem 1rem;border-radius:var(--radius-sm);font-size:.85rem;font-weight:600;max-width:320px;box-shadow:0 4px 12px rgba(0,0,0,.4);animation:fadeIn .3s ease}
+.toast-container .toast.info{background:var(--color-surface);border:1px solid var(--color-accent);color:var(--color-accent)}
+.toast-container .toast.danger{background:#2a1010;border:1px solid var(--color-error);color:var(--color-error)}
+.toast-container .toast.success{background:#102a14;border:1px solid var(--color-success);color:var(--color-success)}
 
 .checkbox-group{display:flex;flex-wrap:wrap;gap:.75rem}
 .checkbox-item{display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.85rem}
 .checkbox-item input{accent-color:var(--color-accent);width:16px;height:16px}
 
-.hidden{display:none!important}
+footer{text-align:center;padding:2rem 0 1rem;color:var(--color-text-muted);font-size:.8rem;border-top:1px solid var(--color-border);margin-top:2rem}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.fade-in{animation:fadeIn .3s ease}
 
 @media(max-width:600px){
   .table-canvas-wrap{max-width:100%}
@@ -274,7 +260,7 @@ footer{text-align:center;padding:2rem 0 1rem;color:var(--color-text-muted);font-
             <div class="section-title" style="margin-bottom:0"><span class="icon">&#x1F3AF;</span> The Table</div>
             <div class="btn-group">
               <button class="btn btn-sm" id="nextTurnBtn">Next Turn &#x27A1;</button>
-              <button class="btn btn-sm btn-danger" id="endGameBtn">End Game</button>
+              <button class="btn btn-danger btn-sm" id="endGameBtn">End Game</button>
             </div>
           </div>
           <div class="table-canvas-wrap">
@@ -303,7 +289,7 @@ footer{text-align:center;padding:2rem 0 1rem;color:var(--color-text-muted);font-
               <button class="hp-btn minus" id="hpMinus">−</button>
               <div class="hp-display" id="hpDisplay"></div>
               <button class="hp-btn plus" id="hpPlus">+</button>
-              <span style="font-family:'JetBrains Mono',monospace;font-size:.85rem;color:var(--color-text-muted)" id="hpText"></span>
+              <span style="font-family:var(--font-mono);font-size:.85rem;color:var(--color-text-muted)" id="hpText"></span>
             </div>
           </div>
           <div class="equip-section">
@@ -653,7 +639,6 @@ function startGame() {
   let availChars = CHARACTERS.filter(c => c.set === 'base' || (state.useDodgeCity && c.set === 'dodge'));
   availChars = shuffle(availChars);
 
-  // Each player gets 2 choices, picks one randomly (we auto-assign for simplicity)
   state.players = setupPlayers.map((name, i) => {
     const char = availChars[i];
     const role = roles[i];
@@ -670,7 +655,7 @@ function startGame() {
     };
   });
 
-  // Sheriff goes first — find sheriff index
+  // Sheriff goes first
   const sheriffIdx = state.players.findIndex(p => p.role === 'sheriff');
   state.currentTurn = sheriffIdx;
   state.selectedPlayer = null;
@@ -680,11 +665,8 @@ function startGame() {
   addEvent(`Game started with ${count} players`);
   addEvent(`${state.players[sheriffIdx].name} is the Sheriff`);
 
-  // Switch to game tab
   switchTab('game');
   renderGame();
-
-  // Show role reveal
   startRoleReveal();
 }
 
@@ -693,7 +675,6 @@ function startGame() {
 // ============================================================
 function startRoleReveal() {
   let currentReveal = 0;
-  let revealed = false;
 
   const overlay = document.createElement('div');
   overlay.className = 'reveal-overlay';
@@ -719,7 +700,6 @@ function startRoleReveal() {
 
   function showPlayer(idx) {
     const p = state.players[idx];
-    revealed = false;
     label.textContent = `Pass the device to ${p.name}`;
     content.innerHTML = `<div class="reveal-hidden">Tap "Peek" to see your role</div>`;
     peekBtn.classList.remove('hidden');
@@ -730,7 +710,6 @@ function startRoleReveal() {
 
   function revealPlayer(idx) {
     const p = state.players[idx];
-    revealed = true;
     const roleClass = p.role;
     content.innerHTML = `
       <div class="reveal-role ${roleClass}">${capitalize(p.role)}</div>
@@ -780,7 +759,6 @@ function renderTable() {
   const canvas = document.getElementById('tableCanvas');
   const svg = document.getElementById('distanceLines');
 
-  // Remove old seats
   canvas.querySelectorAll('.seat').forEach(s => s.remove());
 
   const players = state.players;
@@ -790,11 +768,9 @@ function renderTable() {
   const cy = rect.height / 2;
   const radius = Math.min(cx, cy) * 0.72;
 
-  // Update center
   const current = players[state.currentTurn];
   document.getElementById('turnName').textContent = current ? current.name : '—';
 
-  // Place seats in a circle
   players.forEach((p, i) => {
     const angle = (2 * Math.PI * i / count) - Math.PI / 2;
     const x = cx + radius * Math.cos(angle);
@@ -830,8 +806,6 @@ function renderTable() {
     const sx = cx + radius * Math.cos(selAngle);
     const sy = cy + radius * Math.sin(selAngle);
     const weapon = players[sel].weaponRange;
-    const hasScope = players[sel].equipment.includes('scope');
-    const isRose = players[sel].character.name === 'Rose Doolan';
 
     players.forEach((p, i) => {
       if (i === sel || p.eliminated) return;
@@ -878,23 +852,18 @@ function renderSelectedPlayer() {
   roleEl.textContent = capitalize(p.role);
   roleEl.className = `detail-role role-chip ${p.role}`;
 
-  // HP display
   renderHpDisplay(p);
 
-  // Equipment
   const equipRow = document.getElementById('equipRow');
   equipRow.innerHTML = p.equipment.map(eq =>
     `<span class="equip-tag">${capitalize(eq)} <span class="remove-equip" onclick="removeEquip('${eq}')">&times;</span></span>`
   ).join('');
 
-  // Weapon select
   const ws = document.getElementById('weaponSelect');
   ws.value = p.weaponRange;
 
-  // Distance table
   renderDistanceTable(state.selectedPlayer);
 
-  // Eliminate / revive buttons
   document.getElementById('eliminateBtn').style.display = p.eliminated ? 'none' : '';
   document.getElementById('reviveBtn').style.display = p.eliminated ? '' : 'none';
 }
@@ -916,7 +885,6 @@ document.getElementById('hpMinus').addEventListener('click', () => {
     if (p.hp === 0) {
       p.eliminated = true;
       addEvent(`${p.name} has been eliminated!`);
-      // Auto advance if current turn is eliminated
       if (state.currentTurn === state.selectedPlayer) nextTurn();
     }
     renderGame();
@@ -996,19 +964,16 @@ function calcDistance(fromIdx, toIdx) {
   const counter = (fromPos - toPos + n) % n;
   let baseDist = Math.min(clockwise, counter);
 
-  // Apply modifiers
   const from = state.players[fromIdx];
   const to = state.players[toIdx];
 
   // Target's distance-increasing equipment
   if (to.equipment.includes('mustang')) baseDist++;
   if (to.equipment.includes('hideout')) baseDist++;
-  // Paul Regret built-in mustang
   if (to.character.name === 'Paul Regret') baseDist++;
 
   // Shooter's distance-decreasing equipment
   if (from.equipment.includes('scope')) baseDist = Math.max(1, baseDist - 1);
-  // Rose Doolan built-in scope
   if (from.character.name === 'Rose Doolan') baseDist = Math.max(1, baseDist - 1);
 
   return baseDist;
