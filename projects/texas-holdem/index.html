@@ -8,39 +8,50 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
+    <script src="lib/slopnet.js"></script>
+    <script src="lib/sloplobby.js"></script>
+    <link rel="stylesheet" href="lib/slop-theme.css">
     <style>
-        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        /* Game-specific styles — base theme loaded from lib/slop-theme.css */
 
         :root {
-            --color-bg: #0f0f0c;
-            --color-surface: #1a1a16;
-            --color-surface-hover: #222218;
-            --color-border: #2e2e24;
-            --color-text: #e8e4d4;
-            --color-text-muted: #9a9686;
-            --color-accent: #c4a24e;
-            --color-accent-dim: rgba(196, 162, 78, 0.15);
-            --color-error: #c45e4e;
-            --color-success: #4a9e6e;
             --color-red: #d44;
             --color-green: #2a6e3f;
-            --font-body: 'Inter', sans-serif;
-            --font-mono: 'JetBrains Mono', monospace;
         }
 
+        /* Full-screen app overrides */
         html, body {
             height: 100%;
-            background: var(--color-bg);
-            color: var(--color-text);
-            font-family: var(--font-body);
-            -webkit-tap-highlight-color: transparent;
             overflow: hidden;
+            -webkit-tap-highlight-color: transparent;
         }
 
-        /* ── Lobby Screen ── */
         .screen { display: none; flex-direction: column; height: 100%; }
         .screen.active { display: flex; }
 
+        /* ── Button overrides ── */
+        .btn {
+            font-size: 0.95rem;
+            font-weight: 500;
+            transition: background 0.15s, border-color 0.15s;
+            -webkit-user-select: none;
+        }
+        .btn:hover { background: var(--color-surface); border-color: var(--color-border); }
+        .btn:active { background: var(--color-surface-hover); }
+        .btn-primary { color: var(--color-bg); }
+        .btn-primary:hover { background: var(--color-accent); border-color: var(--color-accent); }
+        .btn-primary:active { background: #b3932e; }
+        .btn-success { color: var(--color-success); border-color: var(--color-success); }
+        .btn-full { width: 100%; margin-top: 0.75rem; }
+
+        /* ── Input overrides ── */
+        input[type="text"], input[type="number"] {
+            font-family: var(--font-mono);
+            font-size: 1rem;
+            padding: 0.6rem 0.75rem;
+        }
+
+        /* ── Lobby Screen ── */
         #lobby {
             justify-content: center;
             align-items: center;
@@ -74,55 +85,10 @@
 
         .lobby-section label {
             display: block;
-            font-size: 0.85rem;
-            color: var(--color-text-muted);
             margin-bottom: 0.25rem;
             margin-top: 0.5rem;
         }
         .lobby-section label:first-of-type { margin-top: 0; }
-
-        input[type="text"], input[type="number"] {
-            width: 100%;
-            padding: 0.6rem 0.75rem;
-            border: 1px solid var(--color-border);
-            border-radius: 8px;
-            background: var(--color-bg);
-            color: var(--color-text);
-            font-family: var(--font-mono);
-            font-size: 1rem;
-            outline: none;
-        }
-        input:focus { border-color: var(--color-accent); }
-
-        .btn {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            padding: 0.6rem 1.2rem;
-            border: 1px solid var(--color-border);
-            border-radius: 8px;
-            background: var(--color-surface);
-            color: var(--color-text);
-            font-family: var(--font-body);
-            font-size: 0.95rem;
-            font-weight: 500;
-            cursor: pointer;
-            transition: background 0.15s, border-color 0.15s;
-            -webkit-user-select: none;
-            user-select: none;
-        }
-        .btn:active { background: var(--color-surface-hover); }
-        .btn-primary {
-            background: var(--color-accent);
-            color: var(--color-bg);
-            border-color: var(--color-accent);
-            font-weight: 600;
-        }
-        .btn-primary:active { background: #b3932e; }
-        .btn-danger { color: var(--color-error); border-color: var(--color-error); }
-        .btn-success { color: var(--color-success); border-color: var(--color-success); }
-        .btn:disabled { opacity: 0.4; pointer-events: none; }
-        .btn-full { width: 100%; margin-top: 0.75rem; }
 
         /* ── Waiting Room ── */
         #waiting-room {
@@ -130,18 +96,8 @@
             align-items: center;
         }
 
-        .room-code-display {
-            text-align: center;
-            margin: 1rem 0;
-        }
-        .room-code-display .code {
-            font-family: var(--font-mono);
-            font-size: 2.5rem;
-            font-weight: 700;
-            color: var(--color-accent);
-            letter-spacing: 0.15em;
-            cursor: pointer;
-        }
+        .room-code-display { margin: 1rem 0; }
+        .room-code-display .code { letter-spacing: 0.15em; }
         .room-code-display p {
             font-size: 0.85rem;
             color: var(--color-text-muted);
@@ -152,6 +108,8 @@
             width: 100%;
             max-width: 400px;
             margin: 1rem 0;
+            flex-wrap: nowrap;
+            flex-direction: column;
         }
         .player-list h3 {
             font-size: 0.9rem;
@@ -514,7 +472,7 @@
         .game-over-overlay h2 { color: var(--color-accent); font-size: 1.8rem; }
         .game-over-overlay p { color: var(--color-text-muted); font-size: 1rem; }
 
-        /* Toast notifications */
+        /* Toast notifications — override shared bottom-toast with top-toast system */
         .toast-container {
             position: fixed;
             top: 0.5rem;
@@ -527,11 +485,18 @@
             pointer-events: none;
         }
         .toast {
+            position: static;
+            transform: none;
+            transition: none;
+            bottom: auto;
+            left: auto;
+            max-width: none;
             background: var(--color-surface);
             border: 1px solid var(--color-border);
             border-radius: 8px;
             padding: 0.5rem 1rem;
             font-size: 0.85rem;
+            font-weight: normal;
             color: var(--color-text);
             animation: toastIn 0.3s ease, toastOut 0.3s ease 2.7s forwards;
             pointer-events: auto;
@@ -677,24 +642,11 @@
     const $ = (sel, ctx = document) => ctx.querySelector(sel);
     const $$ = (sel, ctx = document) => [...ctx.querySelectorAll(sel)];
 
-    function toast(msg) {
-        const el = document.createElement('div');
-        el.className = 'toast';
-        el.textContent = msg;
-        $('#toasts').appendChild(el);
-        setTimeout(() => el.remove(), 3000);
-    }
+    const toast = SlopLobby.toast;
 
     function showScreen(id) {
         $$('.screen').forEach(s => s.classList.remove('active'));
         $(`#${id}`).classList.add('active');
-    }
-
-    function generateRoomCode() {
-        const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-        let code = '';
-        for (let i = 0; i < 5; i++) code += chars[Math.floor(Math.random() * chars.length)];
-        return code;
     }
 
     /* ══════════════════════════════════════════════════════════════
@@ -1336,65 +1288,20 @@
     }
 
     /* ══════════════════════════════════════════════════════════════
-       NETWORKING (PeerJS)
+       NETWORKING (SlopNet)
        ══════════════════════════════════════════════════════════════ */
-    let peer = null;
+    let lobby = null;
     let isHost = false;
     let myPlayerId = null;
     let myName = '';
     let game = null;
     let roomCode = '';
 
-    // Host state
-    let hostConnections = {}; // peerId -> { conn, playerId, name }
-
     // Client state
-    let hostConnection = null;
     let lastGameState = null;
-    let reconnectTimer = null;
-    let hostPeerId = null;
-
-    function peerIdFromCode(code) {
-        return 'slop-holdem-' + code.toUpperCase();
-    }
-
-    function createPeer(id) {
-        return new Promise((resolve, reject) => {
-            const p = new Peer(id, { debug: 0 });
-            let resolved = false;
-            const timeout = setTimeout(() => {
-                if (!resolved) {
-                    p.destroy();
-                    reject(new Error('PeerJS server timeout — check your connection'));
-                }
-            }, 15000);
-            p.on('open', () => {
-                resolved = true;
-                clearTimeout(timeout);
-                resolve(p);
-            });
-            p.on('error', (err) => {
-                if (resolved) return; // post-creation errors handled elsewhere
-                clearTimeout(timeout);
-                if (err.type === 'unavailable-id') {
-                    reject(new Error('Room code already in use — try again'));
-                } else if (err.type === 'network' || err.type === 'server-error') {
-                    reject(new Error('Cannot reach PeerJS server'));
-                } else if (!p.destroyed && err.type === 'disconnected') {
-                    // Don't reject, let it retry
-                    p.reconnect();
-                } else {
-                    reject(err);
-                }
-            });
-        });
-    }
 
     /* ── HOST ── */
     async function hostGame(name, config) {
-        roomCode = generateRoomCode();
-        peer = await createPeer(peerIdFromCode(roomCode));
-
         isHost = true;
         myPlayerId = 'host';
         myName = name;
@@ -1409,138 +1316,140 @@
 
         game.onGameOver = (winner) => {
             const msg = { type: 'gameOver', winner: winner ? { name: winner.name, chips: winner.chips } : null };
-            for (const c of Object.values(hostConnections)) {
-                if (c.conn.open) c.conn.send(msg);
-            }
+            lobby.broadcast(msg);
             showGameOver(winner);
         };
 
-        peer.on('connection', (conn) => {
-            conn.on('open', () => {
-                conn.on('data', (data) => handleHostMessage(conn, data));
-            });
-            conn.on('close', () => handleHostDisconnect(conn));
-            conn.on('error', () => handleHostDisconnect(conn));
+        lobby = new SlopLobby.SlopLobby({
+            roomPrefix: 'slop-holdem-',
+            storageKey: 'holdem-client-id',
+            onHostData: (clientId, data) => {
+                if (data.type === 'action') {
+                    const entry = lobby.players.get(clientId);
+                    if (entry) {
+                        game.handleAction(entry.playerId, data.action, data.amount);
+                    }
+                }
+            },
+            onPlayerJoined: (clientId, metadata) => {
+                const playerName = metadata.name || 'Player';
+                if (game.phase !== PHASE.WAITING) {
+                    lobby.send(clientId, { type: 'error', message: 'Game already in progress' });
+                    lobby.removeClient(clientId);
+                    return;
+                }
+                const playerId = 'p' + Date.now() + Math.random().toString(36).slice(2, 5);
+                if (!game.addPlayer(playerId, playerName)) {
+                    lobby.send(clientId, { type: 'error', message: 'Table is full' });
+                    lobby.removeClient(clientId);
+                    return;
+                }
+                // Store playerId in the player metadata managed by SlopLobby
+                lobby.players.set(clientId, { name: playerName, playerId });
+                toast(playerName + ' joined');
+                lobby.send(clientId, { type: 'joined', playerId });
+                updateWaitingRoom();
+                broadcastWaitingRoom();
+            },
+            onPlayerRejoined: (clientId, metadata) => {
+                const entry = lobby.players.get(clientId);
+                if (entry) {
+                    game.setDisconnected(entry.playerId, false);
+                    toast(entry.name + ' reconnected');
+                    if (game.phase !== PHASE.WAITING) {
+                        lobby.send(clientId, { type: 'state', state: game.getStateForPlayer(entry.playerId) });
+                        game.onStateChange();
+                    } else {
+                        lobby.send(clientId, { type: 'joined', playerId: entry.playerId });
+                    }
+                    updateWaitingRoom();
+                    broadcastWaitingRoom();
+                }
+            },
+            onPlayerLeft: (clientId, meta) => {
+                if (meta) {
+                    game.setDisconnected(meta.playerId, true);
+                    toast(meta.name + ' disconnected');
+                    if (game.phase !== PHASE.WAITING) {
+                        const pIdx = game.players.findIndex(p => p.id === meta.playerId);
+                        if (pIdx === game.currentPlayerIndex) {
+                            game._checkAutoActions();
+                        }
+                        game.onStateChange();
+                    }
+                    updateWaitingRoom();
+                    broadcastWaitingRoom();
+                }
+            },
         });
 
-        peer.on('disconnected', () => {
-            if (!peer.destroyed) {
-                setTimeout(() => peer.reconnect(), 2000);
-            }
-        });
+        roomCode = await lobby.createRoom(name);
 
         showScreen('waiting-room');
         $('#display-code').textContent = roomCode;
         updateWaitingRoom();
     }
 
-    function handleHostMessage(conn, data) {
-        if (data.type === 'join') {
-            // Check if this is a reconnection
-            const existing = Object.values(hostConnections).find(c => c.name === data.name);
-            if (existing) {
-                // Reconnection - update connection
-                const oldPeerId = Object.keys(hostConnections).find(k => hostConnections[k] === existing);
-                delete hostConnections[oldPeerId];
-                hostConnections[conn.peer] = { conn, playerId: existing.playerId, name: data.name };
-                game.setDisconnected(existing.playerId, false);
-                toast(data.name + ' reconnected');
-                if (game.phase !== PHASE.WAITING) {
-                    conn.send({ type: 'state', state: game.getStateForPlayer(existing.playerId) });
-                    game.onStateChange();
-                }
-            } else if (game.phase !== PHASE.WAITING) {
-                conn.send({ type: 'error', message: 'Game already in progress' });
-                return;
-            } else {
-                const playerId = 'p' + Date.now() + Math.random().toString(36).slice(2, 5);
-                if (!game.addPlayer(playerId, data.name)) {
-                    conn.send({ type: 'error', message: 'Table is full' });
-                    return;
-                }
-                hostConnections[conn.peer] = { conn, playerId, name: data.name };
-                toast(data.name + ' joined');
-            }
-            conn.send({ type: 'joined', playerId: hostConnections[conn.peer].playerId });
-            updateWaitingRoom();
-            broadcastWaitingRoom();
-        } else if (data.type === 'action') {
-            const entry = hostConnections[conn.peer];
-            if (entry) {
-                game.handleAction(entry.playerId, data.action, data.amount);
-            }
-        }
-    }
-
-    function handleHostDisconnect(conn) {
-        const entry = hostConnections[conn.peer];
-        if (entry) {
-            game.setDisconnected(entry.playerId, true);
-            toast(entry.name + ' disconnected');
-            if (game.phase !== PHASE.WAITING) {
-                // Check if it's their turn, auto-act
-                const pIdx = game.players.findIndex(p => p.id === entry.playerId);
-                if (pIdx === game.currentPlayerIndex) {
-                    game._checkAutoActions();
-                }
-                game.onStateChange();
-            }
-            updateWaitingRoom();
-            broadcastWaitingRoom();
-        }
-    }
-
     function broadcastState() {
-        for (const [peerId, entry] of Object.entries(hostConnections)) {
-            if (entry.conn.open) {
-                entry.conn.send({ type: 'state', state: game.getStateForPlayer(entry.playerId) });
-            }
+        for (const [clientId, entry] of lobby.players) {
+            lobby.send(clientId, { type: 'state', state: game.getStateForPlayer(entry.playerId) });
         }
     }
 
     function broadcastWaitingRoom() {
         const players = game.players.map(p => ({ name: p.name, id: p.id, disconnected: p.disconnected }));
-        for (const entry of Object.values(hostConnections)) {
-            if (entry.conn.open) {
-                entry.conn.send({ type: 'waitingRoom', players, roomCode });
-            }
-        }
+        lobby.broadcast({ type: 'waitingRoom', players, roomCode });
     }
 
     /* ── CLIENT ── */
     async function joinGame(name, code) {
         roomCode = code.toUpperCase();
-        hostPeerId = peerIdFromCode(roomCode);
-
-        peer = await createPeer(undefined); // auto ID
-
         myName = name;
         isHost = false;
 
-        peer.on('disconnected', () => {
-            if (!peer.destroyed) {
-                setTimeout(() => peer.reconnect(), 2000);
-            }
+        lobby = new SlopLobby.SlopLobby({
+            roomPrefix: 'slop-holdem-',
+            storageKey: 'holdem-client-id',
+            onClientData: (data) => {
+                if (data.type === 'joined') {
+                    myPlayerId = data.playerId;
+                    showScreen('waiting-room');
+                    $('#display-code').textContent = roomCode;
+                    $('#btn-start-game').style.display = 'none';
+                } else if (data.type === 'waitingRoom') {
+                    renderWaitingPlayers(data.players);
+                } else if (data.type === 'state') {
+                    lastGameState = data.state;
+                    if ($('#game').classList.contains('active') || data.state.phase !== PHASE.WAITING) {
+                        showScreen('game');
+                        renderGame(data.state);
+                    }
+                } else if (data.type === 'gameStart') {
+                    showScreen('game');
+                } else if (data.type === 'gameOver') {
+                    showGameOver(data.winner);
+                } else if (data.type === 'error') {
+                    toast(data.message);
+                    resetToLobby();
+                }
+            },
+            onStateChange: (status) => {
+                if (status === 'disconnected') {
+                    toast('Disconnected from host');
+                } else if (status === 'reconnected') {
+                    toast('Reconnected!');
+                } else if (status === 'reconnect-failed') {
+                    toast('Could not reconnect to host');
+                    resetToLobby();
+                }
+            },
         });
 
-        // peer-unavailable fires on the peer, not the connection, so listen here
-        peer.on('error', (err) => {
-            if (err.type === 'peer-unavailable') {
-                toast('Room not found — check the code');
-                resetToLobby();
-            } else if (err.type === 'disconnected' && !peer.destroyed) {
-                peer.reconnect();
-            }
-        });
-
-        await connectToHost();
+        await lobby.joinRoom(roomCode, myName);
     }
 
     function resetToLobby() {
-        if (peer && !peer.destroyed) peer.destroy();
-        peer = null;
-        hostConnection = null;
-        clearReconnectTimer();
+        if (lobby) { lobby.destroy(); lobby = null; }
         showScreen('lobby');
         $('#btn-join').disabled = false;
         $('#btn-join').textContent = 'Join Table';
@@ -1548,108 +1457,12 @@
         $('#btn-create').textContent = 'Create Table';
     }
 
-    function connectToHost() {
-        if (peer.destroyed) return Promise.reject(new Error('Peer destroyed'));
-
-        return new Promise((resolve, reject) => {
-            hostConnection = peer.connect(hostPeerId, { reliable: true });
-
-            const timeout = setTimeout(() => {
-                toast('Connection timed out');
-                resetToLobby();
-                reject(new Error('Connection timed out'));
-            }, 15000);
-
-            hostConnection.on('open', () => {
-                clearTimeout(timeout);
-                clearReconnectTimer();
-                hostConnection.send({ type: 'join', name: myName });
-                // Don't resolve yet — wait for 'joined' confirmation
-            });
-
-            hostConnection.on('data', (data) => {
-                if (data.type === 'joined') {
-                    clearTimeout(timeout);
-                    myPlayerId = data.playerId;
-                    showScreen('waiting-room');
-                    $('#display-code').textContent = roomCode;
-                    $('#btn-start-game').style.display = 'none';
-                    resolve();
-                } else if (data.type === 'waitingRoom') {
-                    renderWaitingPlayers(data.players);
-                } else if (data.type === 'state') {
-                    clearTimeout(timeout);
-                    lastGameState = data.state;
-                    if ($('#game').classList.contains('active') || data.state.phase !== PHASE.WAITING) {
-                        showScreen('game');
-                        renderGame(data.state);
-                    }
-                    resolve();
-                } else if (data.type === 'gameStart') {
-                    showScreen('game');
-                } else if (data.type === 'gameOver') {
-                    showGameOver(data.winner);
-                } else if (data.type === 'error') {
-                    clearTimeout(timeout);
-                    toast(data.message);
-                    resetToLobby();
-                    reject(new Error(data.message));
-                }
-            });
-
-            hostConnection.on('close', () => {
-                clearTimeout(timeout);
-                // Only reconnect if we actually joined successfully
-                if (myPlayerId) {
-                    toast('Disconnected from host');
-                    scheduleReconnect();
-                } else {
-                    toast('Could not connect to host');
-                    resetToLobby();
-                    reject(new Error('Connection closed'));
-                }
-            });
-
-            hostConnection.on('error', (err) => {
-                clearTimeout(timeout);
-                if (myPlayerId) {
-                    scheduleReconnect();
-                } else {
-                    toast('Connection error');
-                    resetToLobby();
-                    reject(new Error('Connection error'));
-                }
-            });
-        });
-    }
-
-    function scheduleReconnect() {
-        if (reconnectTimer) return;
-        reconnectTimer = setTimeout(() => {
-            reconnectTimer = null;
-            if (peer && !peer.destroyed) {
-                toast('Reconnecting...');
-                connectToHost().catch(() => {
-                    // If reconnect fails, try again
-                    scheduleReconnect();
-                });
-            }
-        }, 3000);
-    }
-
-    function clearReconnectTimer() {
-        if (reconnectTimer) {
-            clearTimeout(reconnectTimer);
-            reconnectTimer = null;
-        }
-    }
-
     function sendAction(action, amount) {
         const msg = { type: 'action', action, amount };
         if (isHost) {
             game.handleAction(myPlayerId, action, amount);
-        } else if (hostConnection && hostConnection.open) {
-            hostConnection.send(msg);
+        } else if (lobby) {
+            lobby.sendToHost(msg);
         }
     }
 
@@ -2012,9 +1825,7 @@
         }
         showScreen('game');
         // Tell clients
-        for (const entry of Object.values(hostConnections)) {
-            if (entry.conn.open) entry.conn.send({ type: 'gameStart' });
-        }
+        lobby.broadcast({ type: 'gameStart' });
         game.startHand();
     });
 
@@ -2026,13 +1837,13 @@
         $('#game-menu').classList.remove('show');
     });
     $('#btn-leave').addEventListener('click', () => {
-        if (peer) peer.destroy();
+        if (lobby) lobby.destroy();
         location.reload();
     });
 
     // Game over - back to lobby
     $('#btn-back-lobby').addEventListener('click', () => {
-        if (peer) peer.destroy();
+        if (lobby) lobby.destroy();
         location.reload();
     });
 

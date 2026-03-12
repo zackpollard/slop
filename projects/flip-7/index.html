@@ -7,74 +7,25 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+    <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
+    <script src="lib/slopnet.js"></script>
+    <script src="lib/sloplobby.js"></script>
+    <link rel="stylesheet" href="lib/slop-theme.css">
     <style>
-        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        /* Game-specific styles — base theme loaded from lib/slop-theme.css */
 
         :root {
-            --color-bg: #0f0f0c;
-            --color-surface: #1a1a16;
-            --color-surface-hover: #222218;
-            --color-border: #2e2e24;
-            --color-text: #e8e4d4;
-            --color-text-muted: #9a9686;
-            --color-accent: #c4a24e;
-            --color-accent-dim: rgba(196, 162, 78, 0.15);
-            --color-error: #c45e4e;
-            --color-success: #4a9e6e;
             --color-bust: #c45e4e;
-            --font-body: 'Inter', sans-serif;
-            --font-mono: 'JetBrains Mono', monospace;
-        }
-
-        body {
-            font-family: var(--font-body);
-            background: var(--color-bg);
-            color: var(--color-text);
-            line-height: 1.6;
-            min-height: 100vh;
-        }
-
-        .container {
-            max-width: 900px;
-            margin: 0 auto;
-            padding: 2rem 1.5rem;
-        }
-
-        header {
-            margin-bottom: 2rem;
-            text-align: center;
         }
 
         header h1 {
-            font-size: 2rem;
             font-weight: 700;
-            letter-spacing: -0.02em;
         }
 
-        header h1 .accent { color: var(--color-accent); }
-
-        header p {
-            color: var(--color-text-muted);
-            margin-top: 0.25rem;
-            font-size: 0.95rem;
-        }
-
-        .section {
-            background: var(--color-surface);
-            border: 1px solid var(--color-border);
-            border-radius: 12px;
-            padding: 1.5rem;
-            margin-bottom: 1.5rem;
-        }
-
-        .section h2 {
-            font-size: 0.85rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            color: var(--color-text-muted);
-            margin-bottom: 0.75rem;
+        .player-tag {
+            border-radius: 6px;
+            border-color: var(--color-accent);
+            color: var(--color-accent);
         }
 
         /* Setup */
@@ -117,25 +68,6 @@
             border-color: var(--color-accent);
         }
 
-        .player-tags {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.5rem;
-            margin-top: 0.75rem;
-        }
-
-        .player-tag {
-            display: flex;
-            align-items: center;
-            gap: 0.35rem;
-            padding: 0.35rem 0.65rem;
-            background: var(--color-accent-dim);
-            border: 1px solid var(--color-accent);
-            border-radius: 6px;
-            font-size: 0.85rem;
-            color: var(--color-accent);
-        }
-
         .player-tag button {
             background: none;
             border: none;
@@ -154,53 +86,9 @@
             opacity: 0.7;
         }
 
-        /* Buttons */
-        .btn {
-            font-family: var(--font-body);
-            font-size: 0.85rem;
-            font-weight: 600;
-            padding: 0.6rem 1.2rem;
-            border: 1px solid var(--color-border);
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.2s;
-            background: var(--color-surface);
-            color: var(--color-text);
-        }
-
-        .btn:hover {
-            background: var(--color-surface-hover);
-            border-color: var(--color-accent);
-        }
-
-        .btn-primary {
-            background: var(--color-accent);
-            color: var(--color-bg);
-            border-color: var(--color-accent);
-        }
-
-        .btn-primary:hover {
-            background: #d4b25e;
-            border-color: #d4b25e;
-        }
-
         .btn-primary:disabled {
             opacity: 0.5;
             cursor: not-allowed;
-        }
-
-        .btn-danger {
-            color: var(--color-error);
-            border-color: var(--color-error);
-        }
-
-        .btn-danger:hover {
-            background: rgba(196, 94, 78, 0.15);
-        }
-
-        .btn-sm {
-            font-size: 0.75rem;
-            padding: 0.35rem 0.65rem;
         }
 
         /* Standings */
@@ -570,8 +458,6 @@
             color: var(--color-accent);
         }
 
-        .hidden { display: none !important; }
-
         /* Mode selection */
         .mode-selection {
             display: flex;
@@ -611,29 +497,6 @@
         .mode-btn .mode-desc {
             font-size: 0.8rem;
             color: var(--color-text-muted);
-        }
-
-        /* Room code display */
-        .room-code-display {
-            text-align: center;
-            padding: 1rem;
-        }
-
-        .room-code-display .code {
-            font-family: var(--font-mono);
-            font-size: 2.5rem;
-            font-weight: 700;
-            letter-spacing: 0.2em;
-            color: var(--color-accent);
-            user-select: all;
-        }
-
-        .room-code-display .label {
-            font-size: 0.8rem;
-            color: var(--color-text-muted);
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            margin-bottom: 0.5rem;
         }
 
         /* Lobby */
@@ -763,19 +626,9 @@
         }
 
         .waiting-message .spinner {
-            display: inline-block;
             width: 20px;
             height: 20px;
-            border: 2px solid var(--color-border);
-            border-top-color: var(--color-accent);
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
             margin-right: 0.5rem;
-            vertical-align: middle;
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
         }
 
         /* Multiplayer banner */
@@ -801,14 +654,11 @@
         }
 
         @media (max-width: 600px) {
-            .container { padding: 1rem; }
-            header h1 { font-size: 1.5rem; }
             .setup-row { flex-direction: column; }
             .setup-row .field { min-width: unset; }
             .card-btn { width: 2.2rem; height: 2.2rem; font-size: 0.8rem; }
             .standings-table { font-size: 0.85rem; }
             .standings-table th, .standings-table td { padding: 0.4rem 0.5rem; }
-            .room-code-display .code { font-size: 1.8rem; }
             .mode-btn { min-width: unset; }
         }
     </style>
@@ -1059,6 +909,8 @@
 
     <script>
     (function() {
+        const { esc } = SlopLobby;
+
         // =====================================================================
         // STATE
         // =====================================================================
@@ -1071,20 +923,15 @@
 
         // Multiplayer state
         let gameMode = 'single'; // 'single' | 'host' | 'peer'
-        let peer = null;
-        let connections = {}; // host: {peerId: {conn, playerName}}, peer: not used
-        let hostConn = null;  // peer: connection to host
+        let lobby = null;  // SlopLobby instance
         let roomCode = '';
         let myName = '';
-        let lobbyPlayers = []; // [{name, isHost, peerId}]
+        let lobbyPlayers = []; // [{name, isHost, clientId}]
         let peerSubmissions = {}; // host tracks: {playerName: scoreData}
         let myScoreSubmitted = false;
         let hostEditingPlayers = new Set(); // host manually editing these remote players
         let disconnectedPlayers = new Set(); // players currently disconnected
         let localPlayers = new Set(); // players added locally by host (no device)
-        let reconnectAttempts = 0;
-        let reconnectTimer = null;
-        const MAX_RECONNECT_ATTEMPTS = 20;
 
         const NUMBER_CARDS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
         const MODIFIER_CARDS = ['+2', '+4', '+6', '+8', '+10'];
@@ -1155,20 +1002,7 @@
             return name.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
         }
 
-        function esc(str) {
-            const div = document.createElement('div');
-            div.textContent = str;
-            return div.innerHTML;
-        }
-
-        function generateRoomCode() {
-            const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-            let code = '';
-            for (let i = 0; i < 6; i++) {
-                code += chars.charAt(Math.floor(Math.random() * chars.length));
-            }
-            return code;
-        }
+        // Room code generation is handled by SlopNet
 
         // =====================================================================
         // SAVE/LOAD (single device only)
@@ -1276,254 +1110,101 @@
         });
 
         // =====================================================================
-        // HOST LOBBY - PEER.JS
+        // HOST LOBBY - SLOPNET
         // =====================================================================
-        function initHostPeer() {
+        async function initHostPeer() {
             hostConnecting.classList.remove('hidden');
             hostReady.classList.add('hidden');
-            roomCode = generateRoomCode();
 
-            peer = new Peer('flip7-' + roomCode, {
-                debug: 0
+            lobby = new SlopLobby.SlopLobby({
+                roomPrefix: 'flip7-',
+                storageKey: 'flip7-client-id',
+                onHostData: (clientId, data) => {
+                    if (data.type === 'score-submit' && gameStarted) {
+                        handleScoreSubmission(data.playerName, data.scoreData);
+                    }
+                },
+                onPlayerJoined: (clientId, metadata) => {
+                    const name = (metadata && metadata.name || '').trim().substring(0, 20);
+                    if (!name) return 'Name is required';
+
+                    // Block new players after game has started
+                    if (gameStarted) {
+                        return 'Game already in progress. You can only rejoin with your original name.';
+                    }
+
+                    // Check for duplicate names in lobby
+                    const allNames = lobbyPlayers.map(p => p.name);
+                    if (myName) allNames.push(myName);
+                    if (allNames.includes(name)) {
+                        return 'Name already taken';
+                    }
+
+                    // Accept — SlopLobby adds to lobby.players automatically
+                    lobbyPlayers.push({ name, isHost: false, clientId });
+
+                    lobby.send(clientId, { type: 'join-ok' });
+                    broadcastLobbyUpdate();
+                    renderHostLobby();
+                    updateHostStartBtn();
+                },
+                onPlayerRejoined: (clientId, metadata) => {
+                    const name = (metadata && metadata.name || '').trim().substring(0, 20);
+                    if (!name) return;
+
+                    if (gameStarted && players.includes(name) && name !== myName) {
+                        disconnectedPlayers.delete(name);
+
+                        // Update lobby player entry
+                        const lobbyEntry = lobbyPlayers.find(p => p.name === name);
+                        if (lobbyEntry) {
+                            lobbyEntry.clientId = clientId;
+                        }
+
+                        // Send rejoin-ok with current game state
+                        lobby.send(clientId, {
+                            type: 'rejoin-ok',
+                            players: players,
+                            rounds: rounds,
+                            currentRound: currentRound,
+                            gameOver: gameOver
+                        });
+
+                        // If host was manually editing this player, stop
+                        hostEditingPlayers.delete(name);
+
+                        updateMpPlayerCount();
+                        renderGame();
+                    }
+                },
+                onPlayerLeft: (clientId, meta) => {
+                    if (!meta) return;
+
+                    if (!gameStarted) {
+                        lobbyPlayers = lobbyPlayers.filter(p => p.clientId !== clientId);
+                        broadcastLobbyUpdate();
+                        renderHostLobby();
+                        updateHostStartBtn();
+                    } else {
+                        // During game, mark as disconnected but keep player
+                        disconnectedPlayers.add(meta.name);
+                        updateMpPlayerCount();
+                        renderGame();
+                    }
+                },
             });
 
-            peer.on('open', (id) => {
+            try {
+                roomCode = await lobby.createRoom(myName || '_pending_');
                 hostConnecting.classList.add('hidden');
                 hostReady.classList.remove('hidden');
                 roomCodeDisplay.textContent = roomCode;
                 lobbyPlayers = [];
                 renderHostLobby();
                 hostNameInput.focus();
-            });
-
-            peer.on('error', (err) => {
-                if (err.type === 'unavailable-id') {
-                    // Room code collision, try again
-                    peer.destroy();
-                    roomCode = generateRoomCode();
-                    initHostPeer();
-                    return;
-                }
-                console.error('Host peer error:', err);
-                if (gameStarted) {
-                    startHostReconnect();
-                } else {
-                    hostConnecting.innerHTML = `<span class="connection-dot error"></span><span>Failed to create room. Please try again.</span>`;
-                }
-            });
-
-            peer.on('disconnected', () => {
-                // PeerJS lost connection to signaling server
-                if (gameStarted) {
-                    startHostReconnect();
-                }
-            });
-
-            setupHostConnectionHandler();
-        }
-
-        function setupHostConnectionHandler() {
-            if (!peer) return;
-            peer.on('connection', (conn) => {
-                conn.on('open', () => {
-                    // Wait for join message
-                });
-
-                conn.on('data', (data) => {
-                    handleHostMessage(conn, data);
-                });
-
-                conn.on('close', () => {
-                    handlePeerDisconnect(conn);
-                });
-
-                conn.on('error', () => {
-                    handlePeerDisconnect(conn);
-                });
-            });
-        }
-
-        // =====================================================================
-        // HOST AUTO-RECONNECT
-        // =====================================================================
-        let hostReconnectAttempts = 0;
-        let hostReconnectTimer = null;
-        const MAX_HOST_RECONNECT_ATTEMPTS = 20;
-
-        function startHostReconnect() {
-            if (hostReconnectTimer) {
-                clearTimeout(hostReconnectTimer);
-                hostReconnectTimer = null;
-            }
-            hostReconnectAttempts = 0;
-            // Mark all remote peers as disconnected
-            for (const [peerId, info] of Object.entries(connections)) {
-                info.disconnected = true;
-                disconnectedPlayers.add(info.playerName);
-            }
-            connections = {};
-            mpConnectionDot.classList.remove('connected');
-            mpConnectionDot.classList.add('error');
-            updateMpPlayerCount();
-            renderGame();
-            showReconnectBanner('host');
-            attemptHostReconnect();
-        }
-
-        function attemptHostReconnect() {
-            if (!gameStarted || !roomCode) return;
-            if (hostReconnectAttempts >= MAX_HOST_RECONNECT_ATTEMPTS) {
-                showReconnectFailed('host');
-                return;
-            }
-
-            const delay = Math.min(1000 * Math.pow(1.5, hostReconnectAttempts), 15000);
-            hostReconnectAttempts++;
-            updateReconnectBanner(hostReconnectAttempts, MAX_HOST_RECONNECT_ATTEMPTS);
-
-            hostReconnectTimer = setTimeout(() => {
-                hostReconnectTimer = null;
-                doHostReconnect();
-            }, delay);
-        }
-
-        function doHostReconnect() {
-            if (!gameStarted || !roomCode) return;
-
-            // Destroy old peer cleanly
-            if (peer) {
-                try { peer.destroy(); } catch(e) {}
-                peer = null;
-            }
-
-            peer = new Peer('flip7-' + roomCode, { debug: 0 });
-
-            peer.on('open', () => {
-                // Successfully re-registered with the same room code
-                hostReconnectAttempts = 0;
-                hostReconnectTimer = null;
-                hideReconnectBanner();
-                mpConnectionDot.classList.remove('error');
-                mpConnectionDot.classList.add('connected');
-                updateMpPlayerCount();
-                // Peers will reconnect on their own and send join messages
-                setupHostConnectionHandler();
-            });
-
-            peer.on('error', (err) => {
-                console.error('Host reconnect error:', err);
-                if (err.type === 'unavailable-id') {
-                    // Our old ID is still reserved, wait and retry
-                    setTimeout(() => attemptHostReconnect(), 2000);
-                } else {
-                    attemptHostReconnect();
-                }
-            });
-
-            peer.on('disconnected', () => {
-                if (gameStarted) {
-                    attemptHostReconnect();
-                }
-            });
-        }
-
-        function handleHostMessage(conn, data) {
-            if (data.type === 'join') {
-                const name = data.name.trim().substring(0, 20);
-                if (!name) return;
-
-                // Check if this is a reconnection during an active game
-                if (gameStarted && players.includes(name) && name !== myName) {
-                    // Reconnecting player - update their connection
-                    // Remove old connection entry for this player
-                    for (const [peerId, info] of Object.entries(connections)) {
-                        if (info.playerName === name) {
-                            delete connections[peerId];
-                            break;
-                        }
-                    }
-                    connections[conn.peer] = { conn, playerName: name };
-                    disconnectedPlayers.delete(name);
-
-                    // Update lobby player entry
-                    const lobbyEntry = lobbyPlayers.find(p => p.name === name);
-                    if (lobbyEntry) {
-                        lobbyEntry.peerId = conn.peer;
-                    }
-
-                    // Send rejoin-ok with current game state
-                    conn.send({
-                        type: 'rejoin-ok',
-                        players: players,
-                        rounds: rounds,
-                        currentRound: currentRound,
-                        gameOver: gameOver
-                    });
-
-                    // If host was manually editing this player, stop
-                    hostEditingPlayers.delete(name);
-
-                    updateMpPlayerCount();
-                    renderGame();
-                    return;
-                }
-
-                // Block new players after game has started
-                if (gameStarted) {
-                    conn.send({ type: 'join-error', message: 'Game already in progress. You can only rejoin with your original name.' });
-                    return;
-                }
-
-                // Check for duplicate names in lobby
-                const allNames = lobbyPlayers.map(p => p.name);
-                if (myName) allNames.push(myName);
-                if (allNames.includes(name)) {
-                    conn.send({ type: 'join-error', message: 'Name already taken' });
-                    return;
-                }
-
-                connections[conn.peer] = { conn, playerName: name };
-                lobbyPlayers.push({ name, isHost: false, peerId: conn.peer });
-
-                conn.send({ type: 'join-ok' });
-                broadcastLobbyUpdate();
-                renderHostLobby();
-                updateHostStartBtn();
-            } else if (data.type === 'score-submit' && gameStarted) {
-                handleScoreSubmission(data.playerName, data.scoreData);
-            } else if (data.type === 'ping') {
-                try { conn.send({ type: 'pong' }); } catch(e) {}
-            } else if (data.type === 'pong') {
-                // Peer is alive — if they were marked disconnected, restore them
-                const info = connections[conn.peer];
-                if (info && info.disconnected) {
-                    info.disconnected = false;
-                    disconnectedPlayers.delete(info.playerName);
-                    updateMpPlayerCount();
-                    renderGame();
-                }
-            }
-        }
-
-        function handlePeerDisconnect(conn) {
-            const info = connections[conn.peer];
-            if (info) {
-                // Remove from lobby if game hasn't started
-                if (!gameStarted) {
-                    lobbyPlayers = lobbyPlayers.filter(p => p.peerId !== conn.peer);
-                    delete connections[conn.peer];
-                    broadcastLobbyUpdate();
-                    renderHostLobby();
-                    updateHostStartBtn();
-                } else {
-                    // During game, mark as disconnected but keep player
-                    if (connections[conn.peer]) {
-                        connections[conn.peer].disconnected = true;
-                        disconnectedPlayers.add(info.playerName);
-                    }
-                    updateMpPlayerCount();
-                    renderGame();
-                }
+            } catch (err) {
+                console.error('Host start error:', err);
+                hostConnecting.innerHTML = `<span class="connection-dot error"></span><span>Failed to create room. Please try again.</span>`;
             }
         }
 
@@ -1532,17 +1213,15 @@
             if (myName) playerList.push({ name: myName, isHost: true });
             lobbyPlayers.forEach(p => playerList.push({ name: p.name, isHost: false }));
 
-            Object.values(connections).forEach(({ conn }) => {
-                try { conn.send({ type: 'lobby-update', players: playerList }); } catch(e) {}
-            });
+            if (lobby) {
+                lobby.broadcast({ type: 'lobby-update', players: playerList });
+            }
         }
 
         function broadcastToAll(data) {
-            Object.values(connections).forEach(({ conn, disconnected }) => {
-                if (!disconnected) {
-                    try { conn.send(data); } catch(e) {}
-                }
-            });
+            if (lobby) {
+                lobby.broadcast(data);
+            }
         }
 
         function renderHostLobby() {
@@ -1612,7 +1291,7 @@
                 return;
             }
             hostLocalPlayerInput.style.borderColor = '';
-            lobbyPlayers.push({ name, isHost: false, peerId: null, isLocal: true });
+            lobbyPlayers.push({ name, isHost: false, clientId: null, isLocal: true });
             localPlayers.add(name);
             hostLocalPlayerInput.value = '';
             hostLocalPlayerInput.focus();
@@ -1631,7 +1310,7 @@
         });
 
         hostBackBtn.addEventListener('click', () => {
-            cleanupPeer();
+            cleanupMultiplayer();
             showPhase(modePhase);
         });
 
@@ -1663,7 +1342,7 @@
         });
 
         // =====================================================================
-        // JOIN LOBBY - PEER.JS
+        // JOIN LOBBY - SLOPNET
         // =====================================================================
         joinConnectBtn.addEventListener('click', () => attemptJoin());
 
@@ -1685,7 +1364,7 @@
             }
         });
 
-        function attemptJoin() {
+        async function attemptJoin() {
             const code = joinCodeInput.value.trim().toUpperCase();
             const name = joinNameInput.value.trim().substring(0, 20);
             joinError.classList.add('hidden');
@@ -1706,168 +1385,48 @@
             joinForm.classList.add('hidden');
             joinConnecting.classList.remove('hidden');
 
-            peer = new Peer(undefined, { debug: 0 });
-
-            peer.on('open', () => {
-                hostConn = peer.connect('flip7-' + code, { reliable: true });
-
-                const timeout = setTimeout(() => {
-                    showJoinError('Could not connect. Check the room code and try again.');
-                    joinConnecting.classList.add('hidden');
-                    joinForm.classList.remove('hidden');
-                    cleanupPeer();
-                }, 10000);
-
-                hostConn.on('open', () => {
-                    clearTimeout(timeout);
-                    hostConn.send({ type: 'join', name: myName });
-                });
-
-                hostConn.on('data', (data) => {
+            lobby = new SlopLobby.SlopLobby({
+                roomPrefix: 'flip7-',
+                storageKey: 'flip7-client-id',
+                onClientData: (data) => {
                     handlePeerMessage(data);
-                });
-
-                hostConn.on('close', () => {
-                    if (gameStarted) {
-                        mpConnectionDot.classList.remove('connected');
-                        mpConnectionDot.classList.add('error');
-                        startAutoReconnect();
-                    } else {
-                        showJoinError('Disconnected from host.');
-                        joinConnecting.classList.add('hidden');
-                        joinWaiting.classList.add('hidden');
-                        joinForm.classList.remove('hidden');
-                    }
-                });
-
-                hostConn.on('error', () => {
-                    clearTimeout(timeout);
-                    if (gameStarted) {
-                        mpConnectionDot.classList.remove('connected');
-                        mpConnectionDot.classList.add('error');
-                        startAutoReconnect();
-                    } else {
-                        showJoinError('Connection error. Please try again.');
-                        joinConnecting.classList.add('hidden');
-                        joinForm.classList.remove('hidden');
-                        cleanupPeer();
-                    }
-                });
-            });
-
-            peer.on('error', (err) => {
-                console.error('Join peer error:', err);
-                if (err.type === 'peer-unavailable') {
-                    showJoinError('Room not found. Check the code and try again.');
-                } else {
-                    showJoinError('Connection error. Please try again.');
-                }
-                joinConnecting.classList.add('hidden');
-                joinForm.classList.remove('hidden');
-                cleanupPeer();
-            });
-        }
-
-        // =====================================================================
-        // AUTO-RECONNECT (peer side)
-        // =====================================================================
-        function startAutoReconnect() {
-            if (reconnectTimer) {
-                clearTimeout(reconnectTimer);
-                reconnectTimer = null;
-            }
-            reconnectAttempts = 0;
-            showReconnectBanner('peer');
-            attemptReconnect();
-        }
-
-        function attemptReconnect() {
-            if (!gameStarted || !roomCode || !myName) return;
-            if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-                showReconnectFailed('peer');
-                return;
-            }
-
-            const delay = Math.min(1000 * Math.pow(1.5, reconnectAttempts), 15000);
-            reconnectAttempts++;
-            updateReconnectBanner(reconnectAttempts, MAX_RECONNECT_ATTEMPTS);
-
-            reconnectTimer = setTimeout(() => {
-                reconnectTimer = null;
-                doReconnect();
-            }, delay);
-        }
-
-        function doReconnect() {
-            if (!gameStarted || !roomCode || !myName) return;
-
-            // Destroy old peer cleanly
-            if (peer) {
-                try { peer.destroy(); } catch(e) {}
-                peer = null;
-            }
-            hostConn = null;
-
-            // Timeout for the entire reconnect attempt (PeerJS open + connection)
-            const overallTimeout = setTimeout(() => {
-                if (!hostConn || !hostConn.open) {
-                    hostConn = null;
-                    attemptReconnect();
-                }
-            }, 12000);
-
-            peer = new Peer(undefined, { debug: 0 });
-
-            peer.on('open', () => {
-                hostConn = peer.connect('flip7-' + roomCode, { reliable: true });
-
-                const connTimeout = setTimeout(() => {
-                    // Connection didn't open in time
-                    hostConn = null;
-                    attemptReconnect();
-                }, 8000);
-
-                hostConn.on('open', () => {
-                    clearTimeout(connTimeout);
-                    clearTimeout(overallTimeout);
-                    hostConn.send({ type: 'join', name: myName });
-                });
-
-                hostConn.on('data', (data) => {
-                    if (data.type === 'rejoin-ok') {
-                        // Successfully reconnected
-                        reconnectAttempts = 0;
+                },
+                onStateChange: (status) => {
+                    if (status === 'disconnected') {
+                        if (gameStarted) {
+                            mpConnectionDot.classList.remove('connected');
+                            mpConnectionDot.classList.add('error');
+                            showReconnectBanner('peer');
+                        } else {
+                            showJoinError('Disconnected from host.');
+                            joinConnecting.classList.add('hidden');
+                            joinWaiting.classList.add('hidden');
+                            joinForm.classList.remove('hidden');
+                        }
+                    } else if (status === 'reconnected') {
                         hideReconnectBanner();
                         mpConnectionDot.classList.remove('error');
                         mpConnectionDot.classList.add('connected');
+                    } else if (status === 'reconnect-failed') {
+                        showReconnectFailed('peer');
                     }
-                    handlePeerMessage(data);
-                });
-
-                hostConn.on('close', () => {
-                    clearTimeout(connTimeout);
-                    clearTimeout(overallTimeout);
-                    if (gameStarted) {
-                        mpConnectionDot.classList.remove('connected');
-                        mpConnectionDot.classList.add('error');
-                        attemptReconnect();
-                    }
-                });
-
-                hostConn.on('error', () => {
-                    clearTimeout(connTimeout);
-                    clearTimeout(overallTimeout);
-                    if (gameStarted) {
-                        attemptReconnect();
-                    }
-                });
+                },
             });
 
-            peer.on('error', (err) => {
-                clearTimeout(overallTimeout);
-                console.error('Reconnect peer error:', err);
-                attemptReconnect();
-            });
+            try {
+                await lobby.joinRoom(roomCode, myName);
+                // Connection established, wait for join-ok/join-error from host via 'data' event
+            } catch (err) {
+                console.error('Join error:', err);
+                if (err.type === 'peer-unavailable') {
+                    showJoinError('Room not found. Check the code and try again.');
+                } else {
+                    showJoinError('Could not connect. Check the room code and try again.');
+                }
+                joinConnecting.classList.add('hidden');
+                joinForm.classList.remove('hidden');
+                cleanupMultiplayer();
+            }
         }
 
         // =====================================================================
@@ -1890,7 +1449,6 @@
                     <span class="spinner" style="width:16px; height:16px; border-width:2px;"></span>
                     <span id="reconnect-text">${label}</span>
                 </div>
-                <button class="btn btn-sm" onclick="window._cancelReconnect()" style="font-size:0.75rem;">Cancel</button>
             `;
             banner.classList.remove('hidden');
         }
@@ -1922,102 +1480,25 @@
             }
         }
 
-        window._cancelReconnect = function() {
-            if (gameMode === 'host') {
-                if (hostReconnectTimer) {
-                    clearTimeout(hostReconnectTimer);
-                    hostReconnectTimer = null;
-                }
-                hostReconnectAttempts = MAX_HOST_RECONNECT_ATTEMPTS;
-                showReconnectFailed('host');
-            } else {
-                if (reconnectTimer) {
-                    clearTimeout(reconnectTimer);
-                    reconnectTimer = null;
-                }
-                reconnectAttempts = MAX_RECONNECT_ATTEMPTS;
-                showReconnectFailed('peer');
-            }
-        };
-
         window._retryReconnect = function() {
-            if (gameMode === 'host') {
-                hostReconnectAttempts = 0;
+            if (gameMode === 'host' && lobby) {
+                // SlopNet handles reconnection internally; we can't easily reset it
+                // but we can show the banner again
                 showReconnectBanner('host');
-                attemptHostReconnect();
-            } else {
-                reconnectAttempts = 0;
+            } else if (gameMode === 'peer' && lobby && lobby.client) {
+                lobby.client.reconnect();
                 showReconnectBanner('peer');
-                attemptReconnect();
             }
         };
-
-        // =====================================================================
-        // PING/PONG HEALTH CHECK
-        // =====================================================================
-        let lastPongTime = 0;
-        let healthCheckTimer = null;
-
-        function sendPing() {
-            if (gameMode === 'peer' && hostConn && hostConn.open) {
-                try { hostConn.send({ type: 'ping' }); } catch(e) {}
-            } else if (gameMode === 'host') {
-                Object.values(connections).forEach(({ conn, disconnected }) => {
-                    if (!disconnected && conn.open) {
-                        try { conn.send({ type: 'ping' }); } catch(e) {}
-                    }
-                });
-            }
-        }
 
         // Detect visibility change (screen on/off) to trigger reconnect
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState !== 'visible' || !gameStarted) return;
 
-            if (gameMode === 'peer') {
-                // Always reset attempts when user comes back to the tab
-                // so we get a fresh set of retries
-                if (reconnectTimer) {
-                    clearTimeout(reconnectTimer);
-                    reconnectTimer = null;
-                }
-                reconnectAttempts = 0;
-
-                if (!hostConn || !hostConn.open || !peer || peer.destroyed || peer.disconnected) {
-                    // Connection is clearly dead
-                    mpConnectionDot.classList.remove('connected');
-                    mpConnectionDot.classList.add('error');
-                    showReconnectBanner('peer');
-                    attemptReconnect();
-                } else {
-                    // Connection might look alive but could be stale — ping to verify
-                    lastPongTime = 0;
-                    sendPing();
-                    clearTimeout(healthCheckTimer);
-                    healthCheckTimer = setTimeout(() => {
-                        if (lastPongTime === 0) {
-                            // No pong received — connection is dead
-                            mpConnectionDot.classList.remove('connected');
-                            mpConnectionDot.classList.add('error');
-                            showReconnectBanner('peer');
-                            attemptReconnect();
-                        }
-                    }, 3000);
-                }
-            } else if (gameMode === 'host') {
-                if (hostReconnectTimer) {
-                    clearTimeout(hostReconnectTimer);
-                    hostReconnectTimer = null;
-                }
-                hostReconnectAttempts = 0;
-
-                if (!peer || peer.disconnected || peer.destroyed) {
-                    mpConnectionDot.classList.remove('connected');
-                    mpConnectionDot.classList.add('error');
-                    startHostReconnect();
-                } else {
-                    // Host peer is alive, but check if peers need re-pinging
-                    sendPing();
+            if (gameMode === 'peer' && lobby && lobby.client) {
+                // SlopNet handles reconnection, but we can nudge it on visibility change
+                if (!lobby.client.isConnected) {
+                    lobby.client.reconnect();
                 }
             }
         });
@@ -2033,11 +1514,6 @@
                 joinWaiting.classList.remove('hidden');
             } else if (data.type === 'rejoin-ok') {
                 // Reconnecting to an active game
-                reconnectAttempts = 0;
-                hideReconnectBanner();
-                mpConnectionDot.classList.remove('error');
-                mpConnectionDot.classList.add('connected');
-
                 players = data.players;
                 rounds = data.rounds;
                 currentRound = data.currentRound;
@@ -2053,10 +1529,10 @@
                     checkWinner();
                 }
             } else if (data.type === 'join-error') {
-                showJoinError(data.message || 'Could not join.');
+                showJoinError(data.reason || data.message || 'Could not join.');
                 joinConnecting.classList.add('hidden');
                 joinForm.classList.remove('hidden');
-                cleanupPeer();
+                cleanupMultiplayer();
             } else if (data.type === 'lobby-update') {
                 renderJoinLobby(data.players);
             } else if (data.type === 'game-start') {
@@ -2090,13 +1566,6 @@
                 winnerBanner.classList.add('hidden');
                 resetRoundState();
                 renderGame();
-            } else if (data.type === 'ping') {
-                if (hostConn) {
-                    try { hostConn.send({ type: 'pong' }); } catch(e) {}
-                }
-            } else if (data.type === 'pong') {
-                lastPongTime = Date.now();
-                clearTimeout(healthCheckTimer);
             } else if (data.type === 'play-again') {
                 players = data.players;
                 rounds = [];
@@ -2109,7 +1578,7 @@
             } else if (data.type === 'game-reset') {
                 gameStarted = false;
                 gameOver = false;
-                cleanupPeer();
+                cleanupMultiplayer();
                 showPhase(modePhase);
             }
         }
@@ -2121,7 +1590,7 @@
         }
 
         joinBackBtn.addEventListener('click', () => {
-            cleanupPeer();
+            cleanupMultiplayer();
             showPhase(modePhase);
         });
 
@@ -2139,9 +1608,10 @@
         }
 
         function updateMpPlayerCount() {
-            if (gameMode === 'host') {
-                const connected = Object.values(connections).filter(c => !c.disconnected).length;
-                mpPlayerCount.textContent = `${connected + 1} player${connected + 1 !== 1 ? 's' : ''} connected`;
+            if (gameMode === 'host' && lobby) {
+                const connected = lobby.getConnectedClientIds().length;
+                const total = connected + 1; // +1 for host
+                mpPlayerCount.textContent = `${total} player${total !== 1 ? 's' : ''} connected`;
             } else {
                 mpPlayerCount.textContent = `${players.length} players`;
             }
@@ -2150,29 +1620,17 @@
         // =====================================================================
         // CLEANUP
         // =====================================================================
-        function cleanupPeer() {
-            if (peer) {
-                peer.destroy();
-                peer = null;
+        function cleanupMultiplayer() {
+            if (lobby) {
+                lobby.destroy();
+                lobby = null;
             }
-            hostConn = null;
-            connections = {};
             lobbyPlayers = [];
             peerSubmissions = {};
             myScoreSubmitted = false;
             hostEditingPlayers.clear();
             disconnectedPlayers.clear();
             localPlayers.clear();
-            if (reconnectTimer) {
-                clearTimeout(reconnectTimer);
-                reconnectTimer = null;
-            }
-            reconnectAttempts = 0;
-            if (hostReconnectTimer) {
-                clearTimeout(hostReconnectTimer);
-                hostReconnectTimer = null;
-            }
-            hostReconnectAttempts = 0;
             hideReconnectBanner();
             myName = '';
             roomCode = '';
@@ -2724,8 +2182,8 @@
             };
 
             // Send to host
-            if (hostConn) {
-                hostConn.send({
+            if (lobby) {
+                lobby.sendToHost({
                     type: 'score-submit',
                     playerName: myName,
                     scoreData: scoreData
@@ -2863,7 +2321,7 @@
             myScoreSubmitted = false;
             localStorage.removeItem('flip7-state');
 
-            cleanupPeer();
+            cleanupMultiplayer();
             gameMode = 'single';
 
             showPhase(modePhase);

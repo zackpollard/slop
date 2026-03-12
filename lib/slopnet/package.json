@@ -1,0 +1,14 @@
+{
+  "name": "slopnet",
+  "version": "1.0.0",
+  "description": "PeerJS connection management library with automatic reconnection, heartbeat monitoring, and message queuing",
+  "main": "slopnet.js",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "vitest": "^3.0.0"
+  },
+  "private": true
+}

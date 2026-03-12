@@ -7,157 +7,33 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+    <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
+    <script src="lib/slopnet.js"></script>
+    <script src="lib/sloplobby.js"></script>
+    <link rel="stylesheet" href="lib/slop-theme.css">
     <style>
+        /* Game-specific styles — base theme loaded from lib/slop-theme.css */
+
         :root {
-            --color-bg: #0f0f0c;
-            --color-surface: #1a1a16;
-            --color-surface-hover: #222218;
-            --color-border: #2e2e24;
-            --color-text: #e8e4d4;
-            --color-text-muted: #9a9686;
-            --color-accent: #c4a24e;
-            --color-accent-dim: rgba(196, 162, 78, 0.15);
-            --color-error: #c45e4e;
-            --color-success: #4a9e6e;
             --color-pink: #d4619b;
             --color-pink-dim: rgba(212, 97, 155, 0.15);
-            --font-body: 'Inter', sans-serif;
-            --font-mono: 'JetBrains Mono', monospace;
         }
 
-        * { box-sizing: border-box; margin: 0; padding: 0; }
+        .container { max-width: 700px; }
 
-        body {
-            font-family: var(--font-body);
-            background: var(--color-bg);
-            color: var(--color-text);
-            min-height: 100vh;
-            line-height: 1.6;
-        }
-
-        .container {
-            max-width: 700px;
-            margin: 0 auto;
-            padding: 2rem 1.5rem;
-        }
-
-        header {
-            text-align: center;
-            margin-bottom: 2rem;
-        }
-
-        header h1 {
-            font-size: 2rem;
-            font-weight: 800;
-            letter-spacing: -0.03em;
-        }
-
-        header h1 .accent { color: var(--color-accent); }
-
-        header .subtitle {
-            color: var(--color-text-muted);
-            font-size: 0.95rem;
-            margin-top: 0.25rem;
-        }
-
-        .section {
-            background: var(--color-surface);
-            border: 1px solid var(--color-border);
-            border-radius: 12px;
-            padding: 1.5rem;
-            margin-bottom: 1.25rem;
-        }
+        .section { margin-bottom: 1.25rem; }
 
         .section h2 {
             font-size: 1.1rem;
             font-weight: 700;
-            margin-bottom: 1rem;
+            text-transform: none;
             letter-spacing: -0.01em;
-        }
-
-        .btn {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 0.5rem;
-            padding: 0.65rem 1.25rem;
-            border: 1px solid var(--color-border);
-            border-radius: 8px;
-            background: var(--color-surface);
             color: var(--color-text);
-            font-family: var(--font-body);
-            font-size: 0.9rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.15s ease;
+            margin-bottom: 1rem;
         }
-
-        .btn:hover { background: var(--color-surface-hover); border-color: var(--color-accent); }
-
-        .btn-primary {
-            background: var(--color-accent);
-            color: #0f0f0c;
-            border-color: var(--color-accent);
-        }
-
-        .btn-primary:hover { background: #d4b25e; border-color: #d4b25e; }
-
-        .btn-danger {
-            color: var(--color-error);
-            border-color: var(--color-error);
-        }
-
-        .btn-danger:hover { background: rgba(196, 94, 78, 0.15); }
-
-        .btn-sm {
-            padding: 0.35rem 0.75rem;
-            font-size: 0.8rem;
-        }
-
-        .btn-wide { width: 100%; }
-
-        .btn:disabled {
-            opacity: 0.4;
-            cursor: not-allowed;
-            pointer-events: none;
-        }
-
-        input[type="text"] {
-            width: 100%;
-            padding: 0.65rem 0.85rem;
-            background: var(--color-bg);
-            border: 1px solid var(--color-border);
-            border-radius: 8px;
-            color: var(--color-text);
-            font-family: var(--font-body);
-            font-size: 0.95rem;
-            outline: none;
-            transition: border-color 0.15s ease;
-        }
-
-        input[type="text"]:focus { border-color: var(--color-accent); }
-        input[type="text"]::placeholder { color: var(--color-text-muted); }
 
         /* Player tags */
-        .player-tags {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.5rem;
-            margin-bottom: 0.5rem;
-        }
-
-        .player-tag {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.4rem;
-            padding: 0.35rem 0.75rem;
-            background: var(--color-accent-dim);
-            border: 1px solid rgba(196, 162, 78, 0.3);
-            border-radius: 20px;
-            font-size: 0.85rem;
-            font-weight: 500;
-        }
+        .player-tags { margin-bottom: 0.5rem; }
 
         .player-tag.has-cow {
             background: var(--color-pink-dim);
@@ -242,29 +118,6 @@
 
         .scoreboard tr.is-cow td {
             color: var(--color-pink);
-        }
-
-        /* Room code display */
-        .room-code-display {
-            text-align: center;
-            margin-bottom: 1.25rem;
-        }
-
-        .room-code-display .label {
-            font-size: 0.8rem;
-            color: var(--color-text-muted);
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            margin-bottom: 0.25rem;
-        }
-
-        .room-code {
-            font-family: var(--font-mono);
-            font-size: 2.5rem;
-            font-weight: 700;
-            letter-spacing: 0.2em;
-            color: var(--color-accent);
-            user-select: all;
         }
 
         /* Home screen */
@@ -462,19 +315,7 @@
             margin-bottom: 0.25rem;
         }
 
-        .status-msg .spinner {
-            display: inline-block;
-            width: 1.2rem;
-            height: 1.2rem;
-            border: 2px solid var(--color-border);
-            border-top-color: var(--color-accent);
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-            vertical-align: middle;
-            margin-right: 0.5rem;
-        }
-
-        @keyframes spin { to { transform: rotate(360deg); } }
+        .status-msg .spinner { margin-right: 0.5rem; }
 
         .submitted-check { font-size: 3rem; margin-bottom: 0.5rem; }
 
@@ -538,10 +379,6 @@
         }
 
         .error-banner.visible { display: block; }
-
-        /* Screens */
-        .screen { display: none; }
-        .screen.active { display: block; }
 
         @media (max-width: 500px) {
             .container { padding: 1.25rem 1rem; }
@@ -616,7 +453,7 @@
                 </div>
                 <div class="name-input-section">
                     <label>Room code</label>
-                    <input type="text" id="join-code-input" placeholder="ABCD" maxlength="4" style="font-family: var(--font-mono); font-size: 1.3rem; text-align: center; text-transform: uppercase; letter-spacing: 0.15em;">
+                    <input type="text" id="join-code-input" placeholder="ABC123" maxlength="6" style="font-family: var(--font-mono); font-size: 1.3rem; text-align: center; text-transform: uppercase; letter-spacing: 0.15em;">
                 </div>
                 <button class="btn btn-primary btn-wide" id="btn-join-go">Join Room</button>
             </div>
@@ -863,10 +700,12 @@
         let role = null; // 'host' or 'player'
         let myName = '';
         let roomCode = '';
-        let peer = null;
+
+        // SlopLobby
+        const { $, esc, toast } = SlopLobby;
+        let lobby = null;
 
         // Host state
-        let hostConns = new Map();       // name -> DataConnection
         let disconnectedPlayers = new Set(); // names of disconnected players still in game
         let players = [];
         let scores = {};
@@ -881,17 +720,14 @@
         let mooTimeout = null;
         let gamePhase = 'lobby'; // 'lobby' | 'question' | 'answering' | 'merge' | 'results'
 
-        // Player state
-        let playerConn = null;
-
         // ── DOM helpers ────────────────────────────────────────────
-        const $ = id => document.getElementById(id);
-
         function showScreen(id) {
             document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
             const el = $(id);
-            el.classList.add('active');
-            el.classList.add('fade-in');
+            if (el) {
+                el.classList.add('active');
+                el.classList.add('fade-in');
+            }
         }
 
         function showError(msg) {
@@ -901,17 +737,18 @@
             setTimeout(() => el.classList.remove('visible'), 5000);
         }
 
-        function esc(str) {
-            const d = document.createElement('div');
-            d.textContent = str;
-            return d.innerHTML;
+        // ── clientId <-> name helpers (host only) ────────────────
+        function nameForClientId(clientId) {
+            const entry = lobby && lobby.players.get(clientId);
+            return entry ? entry.name : null;
         }
 
-        function genCode() {
-            const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
-            let code = '';
-            for (let i = 0; i < 4; i++) code += chars[Math.floor(Math.random() * chars.length)];
-            return code;
+        function clientIdForName(name) {
+            if (!lobby) return null;
+            for (const [cid, info] of lobby.players.entries()) {
+                if (info.name === name) return cid;
+            }
+            return null;
         }
 
         // ── Moo sound via Web Audio API ──────────────────────────
@@ -1009,7 +846,7 @@
             const name = $('join-name-input').value.trim();
             const code = $('join-code-input').value.trim().toUpperCase();
             if (!name) { $('join-name-input').focus(); return; }
-            if (code.length !== 4) { $('join-code-input').focus(); return; }
+            if (!code || code.length < 4) { $('join-code-input').focus(); return; }
             myName = name;
             roomCode = code;
             role = 'player';
@@ -1025,114 +862,119 @@
         });
 
         $('join-code-input').addEventListener('input', e => {
-            e.target.value = e.target.value.toUpperCase().replace(/[^A-Z]/g, '');
+            e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
         });
 
         // ════════════════════════════════════════════════════════════
         // HOST LOGIC
         // ════════════════════════════════════════════════════════════
-        function startHost() {
+        async function startHost() {
             showScreen('connecting-screen');
-            roomCode = genCode();
-            const peerId = 'herdm-' + roomCode;
 
-            peer = new Peer(peerId);
-
-            peer.on('open', () => {
-                players = [myName];
-                scores = {};
-                scores[myName] = 0;
-                cowHolder = null;
-                showLobby();
-            });
-
-            peer.on('error', err => {
-                if (err.type === 'unavailable-id') {
-                    roomCode = genCode();
-                    peer.destroy();
-                    startHost();
-                    return;
-                }
-                showError('Connection error: ' + err.message);
-                showScreen('home-screen');
-            });
-
-            peer.on('connection', conn => {
-                conn.on('open', () => {
-                    conn.on('data', data => handleHostMessage(conn, data));
-                });
-
-                conn.on('close', () => {
-                    for (const [name, c] of hostConns.entries()) {
-                        if (c === conn) {
-                            hostConns.delete(name);
-                            if (gamePhase === 'lobby') {
-                                // In lobby, fully remove them
-                                players = players.filter(p => p !== name);
-                            } else {
-                                // Mid-game: mark as disconnected, don't remove
-                                disconnectedPlayers.add(name);
-                                // If we're waiting for their answer, check if we can proceed
-                                if (gamePhase === 'answering') {
-                                    checkAllAnswered();
-                                }
-                            }
-                            broadcastLobby();
-                            break;
-                        }
-                    }
-                });
-            });
-        }
-
-        function handleHostMessage(conn, data) {
-            switch (data.type) {
-                case 'join': {
-                    const name = data.name.trim();
+            lobby = new SlopLobby.SlopLobby({
+                roomPrefix: 'herdm-',
+                storageKey: 'herd-client-id',
+                onHostData: (clientId, data) => {
+                    handleHostMessage(clientId, data);
+                },
+                onPlayerJoined: (clientId, metadata) => {
+                    const name = (metadata && metadata.name || '').trim();
                     if (!name) {
-                        conn.send({ type: 'error', message: 'Name is required' });
-                        return;
+                        return 'Name is required';
                     }
 
-                    // Check if this name belongs to a disconnected player — allow reconnect
+                    // Check if name is already taken by a connected player
+                    const existingMatch = players.find(p => p.toLowerCase() === name.toLowerCase());
+                    if (existingMatch) {
+                        return 'Name already taken';
+                    }
+
+                    // Also check against host name
+                    if (name.toLowerCase() === myName.toLowerCase()) {
+                        return 'Name already taken';
+                    }
+
+                    // Accept — add to game state
+                    players.push(name);
+                    if (!(name in scores)) scores[name] = 0;
+                    lobby.send(clientId, { type: 'joined', name, players, scores, cowHolder });
+                    broadcastLobby();
+                },
+                onPlayerRejoined: (clientId, metadata) => {
+                    const name = (metadata && metadata.name || '').trim();
+
+                    // Check if this name belongs to a disconnected player
                     const existingMatch = players.find(p => p.toLowerCase() === name.toLowerCase());
                     if (existingMatch && disconnectedPlayers.has(existingMatch)) {
                         // Reconnecting player — restore them
                         disconnectedPlayers.delete(existingMatch);
-                        hostConns.set(existingMatch, conn);
-                        conn.send({
+                        lobby.players.set(clientId, { name: existingMatch });
+                        lobby.send(clientId, {
                             type: 'rejoin',
                             name: existingMatch, players, scores, cowHolder, gamePhase,
                             round: roundNumber, question: currentQuestion,
                             hasAnswered: !!answers[existingMatch]
                         });
                         broadcastLobby();
-                        break;
-                    }
-
-                    // Name taken by a connected player
-                    if (existingMatch) {
-                        conn.send({ type: 'error', message: 'Name already taken' });
-                        return;
-                    }
-
-                    hostConns.set(name, conn);
-                    players.push(name);
-                    if (!(name in scores)) scores[name] = 0;
-                    conn.send({ type: 'joined', name, players, scores, cowHolder });
-                    broadcastLobby();
-                    break;
-                }
-                case 'answer': {
-                    for (const [name, c] of hostConns.entries()) {
-                        if (c === conn) {
-                            if (!answers[name]) {
-                                answers[name] = data.answer;
-                                broadcastProgress();
-                                checkAllAnswered();
-                            }
-                            break;
+                    } else {
+                        // Treat as a fresh join (clientId reconnected but name may differ)
+                        const prevName = nameForClientId(clientId);
+                        if (prevName && disconnectedPlayers.has(prevName)) {
+                            disconnectedPlayers.delete(prevName);
+                            lobby.players.set(clientId, { name: prevName });
+                            lobby.send(clientId, {
+                                type: 'rejoin',
+                                name: prevName, players, scores, cowHolder, gamePhase,
+                                round: roundNumber, question: currentQuestion,
+                                hasAnswered: !!answers[prevName]
+                            });
+                            broadcastLobby();
                         }
+                    }
+                },
+                onPlayerLeft: (clientId, meta) => {
+                    const name = meta ? meta.name : null;
+                    if (!name) return;
+
+                    if (gamePhase === 'lobby') {
+                        // In lobby, fully remove them
+                        players = players.filter(p => p !== name);
+                    } else {
+                        // Mid-game: mark as disconnected, don't remove
+                        disconnectedPlayers.add(name);
+                        // If we're waiting for their answer, check if we can proceed
+                        if (gamePhase === 'answering') {
+                            checkAllAnswered();
+                        }
+                    }
+                    broadcastLobby();
+                },
+            });
+
+            try {
+                roomCode = await lobby.createRoom(myName);
+            } catch (err) {
+                showError('Connection error: ' + err.message);
+                showScreen('home-screen');
+                return;
+            }
+
+            players = [myName];
+            scores = {};
+            scores[myName] = 0;
+            cowHolder = null;
+
+            showLobby();
+        }
+
+        function handleHostMessage(clientId, data) {
+            switch (data.type) {
+                case 'answer': {
+                    const name = nameForClientId(clientId);
+                    if (name && !answers[name]) {
+                        answers[name] = data.answer;
+                        broadcastProgress();
+                        checkAllAnswered();
                     }
                     break;
                 }
@@ -1140,9 +982,7 @@
         }
 
         function broadcast(msg) {
-            for (const conn of hostConns.values()) {
-                try { conn.send(msg); } catch (e) { /* ignore */ }
-            }
+            if (lobby) lobby.broadcast(msg);
         }
 
         function broadcastLobby() {
@@ -1166,8 +1006,8 @@
                     if (lastPlayer === myName) {
                         playMoo();
                     } else {
-                        const conn = hostConns.get(lastPlayer);
-                        if (conn) try { conn.send({ type: 'moo' }); } catch (e) { /* */ }
+                        const cid = clientIdForName(lastPlayer);
+                        if (cid) lobby.send(cid, { type: 'moo' });
                     }
                 }, 5000);
             }
@@ -1519,58 +1359,39 @@
         // ════════════════════════════════════════════════════════════
         // PLAYER LOGIC
         // ════════════════════════════════════════════════════════════
-        function startPlayer(isRejoin) {
+        async function startPlayer(isRejoin) {
             showScreen('connecting-screen');
-            peer = new Peer();
 
-            peer.on('open', () => {
-                const hostPeerId = 'herdm-' + roomCode;
-                playerConn = peer.connect(hostPeerId, { reliable: true });
-
-                const timeout = setTimeout(() => {
-                    showError('Could not connect — check the room code');
-                    if (isRejoin) {
-                        clearSession();
-                        showScreen('home-screen');
-                    } else {
-                        showScreen('join-screen');
+            lobby = new SlopLobby.SlopLobby({
+                roomPrefix: 'herdm-',
+                storageKey: 'herd-client-id',
+                onClientData: (data) => handlePlayerMessage(data),
+                onStateChange: (status) => {
+                    if (status === 'disconnected') {
+                        showError('Disconnected from host — attempting to reconnect...');
                     }
-                    peer.destroy();
-                }, 10000);
-
-                playerConn.on('open', () => {
-                    clearTimeout(timeout);
-                    playerConn.send({ type: 'join', name: myName, rejoin: !!isRejoin });
-                });
-
-                playerConn.on('data', data => handlePlayerMessage(data));
-
-                playerConn.on('close', () => {
-                    showError('Disconnected from host — rejoin with the same name to reconnect');
-                    showScreen('home-screen');
-                });
-
-                playerConn.on('error', err => {
-                    clearTimeout(timeout);
-                    showError('Connection error: ' + err.message);
-                    if (isRejoin) {
-                        clearSession();
-                        showScreen('home-screen');
-                    } else {
-                        showScreen('join-screen');
+                    if (status === 'reconnected') {
+                        // SlopLobby auto-reconnected; host will send rejoin state
                     }
-                });
+                    if (status === 'reconnect-failed') {
+                        showError('Lost connection to host');
+                        showScreen('home-screen');
+                    }
+                },
             });
 
-            peer.on('error', err => {
-                showError('Connection error: ' + err.message);
+            try {
+                await lobby.joinRoom(roomCode, myName);
+            } catch (err) {
+                showError('Could not connect — check the room code');
                 if (isRejoin) {
                     clearSession();
                     showScreen('home-screen');
                 } else {
                     showScreen('join-screen');
                 }
-            });
+                return;
+            }
         }
 
         function handlePlayerMessage(data) {
@@ -1648,6 +1469,11 @@
                     showLobby();
                     break;
 
+                case 'join-error':
+                    showError(data.reason || 'Could not join room');
+                    showScreen('join-screen');
+                    break;
+
                 case 'error':
                     showError(data.message);
                     showScreen('join-screen');
@@ -1676,7 +1502,7 @@
         $('pa-submit-btn').addEventListener('click', () => {
             const answer = $('pa-input').value.trim();
             if (!answer) return;
-            playerConn.send({ type: 'answer', answer });
+            lobby.sendToHost({ type: 'answer', answer });
             showScreen('player-waiting-screen');
         });
 

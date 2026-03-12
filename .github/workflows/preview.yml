@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "projects/**"
+      - "lib/**"
       - ".github/workflows/preview.yml"
 
 permissions:
@@ -31,6 +32,16 @@ jobs:
           for dir in projects/*/; do
             project_name=$(basename "$dir")
             cp -r "$dir" "_preview/$project_name"
+          done
+
+          # Copy shared libraries into projects that use PeerJS networking
+          for project in texas-holdem cards-against-humanity herd-mentality flip-7; do
+            if [ -d "_preview/$project" ]; then
+              mkdir -p "_preview/$project/lib"
+              cp lib/slopnet/slopnet.js "_preview/$project/lib/slopnet.js"
+              cp lib/sloplobby/sloplobby.js "_preview/$project/lib/sloplobby.js"
+              cp lib/slop-theme.css "_preview/$project/lib/slop-theme.css"
+            fi
           done
 
           # Generate index page listing all projects
