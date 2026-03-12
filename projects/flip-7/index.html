@@ -369,6 +369,13 @@
             color: var(--color-bust);
         }
 
+        .player-score-header .running-total {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--color-text-muted);
+            font-weight: 600;
+        }
+
         .card-input-area {
             display: flex;
             flex-wrap: wrap;
@@ -982,7 +989,8 @@
                 <div class="winner-score" id="winner-score"></div>
                 <p>wins the game!</p>
                 <div class="actions-row" style="justify-content:center; margin-top:1rem;">
-                    <button class="btn btn-primary" id="new-game-btn">New Game</button>
+                    <button class="btn btn-primary" id="play-again-btn">Play Again</button>
+                    <button class="btn" id="new-game-btn">New Game</button>
                 </div>
             </div>
 
@@ -1104,6 +1112,7 @@
         const winnerName = document.getElementById('winner-name');
         const winnerScore = document.getElementById('winner-score');
         const newGameBtn = document.getElementById('new-game-btn');
+        const playAgainBtn = document.getElementById('play-again-btn');
         const roundSection = document.getElementById('round-section');
         const backToModeBtn = document.getElementById('back-to-mode-btn');
 
@@ -2004,6 +2013,15 @@
                 winnerBanner.classList.add('hidden');
                 resetRoundState();
                 renderGame();
+            } else if (data.type === 'play-again') {
+                players = data.players;
+                rounds = [];
+                currentRound = data.currentRound;
+                gameOver = false;
+                myScoreSubmitted = false;
+                resetRoundState();
+                winnerBanner.classList.add('hidden');
+                renderGame();
             } else if (data.type === 'game-reset') {
                 gameStarted = false;
                 gameOver = false;
@@ -2257,9 +2275,10 @@
             const id = nameToId(name);
             const isDisconnected = disconnectedPlayers.has(name);
             const showOverrideLabel = hostOverride && gameMode === 'host';
+            const prevTotal = getPlayerTotal(name);
             return `<div class="player-score-card" id="card-${id}">
                 <div class="player-score-header">
-                    <span class="name">${esc(name)}${showOverrideLabel ? '<span class="disconnected-badge">(editing)</span>' : ''}${isDisconnected && showOverrideLabel ? '<span class="disconnected-badge">DISCONNECTED</span>' : ''}</span>
+                    <span class="name">${esc(name)}${showOverrideLabel ? '<span class="disconnected-badge">(editing)</span>' : ''}${isDisconnected && showOverrideLabel ? '<span class="disconnected-badge">DISCONNECTED</span>' : ''}${prevTotal > 0 ? `<span class="running-total" style="margin-left:0.5rem;">Overall: ${prevTotal}</span>` : ''}</span>
                     <span class="round-total" id="total-${id}">0</span>
                 </div>
                 <div class="card-input-area">
@@ -2289,9 +2308,11 @@
             const id = nameToId(name);
             const score = scoreData.score;
             const isBust = scoreData.bust;
+            const prevTotal = getPlayerTotal(name);
+            const projectedTotal = prevTotal + score;
             return `<div class="player-score-card submitted ${isBust ? 'bust' : ''}" id="card-${id}">
                 <div class="player-score-header">
-                    <span class="name">${esc(name)}<button class="edit-score-btn" onclick="window._hostEditPlayer('${esc(name)}')">Edit</button></span>
+                    <span class="name">${esc(name)}<button class="edit-score-btn" onclick="window._hostEditPlayer('${esc(name)}')">Edit</button>${prevTotal > 0 ? `<span class="running-total" style="margin-left:0.5rem;">Overall: ${projectedTotal}</span>` : (score > 0 ? `<span class="running-total" style="margin-left:0.5rem;">Overall: ${projectedTotal}</span>` : '')}</span>
                     <span class="round-total ${isBust ? 'bust-text' : ''}">${isBust ? 'BUST' : score}</span>
                 </div>
                 <div class="score-breakdown" style="margin-top:0;">
@@ -2302,9 +2323,10 @@
 
         function renderWaitingCard(name) {
             const id = nameToId(name);
+            const prevTotal = getPlayerTotal(name);
             return `<div class="player-score-card" id="card-${id}" style="opacity:0.5;">
                 <div class="player-score-header">
-                    <span class="name">${esc(name)}<button class="edit-score-btn" onclick="window._hostEditPlayer('${esc(name)}')">Enter Score</button></span>
+                    <span class="name">${esc(name)}<button class="edit-score-btn" onclick="window._hostEditPlayer('${esc(name)}')">Enter Score</button>${prevTotal > 0 ? `<span class="running-total" style="margin-left:0.5rem;">Overall: ${prevTotal}</span>` : ''}</span>
                     <span class="round-total" style="color:var(--color-text-muted);">...</span>
                 </div>
                 <div class="waiting-message" style="padding:0.5rem 0;">
@@ -2315,9 +2337,10 @@
 
         function renderDisconnectedCard(name) {
             const id = nameToId(name);
+            const prevTotal = getPlayerTotal(name);
             return `<div class="player-score-card" id="card-${id}" style="border-color: var(--color-error); opacity:0.8;">
                 <div class="player-score-header">
-                    <span class="name">${esc(name)}<span class="disconnected-badge">DISCONNECTED</span></span>
+                    <span class="name">${esc(name)}<span class="disconnected-badge">DISCONNECTED</span>${prevTotal > 0 ? `<span class="running-total" style="margin-left:0.5rem;">Overall: ${prevTotal}</span>` : ''}</span>
                     <span class="round-total" style="color:var(--color-text-muted);">...</span>
                 </div>
                 <div style="display:flex; align-items:center; gap:0.75rem; padding:0.5rem 0;">
@@ -2435,6 +2458,31 @@
             if (totalEl) {
                 totalEl.textContent = state.bust ? 'BUST' : score;
                 totalEl.classList.toggle('bust-text', state.bust);
+            }
+
+            // Update the running total to show projected overall
+            const card = document.getElementById(`card-${id}`);
+            if (card) {
+                const runningTotalEl = card.querySelector('.running-total');
+                // Find player name from id
+                const playerName = players.find(n => nameToId(n) === id);
+                if (playerName) {
+                    const prevTotal = getPlayerTotal(playerName);
+                    const projected = prevTotal + score;
+                    if (runningTotalEl) {
+                        runningTotalEl.textContent = `Overall: ${projected}`;
+                        runningTotalEl.style.display = '';
+                    } else if (projected > 0) {
+                        const nameEl = card.querySelector('.player-score-header .name');
+                        if (nameEl) {
+                            const span = document.createElement('span');
+                            span.className = 'running-total';
+                            span.style.marginLeft = '0.5rem';
+                            span.textContent = `Overall: ${projected}`;
+                            nameEl.appendChild(span);
+                        }
+                    }
+                }
             }
 
             const card = document.getElementById(`card-${id}`);
@@ -2681,12 +2729,41 @@
             resetAll();
         });
 
+        playAgainBtn.addEventListener('click', () => {
+            resetGameKeepPlayers();
+        });
+
         newGameBtn.addEventListener('click', () => {
             if (gameMode === 'host') {
                 broadcastToAll({ type: 'game-reset' });
             }
             resetAll();
         });
+
+        function resetGameKeepPlayers() {
+            rounds = [];
+            currentRound = 1;
+            gameOver = false;
+            resetRoundState();
+            peerSubmissions = {};
+            myScoreSubmitted = false;
+            hostEditingPlayers.clear();
+            winnerBanner.classList.add('hidden');
+
+            if (gameMode === 'host') {
+                broadcastToAll({
+                    type: 'play-again',
+                    players: players,
+                    currentRound: 1
+                });
+            }
+
+            if (gameMode === 'single') {
+                saveState();
+            }
+
+            renderGame();
+        }
 
         function resetAll() {
             players = [];
