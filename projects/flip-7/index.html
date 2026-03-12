@@ -2687,7 +2687,11 @@
         });
 
         function checkWinner() {
-            if (rounds.length === 0) return;
+            if (rounds.length === 0) {
+                winnerBanner.classList.add('hidden');
+                gameOver = false;
+                return;
+            }
 
             const lastRound = rounds[rounds.length - 1];
             let anyReached200 = false;
@@ -2716,6 +2720,8 @@
                 winnerBanner.classList.remove('hidden');
                 roundSection.classList.add('hidden');
                 saveState();
+            } else {
+                winnerBanner.classList.add('hidden');
             }
         }
 
