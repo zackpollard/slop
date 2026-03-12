@@ -1529,7 +1529,7 @@
                     checkWinner();
                 }
             } else if (data.type === 'join-error') {
-                showJoinError(data.message || 'Could not join.');
+                showJoinError(data.reason || data.message || 'Could not join.');
                 joinConnecting.classList.add('hidden');
                 joinForm.classList.remove('hidden');
                 cleanupMultiplayer();
