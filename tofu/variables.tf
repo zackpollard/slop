@@ -51,5 +51,8 @@ variable "projects" {
     herd-mentality = {
       subdomain = "herd-mentality.slop"
     }
+    texas-holdem = {
+      subdomain = "texas-holdem.slop"
+    }
   }
 }
