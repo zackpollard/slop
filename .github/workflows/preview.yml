@@ -35,7 +35,7 @@ jobs:
           done
 
           # Copy shared libraries into projects that use PeerJS networking
-          for project in texas-holdem cards-against-humanity herd-mentality flip-7; do
+          for project in texas-holdem cards-against-humanity herd-mentality flip-7 bang; do
             if [ -d "_preview/$project" ]; then
               mkdir -p "_preview/$project/lib"
               cp lib/slopnet/slopnet.js "_preview/$project/lib/slopnet.js"

@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../../lib/slop-theme.css">
+  <link rel="stylesheet" href="lib/slop-theme.css">
   <style>
     /* ── Game-specific variables ── */
     :root {
@@ -303,33 +303,15 @@
       color: var(--color-text);
     }
 
-    .action-btn {
-      background: var(--bang-gold);
-      color: #000;
-      border: none;
-      padding: 8px 20px;
-      border-radius: 6px;
-      font-weight: 600;
-      cursor: pointer;
-      margin: 4px;
-      font-family: inherit;
-      font-size: 0.85rem;
-      transition: background 0.15s;
-    }
-
-    .action-btn:hover { background: #d4b25e; }
-    .action-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-
-    .action-btn.danger { background: var(--bang-red); color: #fff; }
-    .action-btn.danger:hover { background: #a52020; }
-
-    .action-btn.secondary {
-      background: var(--color-surface);
-      color: var(--color-text);
-      border: 1px solid var(--color-border);
-    }
-
-    .action-btn.secondary:hover { background: var(--color-surface-hover); border-color: var(--bang-gold); }
+    /* Action buttons extend theme .btn */
+    #action-panel .btn { margin: 4px; }
+    .btn-secondary { background: var(--color-surface); color: var(--color-text); border-color: var(--color-border); }
+    .btn-secondary:hover { border-color: var(--bang-gold); }
+    .btn-accent { background: rgba(196,162,78,0.15); color: var(--bang-gold); border-color: rgba(196,162,78,0.3); }
+    .btn-accent:hover { background: rgba(196,162,78,0.25); border-color: var(--bang-gold); }
+    .btn-danger { background: var(--bang-red); color: #fff; border-color: var(--bang-red); }
+    .btn-danger:hover { background: #a52020; border-color: #a52020; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
     /* ── Your area ── */
     #your-area {
@@ -783,8 +765,8 @@
 <!-- ═══════════════════════════════════════════════════════ -->
 <!-- Scripts                                                -->
 <!-- ═══════════════════════════════════════════════════════ -->
-<script src="../../lib/slopnet/slopnet.js"></script>
-<script src="../../lib/sloplobby/sloplobby.js"></script>
+<script src="lib/slopnet.js"></script>
+<script src="lib/sloplobby.js"></script>
 <script src="js/data.js"></script>
 <script src="js/engine.js"></script>
 <script src="js/ui.js"></script>
