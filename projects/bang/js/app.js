@@ -33,33 +33,38 @@ function setupLobby() {
     if (!name) return toast('Enter your name');
     useDodgeCity = $('dodge-city-toggle').checked;
 
-    lobby = new SlopLobby.SlopLobby({
-      roomPrefix: 'bang-',
-      storageKey: 'bang-client-id',
-      onHostData: handleHostMessage,
-      onPlayerJoined: handlePlayerJoined,
-      onPlayerRejoined: handlePlayerRejoined,
-      onPlayerLeft: handlePlayerLeft,
-    });
+    try {
+      lobby = new SlopLobby.SlopLobby({
+        roomPrefix: 'bang-',
+        storageKey: 'bang-client-id',
+        onHostData: handleHostMessage,
+        onPlayerJoined: handlePlayerJoined,
+        onPlayerRejoined: handlePlayerRejoined,
+        onPlayerLeft: handlePlayerLeft,
+      });
 
-    const code = await lobby.createRoom(name);
-    isHost = true;
-    myId = 'host-' + Date.now() + Math.random().toString(36).slice(2, 5);
+      const code = await lobby.createRoom(name);
+      isHost = true;
+      myId = 'host-' + Date.now() + Math.random().toString(36).slice(2, 5);
 
-    BangUI.init(lobby);
-    BangUI.isHost = true;
+      BangUI.init(lobby);
+      BangUI.isHost = true;
 
-    $('room-code').textContent = code;
-    $('waiting-dodge-city').checked = useDodgeCity;
-    showScreen('waiting');
-    updateWaitingRoom();
+      $('room-code').textContent = code;
+      $('waiting-dodge-city').checked = useDodgeCity;
+      showScreen('waiting');
+      updateWaitingRoom();
 
-    $('waiting-dodge-city').onchange = () => {
-      useDodgeCity = $('waiting-dodge-city').checked;
-      broadcastWaitingRoom();
-    };
+      $('waiting-dodge-city').onchange = () => {
+        useDodgeCity = $('waiting-dodge-city').checked;
+        broadcastWaitingRoom();
+      };
 
-    $('btn-start').onclick = () => startGame();
+      $('btn-start').onclick = () => startGame();
+    } catch (err) {
+      console.error('Create room failed:', err);
+      toast('Failed to create room: ' + (err.message || err));
+    }
   };
 
   $('btn-join').onclick = async () => {
