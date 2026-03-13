@@ -165,26 +165,40 @@
 
     #screen-game.active { display: flex; }
 
-    #game-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
+    .game-info-bar {
       padding: 8px 16px;
       border-bottom: 1px solid var(--color-border);
       font-size: 0.85rem;
       flex-shrink: 0;
     }
 
-    #turn-info {
+    .info-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .info-item {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .info-label {
+      color: var(--color-text-muted);
+      font-size: 0.8rem;
+    }
+
+    .info-value {
       color: var(--color-text);
       font-weight: 600;
     }
 
-    #deck-info {
-      color: var(--color-text-muted);
-      font-family: var(--font-mono);
-      font-size: 0.8rem;
-    }
+    .info-value.empty { color: var(--color-text-muted); font-weight: 400; }
+
+    .turn-indicator .info-value { color: var(--bang-gold); }
 
     /* ── Opponents area ── */
     #opponents {
@@ -221,25 +235,33 @@
 
     .opponent.valid-target:hover { background: rgba(139, 26, 26, 0.2); }
 
-    .opponent-name {
-      font-weight: 600;
-      font-size: 0.85rem;
-      margin-bottom: 2px;
+    .opp-header {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      flex-wrap: wrap;
     }
 
-    .opponent-character {
+    .opp-name {
+      font-weight: 600;
+      font-size: 0.85rem;
+    }
+
+    .opp-character {
       font-size: 0.7rem;
       color: var(--color-text-muted);
       margin-bottom: 4px;
     }
 
-    .opponent-cards {
+    .opp-hp {
+      margin: 4px 0;
+    }
+
+    .opp-cards {
       font-size: 0.7rem;
       color: var(--color-text-muted);
       font-family: var(--font-mono);
-    }
-
-    .opponent-inplay {
       display: flex;
       gap: 3px;
       justify-content: center;
@@ -247,15 +269,29 @@
       margin-top: 4px;
     }
 
-    .opponent-inplay .mini-card {
-      font-size: 0.55rem;
+    .hand-count { color: var(--color-text-muted); }
+
+    .inplay-tag {
+      font-size: 0.6rem;
       padding: 1px 4px;
       border-radius: 3px;
       background: rgba(255, 255, 255, 0.08);
-      border: 1px solid var(--color-border);
-      color: var(--color-text-muted);
-      white-space: nowrap;
     }
+    .inplay-tag.weapon { color: var(--bang-gold); }
+
+    .sheriff-badge { color: var(--bang-sheriff); font-size: 0.9rem; }
+
+    .role-tag {
+      font-size: 0.65rem;
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-weight: 600;
+      text-transform: capitalize;
+    }
+    .role-sheriff { background: rgba(218, 165, 32, 0.2); color: var(--bang-sheriff); }
+    .role-deputy { background: rgba(74, 144, 217, 0.2); color: var(--bang-deputy); }
+    .role-outlaw { background: rgba(205, 51, 51, 0.2); color: var(--bang-outlaw); }
+    .role-renegade { background: rgba(136, 136, 136, 0.2); color: var(--bang-renegade); }
 
     /* ── Game center ── */
     #game-center {
@@ -282,12 +318,27 @@
       border: 1px solid var(--color-border);
     }
 
+    .log-title {
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--color-text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 4px;
+    }
+
+    .log-entries {
+      max-height: 120px;
+      overflow-y: auto;
+    }
+
     .log-entry {
       padding: 2px 0;
       border-bottom: 1px solid rgba(51, 51, 51, 0.3);
     }
 
     .log-entry:last-child { border-bottom: none; }
+    .log-entry.muted { color: var(--color-text-muted); font-style: italic; }
 
     /* ── Action panel ── */
     #action-panel {
@@ -301,6 +352,31 @@
       font-size: 0.95rem;
       margin-bottom: 8px;
       color: var(--color-text);
+    }
+    .action-msg.danger { color: var(--bang-red); font-weight: 600; }
+    .action-msg.waiting { color: var(--color-text-muted); font-style: italic; }
+    .action-msg.action-sub { font-size: 0.85rem; color: var(--color-text-muted); margin-top: 8px; }
+    .action-buttons { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+
+    .general-store-cards,
+    .kit-carlson-cards,
+    .lucky-duke-cards {
+      display: flex;
+      gap: 6px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin: 8px 0;
+    }
+
+    .damage-flash { animation: damageFlash 0.5s ease; }
+    @keyframes damageFlash {
+      0%, 100% { background: var(--color-surface); }
+      50% { background: rgba(139, 26, 26, 0.4); }
+    }
+    .card-played-flash { animation: cardFlash 0.6s ease; }
+    @keyframes cardFlash {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; transform: scale(1.05); }
     }
 
     /* Action buttons extend theme .btn */
@@ -321,7 +397,7 @@
       flex-shrink: 0;
     }
 
-    #your-info {
+    .your-info {
       display: flex;
       align-items: center;
       gap: 12px;
@@ -333,37 +409,64 @@
       flex-wrap: wrap;
     }
 
-    #your-info .your-name {
+    .your-identity {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .your-character {
       font-weight: 700;
       font-size: 0.95rem;
     }
 
-    #your-info .your-character {
-      font-size: 0.8rem;
-      color: var(--color-text-muted);
+    .your-hp {
+      display: flex;
+      align-items: center;
+      gap: 2px;
     }
 
-    #your-info .your-ability {
+    .hp-heart { font-size: 0.9rem; }
+    .hp-heart.full { color: #cd3333; }
+    .hp-heart.empty { color: var(--color-text-muted); opacity: 0.4; }
+    .hp-text { font-size: 0.75rem; color: var(--color-text-muted); margin-left: 4px; }
+
+    .your-ability {
       font-size: 0.7rem;
       color: var(--color-text-muted);
       font-style: italic;
       flex-basis: 100%;
     }
 
-    #your-inplay {
+    .your-inplay {
+      padding: 4px 8px;
+    }
+
+    .inplay-label {
+      font-size: 0.7rem;
+      color: var(--color-text-muted);
+      margin-bottom: 4px;
+    }
+
+    .inplay-cards {
       display: flex;
       gap: 4px;
       justify-content: center;
       flex-wrap: wrap;
-      padding: 4px 8px;
     }
 
-    #your-hand {
+    .your-hand {
       display: flex;
       gap: 4px;
       justify-content: center;
       flex-wrap: wrap;
       padding: 8px;
+    }
+
+    .hand-empty {
+      color: var(--color-text-muted);
+      font-size: 0.85rem;
+      padding: 16px;
     }
 
     /* ── Card styling ── */
@@ -545,7 +648,7 @@
       margin-bottom: 1.5rem;
     }
 
-    .final-role-row {
+    .final-role-card {
       display: flex;
       align-items: center;
       gap: 0.75rem;
@@ -555,24 +658,19 @@
       border-radius: 8px;
     }
 
-    .final-role-row.winner-row {
-      border-color: var(--bang-gold);
-      background: rgba(196, 162, 78, 0.08);
-    }
-
-    .final-role-row .player-name {
+    .final-name {
       font-weight: 600;
       flex: 1;
     }
 
-    .final-role-row .player-character {
+    .final-char {
       font-size: 0.8rem;
       color: var(--color-text-muted);
     }
 
-    .final-role-row .eliminated-mark {
+    .final-status {
       font-size: 0.75rem;
-      color: var(--bang-red);
+      color: var(--color-text-muted);
     }
 
     .gameover-actions {
@@ -598,17 +696,16 @@
       .card-back { width: 60px; height: 84px; font-size: 1rem; }
 
       .opponent { min-width: 100px; padding: 6px 8px; }
-      .opponent-name { font-size: 0.75rem; }
+      .opp-name { font-size: 0.75rem; }
 
-      #game-header { font-size: 0.75rem; padding: 6px 10px; }
+      .game-info-bar { font-size: 0.75rem; padding: 6px 10px; }
       #game-center { flex-direction: column; padding: 8px 10px; }
       #game-log { max-height: 100px; }
 
-      #your-info { padding: 6px 10px; margin: 6px 10px; gap: 8px; }
-      #your-hand { gap: 3px; padding: 6px; }
+      .your-info { padding: 6px 10px; margin: 6px 10px; gap: 8px; }
+      .your-hand { gap: 3px; padding: 6px; }
 
       #action-panel { padding: 8px; }
-      .action-btn { padding: 6px 14px; font-size: 0.8rem; }
 
       .game-title { font-size: 1.8rem; }
     }
@@ -712,10 +809,7 @@
 <!-- Screen: Game                                           -->
 <!-- ═══════════════════════════════════════════════════════ -->
 <div id="screen-game" class="screen">
-  <div id="game-header">
-    <div id="turn-info"></div>
-    <div id="deck-info"></div>
-  </div>
+  <div id="game-info" class="game-info-bar"></div>
   <div id="opponents"></div>
   <div id="game-center">
     <div id="discard-pile"></div>
@@ -813,7 +907,7 @@
 
       const code = await lobby.createRoom(name);
       isHost = true;
-      myId = lobby.clientId;
+      myId = 'host-' + Date.now() + Math.random().toString(36).slice(2, 5);
 
       BangUI.init(lobby);
       BangUI.isHost = true;
@@ -1029,6 +1123,10 @@
   // ── Helpers ──
   function getPlayerList() {
     const players = [];
+    // Host is always first player (not in lobby.players)
+    if (isHost && myId) {
+      players.push({ id: myId, name: lobby.hostName || $('input-name').value.trim() });
+    }
     if (lobby && lobby.players) {
       for (const [id, meta] of lobby.players) {
         players.push({ id, name: meta.name || meta });

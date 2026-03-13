@@ -446,8 +446,15 @@ class BangEngine {
         break;
       case 'pick':
       case 'pick_card':
-      case 'pick_cards':
         this.handlePick(playerIdx, action.cardId || action.cardIdx);
+        break;
+      case 'pick_cards':
+        // Kit Carlson: pick multiple cards one at a time
+        if (action.cardIds && action.cardIds.length > 0) {
+          for (const cid of action.cardIds) {
+            this.handlePick(playerIdx, cid);
+          }
+        }
         break;
       case 'choose':
         this.handleChoose(playerIdx, action.choice || action.choiceIdx);
@@ -1911,6 +1918,17 @@ class BangEngine {
     const s = this.state;
     const me = s.players[playerIdx];
     
+    // Determine if this player can play unlimited BANGs (Volcanic or Willy the Kid)
+    const eff = this.getEffectiveCharacter(playerIdx);
+    const hasVolcanic = me.inPlay.some(c => c.name === 'Volcanic');
+    const canUnlimitedBangs = hasVolcanic || eff.effect === 'unlimited_bangs';
+
+    // Get weapon name for each player
+    const getWeaponName = (p) => {
+      const w = p.inPlay.find(c => D.isWeapon(c));
+      return w ? w.name : 'Colt .45';
+    };
+
     return {
       yourIndex: playerIdx,
       hand: me.hand.map(c => ({...c})),
@@ -1921,7 +1939,7 @@ class BangEngine {
       myInPlay: me.inPlay.map(c => ({...c})),
       players: s.players.map((p, i) => ({
         name: p.name,
-        characterName: p.character.name,
+        character: p.character.name,
         characterAbility: p.character.ability,
         characterEffect: p.character.effect,
         hp: p.hp,
@@ -1929,19 +1947,24 @@ class BangEngine {
         inPlay: p.inPlay.map(c => ({...c})),
         handSize: p.hand.length,
         eliminated: p.eliminated,
+        isSheriff: p.role === 'sheriff',
         role: (p.role === 'sheriff' || p.eliminated || s.phase === 'gameOver') ? p.role : null,
+        roleRevealed: p.role === 'sheriff' || p.eliminated || s.phase === 'gameOver',
         isCurrentTurn: i === s.currentTurn,
+        weapon: getWeaponName(p),
       })),
       currentTurn: s.currentTurn,
       turnPhase: s.turnPhase,
       deckSize: s.deck.length,
       discardTop: s.discard.length > 0 ? {...s.discard[s.discard.length - 1]} : null,
-      bangsPlayed: s.bangsPlayedThisTurn,
-      pending: this.getPendingForPlayer(playerIdx),
+      bangPlayedThisTurn: s.bangsPlayedThisTurn > 0,
+      canPlayUnlimitedBangs: canUnlimitedBangs,
+      prompt: this.getPendingForPlayer(playerIdx),
       log: s.log.slice(-20),
-      winner: s.winner,
+      winner: s.winner ? s.winner.desc : null,
+      winnerTeam: s.winner ? s.winner.team : null,
       phase: s.phase,
-      aliveCount: this.getAliveCount(),
+      alivePlayers: this.getAliveCount(),
     };
   }
 
@@ -1953,28 +1976,34 @@ class BangEngine {
       case 'bang_response':
         return p.targetIdx === playerIdx ? {
           type: 'bang_response',
+          source: p.sourceIdx,
           sourceName: this.state.players[p.sourceIdx].name,
           missedNeeded: p.missedNeeded,
           missedPlayed: p.missedPlayed,
         } : {type: 'waiting', msg: 'Waiting for ' + this.state.players[p.targetIdx].name + ' to respond...'};
-      
+
       case 'indians_response':
         return p.respondents[p.currentIdx] === playerIdx ? {
           type: 'indians_response',
+          source: p.sourceIdx,
           sourceName: this.state.players[p.sourceIdx].name,
         } : {type: 'waiting', msg: 'Waiting for ' + this.state.players[p.respondents[p.currentIdx]].name + ' to respond to Indians!...'};
-      
+
       case 'gatling_response':
         return p.respondents[p.currentIdx] === playerIdx ? {
           type: 'gatling_response',
+          source: p.sourceIdx,
           sourceName: this.state.players[p.sourceIdx].name,
         } : {type: 'waiting', msg: 'Waiting for ' + this.state.players[p.respondents[p.currentIdx]].name + ' to respond to Gatling...'};
-      
-      case 'duel_response':
+
+      case 'duel_response': {
+        const oppIdx = p.currentResponder === p.sourceIdx ? p.targetIdx : p.sourceIdx;
         return p.currentResponder === playerIdx ? {
           type: 'duel_response',
-          opponentName: this.state.players[p.currentResponder === p.sourceIdx ? p.targetIdx : p.sourceIdx].name,
+          opponent: oppIdx,
+          opponentName: this.state.players[oppIdx].name,
         } : {type: 'waiting', msg: 'Duel in progress...'};
+      }
       
       case 'general_store':
         return p.pickOrder[p.currentIdx] === playerIdx ? {
@@ -2006,7 +2035,7 @@ class BangEngine {
           type: 'choose_card_from_target',
           targetIdx: p.targetIdx,
           targetName: this.state.players[p.targetIdx].name,
-          targetInPlay: this.state.players[p.targetIdx].inPlay.map(c => ({...c})),
+          inPlayCards: this.state.players[p.targetIdx].inPlay.map(c => ({...c})),
           targetHandSize: this.state.players[p.targetIdx].hand.length,
           cardName: p.cardName,
         } : {type: 'waiting', msg: this.state.players[p.playerIdx].name + ' is choosing a card...'};
@@ -2014,13 +2043,19 @@ class BangEngine {
       case 'draw_choice':
         if (p.playerIdx !== playerIdx) return {type: 'waiting', msg: this.state.players[p.playerIdx].name + ' is choosing draw source...'};
         if (p.choiceType === 'jesse_jones') {
-          return {type: 'draw_choice', choiceType: 'jesse_jones', validTargets: p.validTargets};
+          const targetNames = p.validTargets.map(i => ({label: 'Steal from ' + this.state.players[i].name, targetIdx: i}));
+          return {type: 'draw_choice', message: 'Jesse Jones: Draw first card from a player or the deck?',
+            options: [{label: 'Draw from deck'}, ...targetNames]};
         } else if (p.choiceType === 'pedro_ramirez') {
-          return {type: 'draw_choice', choiceType: 'pedro_ramirez', discardTop: this.state.discard.length > 0 ? {...this.state.discard[this.state.discard.length-1]} : null};
+          const topCard = this.state.discard.length > 0 ? this.state.discard[this.state.discard.length-1] : null;
+          return {type: 'draw_choice', message: 'Pedro Ramirez: Draw first card from discard' + (topCard ? ' (' + D.cardStr(topCard) + ')' : '') + ' or deck?',
+            options: [{label: 'Draw from deck'}, {label: 'Draw from discard'}]};
         } else if (p.choiceType === 'pat_brennan') {
-          return {type: 'draw_choice', choiceType: 'pat_brennan', validTargets: p.validTargets};
+          const targetNames = p.validTargets.map(t => ({label: 'Take ' + t.cardName + ' from ' + this.state.players[t.playerIdx].name, ...t}));
+          return {type: 'draw_choice', message: 'Pat Brennan: Draw from deck or take an in-play card?',
+            options: [{label: 'Draw from deck'}, ...targetNames]};
         }
-        return {type: 'draw_choice', choiceType: p.choiceType};
+        return {type: 'draw_choice', message: 'Choose your draw:', options: [{label: 'Draw from deck'}]};
       
       case 'kit_carlson':
         return p.playerIdx === playerIdx ? {
@@ -2039,7 +2074,11 @@ class BangEngine {
       case 'vera_custer':
         return p.playerIdx === playerIdx ? {
           type: 'vera_custer',
-          validTargets: p.validTargets.map(i => ({idx: i, name: this.state.players[i].name, charName: this.state.players[i].character.name})),
+          characters: p.validTargets.map(i => ({
+            idx: i,
+            name: this.state.players[i].character.name,
+            ability: this.state.players[i].character.ability,
+          })),
         } : {type: 'waiting', msg: this.state.players[p.playerIdx].name + ' is choosing a character to copy...'};
       
       case 'springfield_discard':
@@ -2047,15 +2086,28 @@ class BangEngine {
       case 'whisky_discard':
       case 'tequila_discard':
         return p.playerIdx === playerIdx ? {
-          type: 'ability_discard',
-          reason: p.type.replace('_discard', ''),
+          type: 'discard_for_card',
+          message: 'Discard a card to play ' + p.type.replace('_discard', '') + '.',
+          cardName: p.type.replace('_discard', ''),
+          playCardId: p.playCardId,
+          excludeCardId: p.playCardId,
+          targetIdx: p.targetIdx,
         } : {type: 'waiting', msg: this.state.players[p.playerIdx].name + ' is discarding...'};
       
-      case 'brawl_response':
-        return p.respondents[p.currentIdx] === playerIdx ? {
+      case 'brawl_response': {
+        if (p.respondents[p.currentIdx] !== playerIdx) {
+          return {type: 'waiting', msg: 'Waiting for ' + this.state.players[p.respondents[p.currentIdx]].name + ' to respond to Brawl...'};
+        }
+        const respPlayer = this.state.players[playerIdx];
+        const inPlayChoices = respPlayer.inPlay.map(c => ({id: c.id, name: c.name}));
+        return {
           type: 'brawl_response',
+          source: p.sourceIdx,
           sourceName: this.state.players[p.sourceIdx].name,
-        } : {type: 'waiting', msg: 'Waiting for ' + this.state.players[p.respondents[p.currentIdx]].name + ' to respond to Brawl...'};
+          inPlayCards: inPlayChoices,
+          hasHand: respPlayer.hand.length > 0,
+        };
+      }
       
       default:
         return null;

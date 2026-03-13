@@ -60,23 +60,15 @@ const UI = {
   // Screen: Waiting Room
   // ──────────────────────────────────────────────────────
   renderWaiting(players, canStart) {
-    const container = $('waiting-players');
+    const container = $('player-list');
     if (!container) return;
 
-    let html = '<div class="waiting-player-list">';
+    let html = '';
     players.forEach((p, i) => {
-      html += '<div class="waiting-player">';
-      html += '<span class="waiting-player-name">' + esc(p.name || p) + '</span>';
-      if (i === 0) html += ' <span class="host-badge">Host</span>';
-      html += '</div>';
+      html += '<span class="player-tag">' + esc(p.name || p);
+      if (i === 0) html += ' <small>(Host)</small>';
+      html += '</span>';
     });
-    html += '</div>';
-
-    const startBtn = $('btn-start-game');
-    if (startBtn) {
-      startBtn.disabled = !canStart;
-      startBtn.style.display = this.isHost ? '' : 'none';
-    }
 
     container.innerHTML = html;
   },
@@ -87,7 +79,7 @@ const UI = {
   renderGame(view) {
     if (!view) return;
     this.gameView = view;
-    this.myIdx = view.myIdx !== undefined ? view.myIdx : this.myIdx;
+    this.myIdx = view.yourIndex !== undefined ? view.yourIndex : this.myIdx;
 
     this.renderOpponents(view);
     this.renderGameInfo(view);
@@ -492,6 +484,26 @@ const UI = {
         break;
       }
 
+      case 'brawl_response': {
+        const brawlSrc = prompt.sourceName || 'Someone';
+        html += '<div class="action-msg danger">Brawl from ' + esc(brawlSrc) + '! Choose a card to lose:</div>';
+        html += '<div class="action-buttons">';
+        if (prompt.hasHand) {
+          html += '<button class="btn btn-danger" onclick="BangUI.onChoose(null)">Lose random hand card</button>';
+        }
+        if (prompt.inPlayCards) {
+          prompt.inPlayCards.forEach(card => {
+            html += '<button class="btn btn-secondary" onclick="BangUI.onChoose(\'' + esc(card.id) + '\')">'
+              + 'Discard ' + esc(card.name) + '</button>';
+          });
+        }
+        if (!prompt.hasHand && (!prompt.inPlayCards || prompt.inPlayCards.length === 0)) {
+          html += '<button class="btn btn-danger" onclick="BangUI.onChoose(null)">No cards to lose</button>';
+        }
+        html += '</div>';
+        break;
+      }
+
       case 'choose_card_from_target': {
         const targetName = prompt.targetIdx != null ? esc(view.players[prompt.targetIdx].name) : 'target';
         html += '<div class="action-msg">Choose a card from ' + targetName + ':</div>';
@@ -599,9 +611,14 @@ const UI = {
         break;
       }
 
+      case 'waiting': {
+        html += '<div class="action-msg waiting">' + esc(prompt.msg || 'Waiting...') + '</div>';
+        break;
+      }
+
       default: {
-        if (prompt.message) {
-          html += '<div class="action-msg">' + esc(prompt.message) + '</div>';
+        if (prompt.message || prompt.msg) {
+          html += '<div class="action-msg">' + esc(prompt.message || prompt.msg) + '</div>';
         }
         if (prompt.options) {
           html += '<div class="action-buttons">';
@@ -672,38 +689,41 @@ const UI = {
   // Game Over screen
   // ──────────────────────────────────────────────────────
   renderGameOver(view) {
-    const container = $('gameover-content');
-    if (!container) return;
-
-    let html = '';
-
-    if (view.winner) {
-      html += '<div class="gameover-winner">';
-      html += '<h2>' + esc(view.winner) + ' wins!</h2>';
-      if (view.winnerTeam) {
-        html += '<div class="winner-team">Team: ' + esc(view.winnerTeam) + '</div>';
-      }
-      html += '</div>';
+    // Winner text
+    const winnerText = $('winner-text');
+    if (winnerText && view.winner) {
+      winnerText.textContent = view.winner + ' wins!';
+    }
+    const winnerSub = $('winner-subtitle');
+    if (winnerSub && view.winnerTeam) {
+      winnerSub.textContent = 'Team: ' + view.winnerTeam;
     }
 
-    html += '<div class="gameover-players">';
-    if (view.players) {
+    // Roles revealed
+    const rolesContainer = $('final-roles');
+    if (rolesContainer && view.players) {
+      let html = '';
       view.players.forEach(p => {
-        html += '<div class="gameover-player">';
-        html += '<span class="gameover-name">' + esc(p.name) + '</span>';
+        html += '<div class="final-role-card">';
+        html += '<span class="final-name">' + esc(p.name) + '</span>';
         if (p.role) {
           html += '<span class="role-tag role-' + esc(p.role) + '">' + esc(p.role) + '</span>';
         }
         if (p.character) {
-          html += '<span class="gameover-char">' + esc(p.character) + '</span>';
+          html += '<span class="final-char">' + esc(p.character) + '</span>';
         }
-        html += '<span class="gameover-status">' + (p.eliminated ? 'Eliminated' : 'Survived') + '</span>';
+        html += '<span class="final-status">' + (p.eliminated ? 'Eliminated' : 'Survived') + '</span>';
         html += '</div>';
       });
+      rolesContainer.innerHTML = html;
     }
-    html += '</div>';
 
-    container.innerHTML = html;
+    // Show play again button for host
+    const playAgainBtn = $('btn-play-again');
+    if (playAgainBtn) {
+      playAgainBtn.classList.toggle('hidden', !this.isHost);
+    }
+
     showScreen('gameover');
   },
 
@@ -1145,25 +1165,6 @@ const UI = {
     }
   },
 
-  broadcastState() {
-    if (!this.isHost || !this.engine || !this.lobby) return;
-
-    // Send each player their own view
-    const players = this.lobby.getPlayers ? this.lobby.getPlayers() : [];
-    players.forEach((p, i) => {
-      if (i === this.myIdx) {
-        // Render locally
-        const view = this.engine.getPlayerView(this.myIdx);
-        this.renderGame(view);
-      } else if (p.clientId) {
-        const view = this.engine.getPlayerView(i);
-        this.lobby.send(p.clientId, { type: 'game_view', view: view });
-      }
-    });
-
-    // Also broadcast to all clients (in case getPlayers isn't available)
-    // This fallback sends each client their index-specific view
-  },
 
   // ──────────────────────────────────────────────────────
   // Toast shortcut
