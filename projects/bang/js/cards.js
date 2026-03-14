@@ -142,6 +142,7 @@ const CardsMixin = {
           this.playDynamiteCard(playerIdx, card);
           break;
         case 'Springfield':
+          if (p.hand.length < 2) throw new Error('Need a card to discard for Springfield');
           if (targetIdx === undefined || targetIdx === null) {
             p.hand.splice(cardIdx, 1);
             this.state.discard.push(card);
@@ -454,10 +455,6 @@ const CardsMixin = {
 
     playSpringfield(pi, card, targetIdx) {
       this.addLog(this.state.players[pi].name + ' plays Springfield on ' + this.state.players[targetIdx].name + '!');
-      if (this.state.players[pi].hand.length === 0) {
-        this.resolveBangHit(pi, targetIdx, card);
-        return;
-      }
       this.state.pending = {
         type: 'springfield_discard',
         playerIdx: pi,

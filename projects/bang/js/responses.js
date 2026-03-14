@@ -138,10 +138,32 @@ const ResponsesMixin = {
 
       if (action.cardId === null || action.cardId === undefined || action.cardId === 'pass') {
         this.addLog(player.name + ' has no BANG! — takes 1 damage!');
+        // Save Indians state before clearing pending
+        const savedSource = p.sourceIdx;
+        const savedRespondents = p.respondents;
+        const savedNextIdx = p.currentIdx + 1;
         this.state.pending = null;
-        this.applyDamage(playerIdx, 1, p.sourceIdx);
-        if (this.state.winner || this.state.pending) return;
-        this._advanceIndiansResponse(p);
+        this.applyDamage(playerIdx, 1, savedSource);
+        // Attach continuation if beer_save interrupted us
+        if (this.state.pending && this.state.pending.type === 'beer_save') {
+          this.state.pending.continuation = {
+            type: 'resume_indians',
+            sourceIdx: savedSource,
+            respondents: savedRespondents,
+            nextIdx: savedNextIdx,
+          };
+          return;
+        }
+        if (this.state.winner) return;
+        // Resume inline (no beer_save interruption)
+        p.currentIdx++;
+        while (p.currentIdx < p.respondents.length) {
+          if (!this.state.players[p.respondents[p.currentIdx]].eliminated) break;
+          p.currentIdx++;
+        }
+        if (p.currentIdx < p.respondents.length) {
+          this.state.pending = p;
+        }
         return;
       }
 
@@ -183,10 +205,32 @@ const ResponsesMixin = {
 
       if (action.cardId === null || action.cardId === undefined || action.cardId === 'pass') {
         this.addLog(player.name + ' takes 1 damage from Gatling!');
+        // Save Gatling state before clearing pending
+        const savedSource = p.sourceIdx;
+        const savedRespondents = p.respondents;
+        const savedNextIdx = p.currentIdx + 1;
         this.state.pending = null;
-        this.applyDamage(playerIdx, 1, p.sourceIdx);
-        if (this.state.winner || this.state.pending) return;
-        this._advanceGatlingResponse(p);
+        this.applyDamage(playerIdx, 1, savedSource);
+        // Attach continuation if beer_save interrupted us
+        if (this.state.pending && this.state.pending.type === 'beer_save') {
+          this.state.pending.continuation = {
+            type: 'resume_gatling',
+            sourceIdx: savedSource,
+            respondents: savedRespondents,
+            nextIdx: savedNextIdx,
+          };
+          return;
+        }
+        if (this.state.winner) return;
+        // Resume inline
+        p.currentIdx++;
+        while (p.currentIdx < p.respondents.length) {
+          if (!this.state.players[p.respondents[p.currentIdx]].eliminated) break;
+          p.currentIdx++;
+        }
+        if (p.currentIdx < p.respondents.length) {
+          this.state.pending = p;
+        }
         return;
       }
 
@@ -268,10 +312,14 @@ const ResponsesMixin = {
       const p = this.state.pending;
       if (playerIdx !== p.playerIdx) throw new Error('Not your response');
       const player = this.state.players[playerIdx];
+      const continuation = p.continuation || null;
 
       if (action.cardId === null || action.cardId === undefined || action.cardId === 'pass') {
         this.state.pending = null;
         this.eliminatePlayer(playerIdx, p.killerIdx);
+        if (continuation && !this.state.winner && !this.state.pending) {
+          this._resumeContinuation(continuation);
+        }
         return;
       }
 
@@ -288,12 +336,18 @@ const ResponsesMixin = {
 
       if (player.hp <= 0) {
         if (player.hand.some(c => c.name === 'Beer')) {
-          return; // Keep the pending
+          return; // Keep the pending (still need more beers)
         }
         this.state.pending = null;
         this.eliminatePlayer(playerIdx, p.killerIdx);
+        if (continuation && !this.state.winner && !this.state.pending) {
+          this._resumeContinuation(continuation);
+        }
       } else {
         this.state.pending = null;
+        if (continuation && !this.state.winner) {
+          this._resumeContinuation(continuation);
+        }
       }
     },
   },

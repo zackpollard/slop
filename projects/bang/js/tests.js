@@ -25,6 +25,7 @@ function assert(condition, msg) {
     el.className = 'fail';
     el.textContent = '  FAIL: ' + msg;
     failed++;
+    console.error('FAIL:', msg);
   }
   (currentSection || output).appendChild(el);
 }
@@ -39,7 +40,11 @@ function assertThrows(fn, msg) {
   assert(threw, msg);
 }
 
-// Helper: create a test game with specific setup
+// ─── Test Helpers ─────────────────────────────────────────
+function basicChar() {
+  return { name: 'Test Guy', hp: 4, ability: 'None', set: 'base', effect: 'none' };
+}
+
 function createTestGame(opts) {
   opts = opts || {};
   const n = opts.playerCount || 4;
@@ -50,7 +55,6 @@ function createTestGame(opts) {
   const engine = new BangEngine();
   engine.initGame(players, opts.useDodgeCity || false);
 
-  // Override characters if needed for deterministic tests
   if (opts.characters) {
     opts.characters.forEach((char, i) => {
       if (char && i < engine.state.players.length) {
@@ -59,7 +63,6 @@ function createTestGame(opts) {
     });
   }
 
-  // Override roles for deterministic tests
   if (opts.roles) {
     opts.roles.forEach((role, i) => {
       if (role && i < engine.state.players.length) {
@@ -71,36 +74,39 @@ function createTestGame(opts) {
   return engine;
 }
 
-// Helper: give a player specific cards
-function giveCards(engine, playerIdx, cards) {
-  const p = engine.state.players[playerIdx];
-  p.hand = cards.map((c, i) => ({
-    id: 'test-' + playerIdx + '-' + i,
-    name: c.name || c,
-    type: c.type || 'brown',
-    suit: c.suit || 'H',
-    value: c.value || 1,
-  }));
-}
-
-// Helper: make it a specific player's turn with play phase
 function setTurn(engine, playerIdx) {
   engine.state.currentTurn = playerIdx;
   engine.state.turnPhase = 'play';
   engine.state.bangsPlayedThisTurn = 0;
   engine.state.buffaloRifleUsed = false;
+  engine.state.joseDelgadoUsed = 0;
   engine.state.pending = null;
 }
 
-// Helper: use a basic character with no special ability
-function basicChar() {
-  return { name: 'Test Guy', hp: 4, ability: 'None', set: 'base', effect: 'none' };
+function makeCard(name, id, type, suit, value) {
+  return { id: id || name + '-test', name: name, type: type || 'brown', suit: suit || 'H', value: value || 1 };
 }
 
-// ═══════════════════════════════════════════════════════
-// TEST SUITES
-// ═══════════════════════════════════════════════════════
+function setupBasicGame(n) {
+  const engine = createTestGame({ playerCount: n || 4 });
+  engine.state.players.forEach((p, i) => {
+    p.character = basicChar();
+    p.inPlay = [];
+    p.hp = 4;
+    p.maxHp = 4;
+    p.hand = [];
+    p.role = i === 0 ? 'sheriff' : (i <= 2 ? 'outlaw' : 'renegade');
+  });
+  engine.state.players[0].hp = 5;
+  engine.state.players[0].maxHp = 5;
+  return engine;
+}
 
+// ═══════════════════════════════════════════════════════════
+// TEST SUITES
+// ═══════════════════════════════════════════════════════════
+
+// ─── Initialization ───────────────────────────────────────
 section('Game Initialization');
 {
   const engine = createTestGame({ playerCount: 4 });
@@ -108,17 +114,14 @@ section('Game Initialization');
   assertEqual(engine.state.players.length, 4, '4 players created');
   assertEqual(engine.state.phase, 'playing', 'Phase is playing');
 
-  // Sheriff exists
   const sheriff = engine.state.players.find(p => p.role === 'sheriff');
   assert(sheriff !== undefined, 'Sheriff role assigned');
   assertEqual(sheriff.maxHp, sheriff.character.hp + 1, 'Sheriff gets +1 max HP');
 
-  // All players have cards dealt
   engine.state.players.forEach((p, i) => {
-    assert(p.hand.length > 0, 'Player ' + i + ' has cards');
+    assert(p.hand.length > 0, 'Player ' + i + ' has cards dealt');
   });
 
-  // Deck has cards
   assert(engine.state.deck.length > 0, 'Deck has cards remaining');
   assert(engine.state.log.length > 0, 'Log has entries');
 }
@@ -127,7 +130,6 @@ section('Game Init — Player Count Validation');
 {
   assertThrows(() => createTestGame({ playerCount: 3 }), 'Rejects 3 players');
   assertThrows(() => createTestGame({ playerCount: 9 }), 'Rejects 9 players');
-  // Valid counts
   for (let n = 4; n <= 8; n++) {
     const e = createTestGame({ playerCount: n });
     assertEqual(e.state.players.length, n, n + ' players accepted');
@@ -146,10 +148,10 @@ section('Role Distribution');
   }
 }
 
+// ─── Deck Management ──────────────────────────────────────
 section('Deck Management');
 {
   const engine = createTestGame();
-  // Clear hands for testing
   engine.state.players.forEach(p => p.hand = []);
 
   const initialDeckSize = engine.state.deck.length;
@@ -158,83 +160,131 @@ section('Deck Management');
   assertEqual(engine.state.deck.length, initialDeckSize - 3, 'Deck size decreases');
 
   // Test reshuffle
-  const savedDiscard = engine.state.discard.length;
   engine.state.discard.push(...engine.state.deck);
   engine.state.deck = [];
   const more = engine.drawFromDeck(1);
   assertEqual(more.length, 1, 'Can draw after reshuffle');
-  assert(engine.state.deck.length > 0 || engine.state.discard.length >= 0, 'Deck restored after reshuffle');
+  assert(engine.state.deck.length >= 0, 'Deck restored after reshuffle');
 }
 
-section('Distance Calculation');
+// ─── Distance Calculation ─────────────────────────────────
+section('Distance Calculation — Base');
 {
-  const engine = createTestGame({ playerCount: 5 });
-  // All players alive, seated in circle
-  engine.state.players.forEach((p, i) => {
-    p.character = basicChar();
-    p.inPlay = [];
-  });
-  engine.state.currentTurn = 0;
+  const engine = setupBasicGame(5);
+  setTurn(engine, 0);
 
-  // Distance in a 5-player circle
   assertEqual(engine.calcDistance(0, 0), 0, 'Distance to self is 0');
   assertEqual(engine.calcDistance(0, 1), 1, 'Adjacent distance is 1');
   assertEqual(engine.calcDistance(0, 2), 2, 'Two seats away is 2');
-  assertEqual(engine.calcDistance(0, 3), 2, 'Three seats away wraps to 2');
-  assertEqual(engine.calcDistance(0, 4), 1, 'Four seats away wraps to 1');
+  assertEqual(engine.calcDistance(0, 3), 2, 'Three seats (wraps) is 2');
+  assertEqual(engine.calcDistance(0, 4), 1, 'Four seats (wraps) is 1');
+}
 
-  // Mustang adds +1 to distance from others
-  engine.state.players[2].inPlay = [{ id: 'mustang-1', name: 'Mustang', type: 'blue', suit: 'H', value: 8 }];
-  assertEqual(engine.calcDistance(0, 2), 3, 'Mustang adds +1 distance');
+section('Distance — Mustang & Scope');
+{
+  const engine = setupBasicGame(5);
+  setTurn(engine, 0);
+
+  engine.state.players[2].inPlay = [makeCard('Mustang', 'must-1', 'blue', 'H', 8)];
+  assertEqual(engine.calcDistance(0, 2), 3, 'Mustang adds +1 to incoming distance');
   assertEqual(engine.calcDistance(2, 0), 2, 'Mustang does not affect outgoing distance');
 
-  // Scope reduces distance
-  engine.state.players[0].inPlay = [{ id: 'scope-1', name: 'Scope', type: 'blue', suit: 'S', value: 1 }];
-  assertEqual(engine.calcDistance(0, 2), 2, 'Scope reduces distance by 1');
+  engine.state.players[0].inPlay = [makeCard('Scope', 'scope-1', 'blue', 'S', 1)];
+  assertEqual(engine.calcDistance(0, 2), 2, 'Scope reduces outgoing distance by 1');
   assertEqual(engine.calcDistance(2, 0), 2, 'Scope does not affect incoming distance');
 
-  // Cleanup
   engine.state.players.forEach(p => p.inPlay = []);
 }
 
-section('Weapon Range');
+section('Distance — Hideout & Binocular');
 {
-  const engine = createTestGame();
-  engine.state.players.forEach(p => { p.character = basicChar(); p.inPlay = []; });
-
-  assertEqual(engine.getWeaponRange(0), 1, 'Default range is 1 (Colt .45)');
-
-  engine.state.players[0].inPlay.push({ id: 'w1', name: 'Schofield', type: 'blue', suit: 'C', value: 11 });
-  assertEqual(engine.getWeaponRange(0), 2, 'Schofield range is 2');
-
-  engine.state.players[0].inPlay = [{ id: 'w2', name: 'Winchester', type: 'blue', suit: 'S', value: 8 }];
-  assertEqual(engine.getWeaponRange(0), 5, 'Winchester range is 5');
-}
-
-section('BANG! Card — Basic Flow');
-{
-  const engine = createTestGame();
-  engine.state.players.forEach((p, i) => {
-    p.character = basicChar();
-    p.inPlay = [];
-    p.hp = 4;
-    p.maxHp = 4;
-  });
+  const engine = setupBasicGame(5);
   setTurn(engine, 0);
 
-  // Give player 0 a BANG!
-  const bangCard = { id: 'bang-1', name: 'BANG!', type: 'brown', suit: 'D', value: 5 };
-  engine.state.players[0].hand = [bangCard];
+  engine.state.players[2].inPlay = [makeCard('Hideout', 'hide-1', 'blue', 'D', 7)];
+  assertEqual(engine.calcDistance(0, 2), 3, 'Hideout adds +1 to incoming distance');
 
-  // Play BANG! on adjacent player
-  engine.playCard(0, 'bang-1', 1);
+  engine.state.players[0].inPlay = [makeCard('Binocular', 'bino-1', 'blue', 'D', 1)];
+  assertEqual(engine.calcDistance(0, 2), 2, 'Binocular reduces outgoing distance by 1');
 
-  // Should create a bang_response pending
-  assert(engine.state.pending !== null, 'Pending action created');
-  assertEqual(engine.state.pending.type, 'bang_response', 'Pending type is bang_response');
+  engine.state.players.forEach(p => p.inPlay = []);
+}
+
+section('Distance — Character Abilities (Paul Regret, Rose Doolan)');
+{
+  const engine = setupBasicGame(5);
+  setTurn(engine, 0);
+
+  engine.state.players[2].character = { name: 'Paul Regret', hp: 3, ability: 'Built-in Mustang', set: 'base', effect: 'builtin_mustang' };
+  assertEqual(engine.calcDistance(0, 2), 3, 'Paul Regret: +1 distance from others');
+
+  engine.state.players[0].character = { name: 'Rose Doolan', hp: 4, ability: 'Built-in Scope', set: 'base', effect: 'builtin_scope' };
+  assertEqual(engine.calcDistance(0, 2), 2, 'Rose Doolan: -1 distance to others');
+
+  engine.state.players.forEach(p => p.character = basicChar());
+}
+
+section('Distance — Minimum distance is 1');
+{
+  const engine = setupBasicGame(4);
+  setTurn(engine, 0);
+  engine.state.players[0].inPlay = [
+    makeCard('Scope', 'sc1', 'blue', 'S', 1),
+    makeCard('Binocular', 'bi1', 'blue', 'D', 1),
+  ];
+  engine.state.players[0].character = { name: 'Rose Doolan', hp: 4, ability: '', set: 'base', effect: 'builtin_scope' };
+  // Adjacent player should still be at minimum distance 1
+  assertEqual(engine.calcDistance(0, 1), 1, 'Distance never below 1');
+  engine.state.players[0].inPlay = [];
+  engine.state.players[0].character = basicChar();
+}
+
+section('Distance — Eliminated Player Skipped');
+{
+  const engine = setupBasicGame(5);
+  setTurn(engine, 0);
+  engine.state.players[1].eliminated = true;
+  // With player 1 eliminated, circle is 0-2-3-4
+  assertEqual(engine.calcDistance(0, 2), 1, 'After elimination, distance recalculated');
+  engine.state.players[1].eliminated = false;
+}
+
+// ─── Weapon Range ─────────────────────────────────────────
+section('Weapon Range');
+{
+  const engine = setupBasicGame();
+  assertEqual(engine.getWeaponRange(0), 1, 'Default range is 1 (Colt .45)');
+
+  engine.state.players[0].inPlay.push(makeCard('Schofield', 'sch1', 'blue', 'C', 11));
+  assertEqual(engine.getWeaponRange(0), 2, 'Schofield range is 2');
+
+  engine.state.players[0].inPlay = [makeCard('Remington', 'rem1', 'blue', 'C', 13)];
+  assertEqual(engine.getWeaponRange(0), 3, 'Remington range is 3');
+
+  engine.state.players[0].inPlay = [makeCard('Rev. Carabine', 'rev1', 'blue', 'C', 1)];
+  assertEqual(engine.getWeaponRange(0), 4, 'Rev. Carabine range is 4');
+
+  engine.state.players[0].inPlay = [makeCard('Winchester', 'win1', 'blue', 'S', 8)];
+  assertEqual(engine.getWeaponRange(0), 5, 'Winchester range is 5');
+
+  engine.state.players[0].inPlay = [makeCard('Volcanic', 'vol1', 'blue', 'C', 10)];
+  assertEqual(engine.getWeaponRange(0), 1, 'Volcanic range is 1');
+
+  engine.state.players[0].inPlay = [];
+}
+
+// ─── BANG! Card ───────────────────────────────────────────
+section('BANG! — Basic Hit');
+{
+  const engine = setupBasicGame();
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('BANG!', 'b1', 'brown', 'D', 5)];
+
+  engine.playCard(0, 'b1', 1);
+  assert(engine.state.pending !== null, 'Pending created');
+  assertEqual(engine.state.pending.type, 'bang_response', 'Pending is bang_response');
   assertEqual(engine.state.pending.targetIdx, 1, 'Target is player 1');
 
-  // Player 1 takes the hit
   engine.handleAction(1, { type: 'respond', response: 'take_hit' });
   assertEqual(engine.state.players[1].hp, 3, 'Player 1 loses 1 HP');
   assertEqual(engine.state.pending, null, 'Pending cleared');
@@ -242,317 +292,415 @@ section('BANG! Card — Basic Flow');
 
 section('BANG! — Missed Response');
 {
-  const engine = createTestGame();
-  engine.state.players.forEach(p => { p.character = basicChar(); p.inPlay = []; p.hp = 4; p.maxHp = 4; });
+  const engine = setupBasicGame();
   setTurn(engine, 0);
-
-  engine.state.players[0].hand = [{ id: 'b1', name: 'BANG!', type: 'brown', suit: 'D', value: 5 }];
-  engine.state.players[1].hand = [{ id: 'm1', name: 'Missed!', type: 'brown', suit: 'C', value: 10 }];
+  engine.state.players[0].hand = [makeCard('BANG!', 'b1', 'brown', 'D', 5)];
+  engine.state.players[1].hand = [makeCard('Missed!', 'm1', 'brown', 'C', 10)];
 
   engine.playCard(0, 'b1', 1);
   engine.handleAction(1, { type: 'respond', response: 'missed', cardId: 'm1' });
 
-  assertEqual(engine.state.players[1].hp, 4, 'Player 1 HP unchanged after Missed!');
-  assertEqual(engine.state.players[1].hand.length, 0, 'Missed! card consumed');
-  assertEqual(engine.state.pending, null, 'Pending cleared after Missed!');
+  assertEqual(engine.state.players[1].hp, 4, 'HP unchanged after Missed!');
+  assertEqual(engine.state.players[1].hand.length, 0, 'Missed! consumed');
+  assertEqual(engine.state.pending, null, 'Pending cleared');
 }
 
-section('BANG! Limit');
+section('BANG! — One Per Turn Limit');
 {
-  const engine = createTestGame();
-  engine.state.players.forEach(p => { p.character = basicChar(); p.inPlay = []; });
+  const engine = setupBasicGame();
   setTurn(engine, 0);
-
   engine.state.players[0].hand = [
-    { id: 'b1', name: 'BANG!', type: 'brown', suit: 'D', value: 5 },
-    { id: 'b2', name: 'BANG!', type: 'brown', suit: 'D', value: 6 },
+    makeCard('BANG!', 'b1', 'brown', 'D', 5),
+    makeCard('BANG!', 'b2', 'brown', 'D', 6),
   ];
 
-  // First BANG! should work
   engine.playCard(0, 'b1', 1);
   engine.handleAction(1, { type: 'respond', response: 'take_hit' });
 
-  // Second BANG! should be rejected
-  assertThrows(
-    () => engine.playCard(0, 'b2', 1),
-    'Second BANG! in same turn throws error'
-  );
+  assertThrows(() => engine.playCard(0, 'b2', 1), 'Second BANG! rejected');
 }
 
-section('Beer Card');
+section('BANG! — Out of Range');
 {
-  const engine = createTestGame();
-  engine.state.players.forEach(p => { p.character = basicChar(); p.inPlay = []; p.hp = 3; p.maxHp = 4; });
+  const engine = setupBasicGame(5);
   setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('BANG!', 'b1', 'brown', 'D', 5)];
+  // Player 2 is at distance 2 with default range 1
+  assertThrows(() => engine.playCard(0, 'b1', 2), 'Cannot BANG! out-of-range target');
+}
 
-  engine.state.players[0].hand = [{ id: 'beer1', name: 'Beer', type: 'brown', suit: 'H', value: 6 }];
+section('BANG! — Cannot Target Self');
+{
+  const engine = setupBasicGame();
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('BANG!', 'b1', 'brown', 'D', 5)];
+  assertThrows(() => engine.playCard(0, 'b1', 0), 'Cannot BANG! yourself');
+}
+
+section('BANG! — Cannot Target Eliminated');
+{
+  const engine = setupBasicGame();
+  setTurn(engine, 0);
+  engine.state.players[1].eliminated = true;
+  engine.state.players[0].hand = [makeCard('BANG!', 'b1', 'brown', 'D', 5)];
+  assertThrows(() => engine.playCard(0, 'b1', 1), 'Cannot BANG! eliminated player');
+  engine.state.players[1].eliminated = false;
+}
+
+// ─── Punch Card ───────────────────────────────────────────
+section('Punch — Does Not Count Toward BANG! Limit');
+{
+  const engine = setupBasicGame();
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [
+    makeCard('BANG!', 'b1', 'brown', 'D', 5),
+    makeCard('Punch', 'p1', 'brown', 'S', 1),
+  ];
+
+  engine.playCard(0, 'b1', 1);
+  engine.handleAction(1, { type: 'respond', response: 'take_hit' });
+
+  // Punch should still work after BANG!
+  engine.playCard(0, 'p1', 1);
+  engine.handleAction(1, { type: 'respond', response: 'take_hit' });
+  assertEqual(engine.state.players[1].hp, 2, 'Punch works after BANG! in same turn');
+}
+
+// ─── Beer ─────────────────────────────────────────────────
+section('Beer — Heal 1 HP');
+{
+  const engine = setupBasicGame();
+  setTurn(engine, 0);
+  engine.state.players[0].hp = 3;
+  engine.state.players[0].hand = [makeCard('Beer', 'beer1', 'brown', 'H', 6)];
 
   engine.playCard(0, 'beer1');
   assertEqual(engine.state.players[0].hp, 4, 'Beer heals 1 HP');
 }
 
-section('Beer — Max HP Validation');
+section('Beer — Cannot Use At Max HP');
 {
-  const engine = createTestGame();
-  engine.state.players.forEach(p => { p.character = basicChar(); p.inPlay = []; p.hp = 4; p.maxHp = 4; });
+  const engine = setupBasicGame();
   setTurn(engine, 0);
-
-  engine.state.players[0].hand = [{ id: 'beer1', name: 'Beer', type: 'brown', suit: 'H', value: 6 }];
+  engine.state.players[0].hand = [makeCard('Beer', 'beer1', 'brown', 'H', 6)];
   assertThrows(() => engine.playCard(0, 'beer1'), 'Cannot use Beer at max HP');
 }
 
-section('Stagecoach & Wells Fargo');
+section('Beer — No Effect With 2 Players');
 {
-  const engine = createTestGame();
-  engine.state.players.forEach(p => { p.character = basicChar(); p.inPlay = []; });
+  const engine = setupBasicGame();
   setTurn(engine, 0);
-
-  engine.state.players[0].hand = [
-    { id: 'sc1', name: 'Stagecoach', type: 'brown', suit: 'S', value: 9 },
-    { id: 'wf1', name: 'Wells Fargo', type: 'brown', suit: 'H', value: 3 },
-  ];
-
-  const handBefore = engine.state.players[0].hand.length;
-  engine.playCard(0, 'sc1');
-  // Stagecoach played (-1) + 2 drawn = net +1
-  assertEqual(engine.state.players[0].hand.length, handBefore - 1 + 2, 'Stagecoach draws 2');
-
-  const handBefore2 = engine.state.players[0].hand.length;
-  engine.playCard(0, 'wf1');
-  assertEqual(engine.state.players[0].hand.length, handBefore2 - 1 + 3, 'Wells Fargo draws 3');
+  engine.state.players[0].hp = 3;
+  engine.state.players[0].hand = [makeCard('Beer', 'beer1', 'brown', 'H', 6)];
+  engine.state.players[2].eliminated = true;
+  engine.state.players[3].eliminated = true;
+  assertThrows(() => engine.playCard(0, 'beer1'), 'Beer no effect with 2 players');
+  engine.state.players[2].eliminated = false;
+  engine.state.players[3].eliminated = false;
 }
 
+section('Beer Save — Use Beer to Survive Death');
+{
+  const engine = setupBasicGame();
+  engine.state.players[1].hp = 1;
+  engine.state.players[1].hand = [makeCard('Beer', 'beer-save', 'brown', 'H', 6)];
+
+  engine.applyDamage(1, 1, 0);
+  assert(engine.state.pending !== null, 'Beer save pending');
+  assertEqual(engine.state.pending.type, 'beer_save', 'Pending is beer_save');
+
+  engine.handleAction(1, { type: 'respond', response: 'beer', cardId: 'beer-save' });
+  assert(!engine.state.players[1].eliminated, 'Player survived');
+  assert(engine.state.players[1].hp > 0, 'HP restored');
+}
+
+section('Beer Save — Accept Death');
+{
+  const engine = setupBasicGame();
+  engine.state.players[1].hp = 1;
+  engine.state.players[1].hand = [makeCard('Beer', 'beer-save', 'brown', 'H', 6)];
+
+  engine.applyDamage(1, 1, 0);
+  engine.handleAction(1, { type: 'respond', response: 'accept_death' });
+  assert(engine.state.players[1].eliminated, 'Player eliminated after refusing beer');
+}
+
+// ─── Saloon ───────────────────────────────────────────────
+section('Saloon — All Players Heal 1');
+{
+  const engine = setupBasicGame();
+  engine.state.players.forEach(p => p.hp = 2);
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('Saloon', 'sal1', 'brown', 'H', 5)];
+
+  engine.playCard(0, 'sal1');
+  engine.state.players.forEach((p, i) => {
+    assertEqual(p.hp, 3, 'Player ' + i + ' heals 1 from Saloon');
+  });
+}
+
+// ─── Stagecoach & Wells Fargo & Pony Express ──────────────
+section('Stagecoach — Draw 2');
+{
+  const engine = setupBasicGame();
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('Stagecoach', 'sc1', 'brown', 'S', 9)];
+
+  engine.playCard(0, 'sc1');
+  assertEqual(engine.state.players[0].hand.length, 2, 'Stagecoach draws 2 cards');
+}
+
+section('Wells Fargo — Draw 3');
+{
+  const engine = setupBasicGame();
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('Wells Fargo', 'wf1', 'brown', 'H', 3)];
+
+  engine.playCard(0, 'wf1');
+  assertEqual(engine.state.players[0].hand.length, 3, 'Wells Fargo draws 3 cards');
+}
+
+section('Pony Express — Draw 3');
+{
+  const engine = setupBasicGame();
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('Pony Express', 'pe1', 'brown', 'H', 1)];
+
+  engine.playCard(0, 'pe1');
+  assertEqual(engine.state.players[0].hand.length, 3, 'Pony Express draws 3 cards');
+}
+
+// ─── Equipment ────────────────────────────────────────────
 section('Equipment — Weapon Replacement');
 {
-  const engine = createTestGame();
-  engine.state.players.forEach(p => { p.character = basicChar(); p.inPlay = []; });
+  const engine = setupBasicGame();
   setTurn(engine, 0);
-
   engine.state.players[0].hand = [
-    { id: 'sch1', name: 'Schofield', type: 'blue', suit: 'C', value: 11 },
-    { id: 'win1', name: 'Winchester', type: 'blue', suit: 'S', value: 8 },
+    makeCard('Schofield', 'sch1', 'blue', 'C', 11),
+    makeCard('Winchester', 'win1', 'blue', 'S', 8),
   ];
 
   engine.playCard(0, 'sch1');
-  assertEqual(engine.state.players[0].inPlay.length, 1, 'Schofield equipped');
-  assertEqual(engine.getWeaponRange(0), 2, 'Range is 2');
+  assertEqual(engine.getWeaponRange(0), 2, 'Schofield equipped');
 
   engine.playCard(0, 'win1');
-  assertEqual(engine.state.players[0].inPlay.length, 1, 'Old weapon replaced');
-  assertEqual(engine.getWeaponRange(0), 5, 'Range updated to 5');
-
-  // Old weapon should be in discard
-  assert(engine.state.discard.some(c => c.name === 'Schofield'), 'Old weapon in discard');
+  assertEqual(engine.getWeaponRange(0), 5, 'Winchester replaces Schofield');
+  assertEqual(engine.state.players[0].inPlay.length, 1, 'Only one weapon in play');
+  assert(engine.state.discard.some(c => c.name === 'Schofield'), 'Old weapon discarded');
 }
 
-section('End Turn — Hand Limit');
+section('Equipment — Cannot Duplicate Blue Equipment');
 {
-  const engine = createTestGame();
-  engine.state.players.forEach(p => { p.character = basicChar(); p.inPlay = []; p.hp = 2; p.maxHp = 4; });
+  const engine = setupBasicGame();
   setTurn(engine, 0);
+  engine.state.players[0].inPlay = [makeCard('Barrel', 'bar1', 'blue', 'S', 12)];
+  engine.state.players[0].hand = [makeCard('Barrel', 'bar2', 'blue', 'S', 13)];
 
-  // Give player 5 cards with HP=2 (hand limit = 2)
-  const cards = [];
-  for (let i = 0; i < 5; i++) {
-    cards.push({ id: 'hc-' + i, name: 'BANG!', type: 'brown', suit: 'D', value: i + 2 });
-  }
-  engine.state.players[0].hand = cards;
-
-  engine.endTurn(0);
-  assertEqual(engine.state.pending.type, 'discard_required', 'Discard required prompt');
-  assertEqual(engine.state.pending.count, 3, 'Must discard 3 cards');
-
-  engine.handleDiscard(0, ['hc-0', 'hc-1', 'hc-2']);
-  assertEqual(engine.state.players[0].hand.length, 2, 'Hand reduced to limit');
+  assertThrows(() => engine.playCard(0, 'bar2'), 'Cannot have duplicate blue equipment');
 }
 
-section('Jail Card');
+// ─── Jail ─────────────────────────────────────────────────
+section('Jail — Place on Player');
 {
-  const engine = createTestGame();
-  engine.state.players.forEach((p, i) => {
-    p.character = basicChar();
-    p.inPlay = [];
-    p.role = i === 0 ? 'sheriff' : 'outlaw';
-  });
+  const engine = setupBasicGame();
   setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('Jail', 'j1', 'blue', 'S', 10)];
 
-  // Can't jail the sheriff
-  engine.state.players[0].hand = [{ id: 'j1', name: 'Jail', type: 'blue', suit: 'S', value: 10 }];
-
-  assertThrows(
-    () => engine.playCard(0, 'j1', 0),
-    'Cannot jail yourself'
-  );
-
-  // Jail an outlaw
   engine.playCard(0, 'j1', 1);
-  // Should be in pending choose_target or directly placed
   if (engine.state.pending && engine.state.pending.type === 'choose_target') {
     engine.handleChooseTarget(0, 1);
   }
-  assert(engine.state.players[1].inPlay.some(c => c.name === 'Jail'), 'Jail placed on player 1');
+  assert(engine.state.players[1].inPlay.some(c => c.name === 'Jail'), 'Jail placed');
 }
 
-section('Duel');
+section('Jail — Cannot Jail Sheriff');
 {
-  const engine = createTestGame();
-  engine.state.players.forEach(p => { p.character = basicChar(); p.inPlay = []; p.hp = 4; p.maxHp = 4; });
-  setTurn(engine, 0);
+  const engine = setupBasicGame();
+  setTurn(engine, 1);
+  engine.state.players[1].hand = [makeCard('Jail', 'j1', 'blue', 'S', 10)];
+  assertThrows(() => engine.playCard(1, 'j1', 0), 'Cannot jail the Sheriff');
+}
 
-  engine.state.players[0].hand = [{ id: 'duel1', name: 'Duel', type: 'brown', suit: 'C', value: 8 }];
-  engine.state.players[1].hand = [{ id: 'b1', name: 'BANG!', type: 'brown', suit: 'D', value: 2 }];
+section('Jail — Cannot Jail Self');
+{
+  const engine = setupBasicGame();
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('Jail', 'j1', 'blue', 'S', 10)];
+  assertThrows(() => engine.playCard(0, 'j1', 0), 'Cannot jail yourself');
+}
+
+section('Jail — Heart Escapes');
+{
+  const engine = setupBasicGame();
+  engine.state.players[1].inPlay = [makeCard('Jail', 'j1', 'blue', 'S', 10)];
+  engine.state.currentTurn = 1;
+  // Stack deck with a heart card for the draw check
+  engine.state.deck.push(makeCard('test', 'drawcheck', 'brown', 'H', 5));
+
+  engine.startTurn();
+  // If heart drawn, player escapes and gets to draw phase
+  // The jail card should be removed regardless
+  assert(!engine.state.players[1].inPlay.some(c => c.name === 'Jail'), 'Jail removed after check');
+}
+
+// ─── Dynamite ─────────────────────────────────────────────
+section('Dynamite — Place In Play');
+{
+  const engine = setupBasicGame();
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('Dynamite', 'dyn1', 'blue', 'H', 2)];
+
+  engine.playCard(0, 'dyn1');
+  assert(engine.state.players[0].inPlay.some(c => c.name === 'Dynamite'), 'Dynamite placed');
+}
+
+section('Dynamite — Explodes on Spade 2-9');
+{
+  const engine = setupBasicGame();
+  engine.state.players[0].inPlay = [makeCard('Dynamite', 'dyn1', 'blue', 'H', 2)];
+  engine.state.currentTurn = 0;
+  // Stack deck with spade 5 to trigger explosion
+  engine.state.deck.push(makeCard('test', 'boom', 'brown', 'S', 5));
+
+  engine.processTurnStart();
+  // Dynamite should have exploded dealing 3 damage
+  assert(!engine.state.players[0].inPlay.some(c => c.name === 'Dynamite'), 'Dynamite removed');
+  assertEqual(engine.state.players[0].hp, 2, 'Took 3 damage from dynamite (5-3=2)');
+}
+
+section('Dynamite — Does Not Explode, Passes to Next Player');
+{
+  const engine = setupBasicGame();
+  engine.state.players[0].inPlay = [makeCard('Dynamite', 'dyn1', 'blue', 'H', 2)];
+  engine.state.currentTurn = 0;
+  // Stack deck with heart card (won't trigger)
+  engine.state.deck.push(makeCard('test', 'safe', 'brown', 'H', 5));
+
+  engine.processTurnStart();
+  assert(!engine.state.players[0].inPlay.some(c => c.name === 'Dynamite'), 'Dynamite removed from player 0');
+  assert(engine.state.players[1].inPlay.some(c => c.name === 'Dynamite'), 'Dynamite passed to player 1');
+}
+
+section('Dynamite — Beer Save Continuation');
+{
+  const engine = setupBasicGame();
+  engine.state.players[0].hp = 2;
+  engine.state.players[0].hand = [makeCard('Beer', 'beer1', 'brown', 'H', 6)];
+  engine.state.players[0].inPlay = [makeCard('Dynamite', 'dyn1', 'blue', 'H', 2)];
+  engine.state.currentTurn = 0;
+  // Stack spade 5 to trigger explosion (3 damage to 2 HP player)
+  engine.state.deck.push(makeCard('test', 'boom', 'brown', 'S', 5));
+
+  engine.processTurnStart();
+  // Should trigger beer save
+  assert(engine.state.pending !== null, 'Beer save pending after dynamite');
+  assertEqual(engine.state.pending.type, 'beer_save', 'Pending is beer_save');
+  assert(engine.state.pending.continuation !== null, 'Continuation attached');
+  assertEqual(engine.state.pending.continuation.type, 'resume_turn_start', 'Continuation resumes turn start');
+
+  engine.handleAction(0, { type: 'respond', response: 'beer', cardId: 'beer1' });
+  assert(!engine.state.players[0].eliminated, 'Player survived dynamite with beer');
+  // Turn should have continued to draw phase or play phase
+  assert(engine.state.turnPhase === 'draw' || engine.state.turnPhase === 'play' || engine.state.pending !== null, 'Turn continued after beer save');
+}
+
+// ─── Duel ─────────────────────────────────────────────────
+section('Duel — Basic Flow');
+{
+  const engine = setupBasicGame();
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('Duel', 'duel1', 'brown', 'C', 8)];
+  engine.state.players[1].hand = [makeCard('BANG!', 'b1', 'brown', 'D', 2)];
 
   engine.playCard(0, 'duel1', 1);
-  // If target was set directly
   if (engine.state.pending && engine.state.pending.type === 'choose_target') {
     engine.handleChooseTarget(0, 1);
   }
+  assertEqual(engine.state.pending.type, 'duel_response', 'Duel pending');
 
-  assertEqual(engine.state.pending.type, 'duel_response', 'Duel response pending');
-
-  // Player 1 plays BANG!
+  // Player 1 responds with BANG!
   engine.handleAction(1, { type: 'respond', response: 'bang', cardId: 'b1' });
-  // Now player 0 must respond
-  assertEqual(engine.state.pending.currentResponder, 0, 'Duel switches to player 0');
+  assertEqual(engine.state.pending.currentResponder, 0, 'Switches to player 0');
 
   // Player 0 gives up
   engine.handleAction(0, { type: 'respond', response: 'give_up' });
-  assertEqual(engine.state.players[0].hp, 3, 'Duel loser takes 1 damage');
+  assertEqual(engine.state.players[0].hp, 4, 'Duel loser takes 1 damage (5-1=4)');
 }
 
-section('Indians!');
+// ─── Indians! ─────────────────────────────────────────────
+section('Indians! — Basic Flow');
 {
-  const engine = createTestGame();
-  engine.state.players.forEach(p => { p.character = basicChar(); p.inPlay = []; p.hp = 4; p.maxHp = 4; });
+  const engine = setupBasicGame();
   setTurn(engine, 0);
-
-  engine.state.players[0].hand = [{ id: 'ind1', name: 'Indians!', type: 'brown', suit: 'D', value: 1 }];
-  engine.state.players[1].hand = [{ id: 'b1', name: 'BANG!', type: 'brown', suit: 'D', value: 2 }];
+  engine.state.players[0].hand = [makeCard('Indians!', 'ind1', 'brown', 'D', 1)];
+  engine.state.players[1].hand = [makeCard('BANG!', 'b1', 'brown', 'D', 2)];
   engine.state.players[2].hand = [];
   engine.state.players[3].hand = [];
 
   engine.playCard(0, 'ind1');
-  assertEqual(engine.state.pending.type, 'indians_response', 'Indians response pending');
+  assertEqual(engine.state.pending.type, 'indians_response', 'Indians pending');
 
-  // Player 1 responds with BANG!
   engine.handleAction(1, { type: 'respond', response: 'bang', cardId: 'b1' });
   assertEqual(engine.state.players[1].hp, 4, 'Player 1 saved by BANG!');
 
-  // Player 2 takes hit
   if (engine.state.pending && engine.state.pending.type === 'indians_response') {
     engine.handleAction(2, { type: 'respond', response: 'take_hit' });
-    assertEqual(engine.state.players[2].hp, 3, 'Player 2 takes damage from Indians');
+    assertEqual(engine.state.players[2].hp, 3, 'Player 2 takes damage');
   }
+
+  if (engine.state.pending && engine.state.pending.type === 'indians_response') {
+    engine.handleAction(3, { type: 'respond', response: 'take_hit' });
+    assertEqual(engine.state.players[3].hp, 3, 'Player 3 takes damage');
+  }
+}
+
+section('Indians! — Beer Save Continues Chain');
+{
+  const engine = setupBasicGame();
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('Indians!', 'ind1', 'brown', 'D', 1)];
+  engine.state.players[1].hp = 1;
+  engine.state.players[1].hand = [makeCard('Beer', 'beer1', 'brown', 'H', 6)];
+  engine.state.players[2].hand = [];
+  engine.state.players[3].hand = [];
+
+  engine.playCard(0, 'ind1');
+
+  // Player 1 takes hit, triggers beer save
+  engine.handleAction(1, { type: 'respond', response: 'take_hit' });
+  assert(engine.state.pending !== null, 'Beer save pending');
+  assertEqual(engine.state.pending.type, 'beer_save', 'Beer save triggered');
+  assert(engine.state.pending.continuation !== null, 'Indians continuation attached');
+
+  // Player 1 uses beer
+  engine.handleAction(1, { type: 'respond', response: 'beer', cardId: 'beer1' });
+  assert(!engine.state.players[1].eliminated, 'Player 1 survived');
+
+  // Indians should continue to player 2
+  assert(engine.state.pending !== null, 'Indians chain resumed');
+  assertEqual(engine.state.pending.type, 'indians_response', 'Pending is indians_response again');
+
+  // Player 2 takes hit
+  engine.handleAction(2, { type: 'respond', response: 'take_hit' });
+  assertEqual(engine.state.players[2].hp, 3, 'Player 2 takes Indians damage');
 
   // Player 3 takes hit
   if (engine.state.pending && engine.state.pending.type === 'indians_response') {
     engine.handleAction(3, { type: 'respond', response: 'take_hit' });
-    assertEqual(engine.state.players[3].hp, 3, 'Player 3 takes damage from Indians');
+    assertEqual(engine.state.players[3].hp, 3, 'Player 3 takes Indians damage');
   }
 }
 
-section('Elimination & Win Conditions');
+// ─── Gatling ──────────────────────────────────────────────
+section('Gatling — All Others Take Damage');
 {
-  const engine = createTestGame({ playerCount: 4 });
-  engine.state.players.forEach(p => { p.character = basicChar(); p.inPlay = []; });
-  engine.state.players[0].role = 'sheriff';
-  engine.state.players[1].role = 'outlaw';
-  engine.state.players[2].role = 'outlaw';
-  engine.state.players[3].role = 'renegade';
-
-  // Kill both outlaws and renegade -> sheriff wins
-  engine.state.players[1].hp = 1;
-  engine.state.players[2].hp = 1;
-  engine.state.players[3].hp = 1;
-
-  engine.applyDamage(1, 1, 0);
-  assert(engine.state.players[1].eliminated, 'Outlaw 1 eliminated');
-  assertEqual(engine.state.winner, null, 'No winner yet');
-
-  engine.applyDamage(2, 1, 0);
-  assert(engine.state.players[2].eliminated, 'Outlaw 2 eliminated');
-
-  engine.applyDamage(3, 1, 0);
-  assert(engine.state.players[3].eliminated, 'Renegade eliminated');
-  assert(engine.state.winner !== null, 'Game has winner');
-  assertEqual(engine.state.winner.team, 'sheriff', 'Sheriff team wins');
-}
-
-section('Outlaw Reward');
-{
-  const engine = createTestGame({ playerCount: 4 });
-  engine.state.players.forEach(p => { p.character = basicChar(); p.inPlay = []; p.hand = []; });
-  engine.state.players[0].role = 'sheriff';
-  engine.state.players[1].role = 'outlaw';
-  engine.state.players[2].role = 'outlaw';
-  engine.state.players[3].role = 'renegade';
-  engine.state.players[1].hp = 1;
-
-  const handBefore = engine.state.players[0].hand.length;
-  engine.applyDamage(1, 1, 0);
-  assertEqual(engine.state.players[0].hand.length, handBefore + 3, 'Killer draws 3 for killing outlaw');
-}
-
-section('Player View');
-{
-  const engine = createTestGame();
-  engine.state.players.forEach((p, i) => { p.character = basicChar(); p.inPlay = []; });
-
-  const view = engine.getPlayerView(0);
-  assert(view !== null, 'View is not null');
-  assertEqual(view.yourIndex, 0, 'Your index correct');
-  assert(Array.isArray(view.hand), 'Hand is array');
-  assert(Array.isArray(view.players), 'Players is array');
-  assertEqual(view.players.length, engine.state.players.length, 'All players in view');
-  assert(view.role !== null, 'Own role visible');
-
-  // Other players' roles hidden (except sheriff)
-  view.players.forEach((p, i) => {
-    if (i !== 0 && p.role !== 'sheriff' && !p.eliminated) {
-      assertEqual(p.role, null, 'Player ' + i + ' role hidden');
-    }
-  });
-}
-
-section('Action Dispatch — handleAction');
-{
-  const engine = createTestGame();
-  engine.state.players.forEach(p => { p.character = basicChar(); p.inPlay = []; });
+  const engine = setupBasicGame();
   setTurn(engine, 0);
-
-  // end_turn action
-  engine.state.players[0].hand = [];
-  engine.state.players[0].hp = 4;
-  const turnBefore = engine.state.currentTurn;
-  engine.handleAction(0, { type: 'end_turn' });
-  assert(engine.state.currentTurn !== turnBefore || engine.state.pending !== null, 'Turn advanced or pending set');
-}
-
-section('Ability — Normalize Names');
-{
-  const engine = createTestGame();
-  engine.state.players.forEach(p => { p.character = basicChar(); p.inPlay = []; });
-
-  // Test the ability name normalization
-  assertEqual(engine._normalizeAbilityType('discard_to_heal'), 'sid_ketchum', 'discard_to_heal -> sid_ketchum');
-  assertEqual(engine._normalizeAbilityType('hp_for_cards'), 'chuck_wengam', 'hp_for_cards -> chuck_wengam');
-  assertEqual(engine._normalizeAbilityType('discard_to_bang'), 'doc_holyday', 'discard_to_bang -> doc_holyday');
-  assertEqual(engine._normalizeAbilityType('blue_for_cards'), 'jose_delgado', 'blue_for_cards -> jose_delgado');
-  assertEqual(engine._normalizeAbilityType('sid_ketchum'), 'sid_ketchum', 'sid_ketchum passthrough');
-}
-
-section('Gatling');
-{
-  const engine = createTestGame();
-  engine.state.players.forEach(p => { p.character = basicChar(); p.inPlay = []; p.hp = 4; p.maxHp = 4; });
-  setTurn(engine, 0);
-
-  engine.state.players[0].hand = [{ id: 'gat1', name: 'Gatling', type: 'brown', suit: 'H', value: 10 }];
+  engine.state.players[0].hand = [makeCard('Gatling', 'gat1', 'brown', 'H', 10)];
 
   engine.playCard(0, 'gat1');
-  assertEqual(engine.state.pending.type, 'gatling_response', 'Gatling response pending');
+  assertEqual(engine.state.pending.type, 'gatling_response', 'Gatling pending');
 
-  // All others take hit
   for (let i = 1; i <= 3; i++) {
     if (engine.state.pending && engine.state.pending.type === 'gatling_response') {
       engine.handleAction(i, { type: 'respond', response: 'take_hit' });
@@ -563,162 +711,312 @@ section('Gatling');
   }
 }
 
-section('Saloon');
+section('Gatling — Beer Save Continues Chain');
 {
-  const engine = createTestGame();
-  engine.state.players.forEach(p => { p.character = basicChar(); p.inPlay = []; p.hp = 2; p.maxHp = 4; });
+  const engine = setupBasicGame();
   setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('Gatling', 'gat1', 'brown', 'H', 10)];
+  engine.state.players[1].hp = 1;
+  engine.state.players[1].hand = [makeCard('Beer', 'beer1', 'brown', 'H', 6)];
 
-  engine.state.players[0].hand = [{ id: 'sal1', name: 'Saloon', type: 'brown', suit: 'H', value: 5 }];
-  engine.playCard(0, 'sal1');
+  engine.playCard(0, 'gat1');
 
-  engine.state.players.forEach((p, i) => {
-    assertEqual(p.hp, 3, 'Player ' + i + ' heals 1 HP from Saloon');
-  });
+  engine.handleAction(1, { type: 'respond', response: 'take_hit' });
+  assertEqual(engine.state.pending.type, 'beer_save', 'Beer save from Gatling');
+  assert(engine.state.pending.continuation !== null, 'Gatling continuation attached');
+
+  engine.handleAction(1, { type: 'respond', response: 'beer', cardId: 'beer1' });
+  assert(!engine.state.players[1].eliminated, 'Player 1 survived');
+
+  // Should continue to player 2
+  assert(engine.state.pending !== null, 'Gatling chain resumed');
+  assertEqual(engine.state.pending.type, 'gatling_response', 'Pending is gatling_response');
 }
 
-section('General Store');
+// ─── Cat Balou ────────────────────────────────────────────
+section('Cat Balou — Discard From Hand');
 {
-  const engine = createTestGame();
-  engine.state.players.forEach(p => { p.character = basicChar(); p.inPlay = []; });
+  const engine = setupBasicGame();
   setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('Cat Balou', 'cb1', 'brown', 'H', 13)];
+  engine.state.players[1].hand = [makeCard('BANG!', 'victim', 'brown', 'D', 2)];
 
-  engine.state.players[0].hand = [{ id: 'gs1', name: 'General Store', type: 'brown', suit: 'C', value: 9 }];
+  engine.playCard(0, 'cb1', 1);
+  if (engine.state.pending && engine.state.pending.type === 'choose_target') {
+    engine.handleChooseTarget(0, 1);
+  }
+  assertEqual(engine.state.pending.type, 'choose_card_from_target', 'Choose card pending');
+
+  engine.handleChooseCardFromTarget(0, { choice: -1 });
+  assertEqual(engine.state.players[1].hand.length, 0, 'Target lost card');
+  // Cat Balou discards, doesn't steal
+  assertEqual(engine.state.players[0].hand.length, 0, 'Player 0 did not gain card');
+}
+
+section('Cat Balou — Discard In-Play Card');
+{
+  const engine = setupBasicGame();
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('Cat Balou', 'cb1', 'brown', 'H', 13)];
+  engine.state.players[1].inPlay = [makeCard('Barrel', 'bar1', 'blue', 'S', 12)];
+
+  engine.playCard(0, 'cb1', 1);
+  if (engine.state.pending && engine.state.pending.type === 'choose_target') {
+    engine.handleChooseTarget(0, 1);
+  }
+  engine.handleChooseCardFromTarget(0, { choice: 'bar1' });
+  assertEqual(engine.state.players[1].inPlay.length, 0, 'In-play card removed');
+}
+
+// ─── Panic! ───────────────────────────────────────────────
+section('Panic! — Steal From Hand');
+{
+  const engine = setupBasicGame(5);
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('Panic!', 'pan1', 'brown', 'H', 11)];
+  engine.state.players[1].hand = [makeCard('Beer', 'target-card', 'brown', 'H', 6)];
+
+  engine.playCard(0, 'pan1', 1);
+  if (engine.state.pending && engine.state.pending.type === 'choose_target') {
+    engine.handleChooseTarget(0, 1);
+  }
+  engine.handleChooseCardFromTarget(0, { choice: -1 });
+  assertEqual(engine.state.players[1].hand.length, 0, 'Target lost card');
+  assert(engine.state.players[0].hand.some(c => c.name === 'Beer'), 'Player gained card (Panic steals)');
+}
+
+section('Panic! — Distance 1 Limit');
+{
+  const engine = setupBasicGame(5);
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('Panic!', 'pan1', 'brown', 'H', 11)];
+  engine.state.players[2].hand = [makeCard('Beer', 'far-card', 'brown', 'H', 6)];
+
+  // Player 2 is at distance 2 — should not be a valid target
+  assertThrows(() => engine.playCard(0, 'pan1', 2), 'Panic! distance 1 limit');
+}
+
+// ─── Rag Time ─────────────────────────────────────────────
+section('Rag Time — Discards (Not Steals) + Draws');
+{
+  const engine = setupBasicGame();
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('Rag Time', 'rt1', 'brown', 'H', 9)];
+  engine.state.players[1].hand = [makeCard('BANG!', 'victim', 'brown', 'D', 2)];
+
+  engine.playCard(0, 'rt1', 1);
+  if (engine.state.pending && engine.state.pending.type === 'choose_target') {
+    engine.handleChooseTarget(0, 1);
+  }
+  engine.handleChooseCardFromTarget(0, { choice: -1 });
+
+  assertEqual(engine.state.players[1].hand.length, 0, 'Target lost card');
+  // Rag Time: discard target's card (not steal) + draw 1 from deck
+  // Player 0 should have only the drawn card, NOT the target's card
+  assertEqual(engine.state.players[0].hand.length, 1, 'Player drew 1 card from deck');
+  assert(!engine.state.players[0].hand.some(c => c.name === 'BANG!' && c.id === 'victim'), 'Did not steal target card');
+}
+
+// ─── Springfield ──────────────────────────────────────────
+section('Springfield — Requires Discard Card');
+{
+  const engine = setupBasicGame();
+  setTurn(engine, 0);
+  // Only one card = Springfield itself, no card to discard
+  engine.state.players[0].hand = [makeCard('Springfield', 'sp1', 'brown', 'C', 13)];
+  assertThrows(() => engine.playCard(0, 'sp1', 1), 'Springfield requires discard card');
+}
+
+section('Springfield — Discard + Shoot Flow');
+{
+  const engine = setupBasicGame();
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [
+    makeCard('Springfield', 'sp1', 'brown', 'C', 13),
+    makeCard('BANG!', 'b1', 'brown', 'D', 2),
+  ];
+
+  engine.playCard(0, 'sp1', 1);
+  if (engine.state.pending && engine.state.pending.type === 'choose_target') {
+    engine.handleChooseTarget(0, 1);
+  }
+  // Should require discard
+  assertEqual(engine.state.pending.type, 'springfield_discard', 'Springfield discard pending');
+
+  // Discard a card
+  engine.handleChoose(0, 'b1');
+  // Now resolves as a BANG! on target
+  assert(engine.state.pending === null || engine.state.pending.type === 'bang_response', 'Springfield resolves to bang hit');
+}
+
+// ─── General Store ────────────────────────────────────────
+section('General Store — Pick Order');
+{
+  const engine = setupBasicGame();
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('General Store', 'gs1', 'brown', 'C', 9)];
+
   engine.playCard(0, 'gs1');
-
   assertEqual(engine.state.pending.type, 'general_store', 'General Store pending');
   assert(engine.state.pending.cards.length > 0, 'Cards revealed');
   assertEqual(engine.state.pending.pickOrder[0], 0, 'Current player picks first');
 }
 
-section('Cat Balou');
+// ─── Whisky ───────────────────────────────────────────────
+section('Whisky — Discard + Heal 2');
 {
-  const engine = createTestGame();
-  engine.state.players.forEach(p => { p.character = basicChar(); p.inPlay = []; });
+  const engine = setupBasicGame();
+  setTurn(engine, 0);
+  engine.state.players[0].hp = 2;
+  engine.state.players[0].hand = [
+    makeCard('Whisky', 'wh1', 'brown', 'S', 1),
+    makeCard('BANG!', 'b1', 'brown', 'D', 2),
+  ];
+
+  engine.playCard(0, 'wh1');
+  assertEqual(engine.state.pending.type, 'whisky_discard', 'Whisky discard pending');
+
+  engine.handleChoose(0, 'b1');
+  assertEqual(engine.state.players[0].hp, 4, 'Whisky heals 2 HP (2+2=4)');
+}
+
+section('Whisky — Requires Discard Card');
+{
+  const engine = setupBasicGame();
+  setTurn(engine, 0);
+  engine.state.players[0].hp = 2;
+  engine.state.players[0].hand = [makeCard('Whisky', 'wh1', 'brown', 'S', 1)];
+  assertThrows(() => engine.playCard(0, 'wh1'), 'Whisky requires discard card');
+}
+
+// ─── Hand Limit & Discard ─────────────────────────────────
+section('End Turn — Hand Limit Enforced');
+{
+  const engine = setupBasicGame();
+  engine.state.players[0].hp = 2;
+  engine.state.players[0].maxHp = 5;
   setTurn(engine, 0);
 
-  engine.state.players[0].hand = [{ id: 'cb1', name: 'Cat Balou', type: 'brown', suit: 'H', value: 13 }];
-  engine.state.players[1].hand = [{ id: 'victim-card', name: 'BANG!', type: 'brown', suit: 'D', value: 2 }];
-
-  engine.playCard(0, 'cb1', 1);
-  // Might need target selection
-  if (engine.state.pending && engine.state.pending.type === 'choose_target') {
-    engine.handleChooseTarget(0, 1);
+  const cards = [];
+  for (let i = 0; i < 5; i++) {
+    cards.push(makeCard('BANG!', 'hc-' + i, 'brown', 'D', i + 2));
   }
+  engine.state.players[0].hand = cards;
 
-  assertEqual(engine.state.pending.type, 'choose_card_from_target', 'Choose card from target');
+  engine.endTurn(0);
+  assertEqual(engine.state.pending.type, 'discard_required', 'Discard required');
+  assertEqual(engine.state.pending.count, 3, 'Must discard 3 (5 - HP of 2)');
 
-  // Choose random from hand
-  engine.handleChooseCardFromTarget(0, { choice: -1 });
-  assertEqual(engine.state.players[1].hand.length, 0, 'Target lost a card');
+  engine.handleDiscard(0, ['hc-0', 'hc-1', 'hc-2']);
+  assertEqual(engine.state.players[0].hand.length, 2, 'Hand at limit');
 }
 
-section('Panic!');
+section('End Turn — No Discard Needed');
 {
-  const engine = createTestGame({ playerCount: 5 });
-  engine.state.players.forEach(p => { p.character = basicChar(); p.inPlay = []; });
+  const engine = setupBasicGame();
   setTurn(engine, 0);
-
-  engine.state.players[0].hand = [{ id: 'pan1', name: 'Panic!', type: 'brown', suit: 'H', value: 11 }];
-  engine.state.players[1].hand = [{ id: 'target-card', name: 'Beer', type: 'brown', suit: 'H', value: 6 }];
-
-  // Player 1 is at distance 1
-  engine.playCard(0, 'pan1', 1);
-  if (engine.state.pending && engine.state.pending.type === 'choose_target') {
-    engine.handleChooseTarget(0, 1);
-  }
-
-  assertEqual(engine.state.pending.type, 'choose_card_from_target', 'Choose card from target');
-  engine.handleChooseCardFromTarget(0, { choice: -1 });
-  assertEqual(engine.state.players[1].hand.length, 0, 'Target lost a card');
-  // Player 0 gained the card (Panic! takes, not discards)
-  assert(engine.state.players[0].hand.some(c => c.name === 'Beer'), 'Player 0 gained the card');
+  engine.state.players[0].hand = [makeCard('BANG!', 'b1', 'brown', 'D', 2)];
+  const turnBefore = engine.state.currentTurn;
+  engine.endTurn(0);
+  // Turn should advance (no discard needed since 1 card < 5 HP)
+  assert(engine.state.currentTurn !== turnBefore || engine.state.pending !== null, 'Turn advanced');
 }
 
-section('Dynamite Card');
+// ─── Win Conditions ───────────────────────────────────────
+section('Win — Sheriff Team Wins');
 {
-  const engine = createTestGame();
-  engine.state.players.forEach(p => { p.character = basicChar(); p.inPlay = []; });
-  setTurn(engine, 0);
-
-  engine.state.players[0].hand = [{ id: 'dyn1', name: 'Dynamite', type: 'blue', suit: 'H', value: 2 }];
-  engine.playCard(0, 'dyn1');
-  assert(engine.state.players[0].inPlay.some(c => c.name === 'Dynamite'), 'Dynamite placed in play');
-}
-
-section('Beer Save on Death');
-{
-  const engine = createTestGame();
-  engine.state.players.forEach(p => { p.character = basicChar(); p.inPlay = []; });
+  const engine = setupBasicGame();
   engine.state.players[1].hp = 1;
-  engine.state.players[1].maxHp = 4;
-  engine.state.players[1].hand = [{ id: 'beer-save', name: 'Beer', type: 'brown', suit: 'H', value: 6 }];
+  engine.state.players[2].hp = 1;
+  engine.state.players[3].hp = 1;
 
-  engine.applyDamage(1, 1, 0);
+  engine.applyDamage(1, 1, 0); // Kill outlaw 1
+  assertEqual(engine.state.winner, null, 'No winner yet');
 
-  // Should prompt for beer save
-  assert(engine.state.pending !== null, 'Pending action for beer save');
-  assertEqual(engine.state.pending.type, 'beer_save', 'Beer save prompt');
+  engine.applyDamage(2, 1, 0); // Kill outlaw 2
+  assertEqual(engine.state.winner, null, 'Still no winner');
 
-  // Use beer to survive
-  engine.handleAction(1, { type: 'respond', response: 'beer', cardId: 'beer-save' });
-  assert(!engine.state.players[1].eliminated, 'Player survived with beer');
-  assert(engine.state.players[1].hp > 0, 'Player HP restored');
+  engine.applyDamage(3, 1, 0); // Kill renegade
+  assert(engine.state.winner !== null, 'Game over');
+  assertEqual(engine.state.winner.team, 'sheriff', 'Sheriff team wins');
 }
 
+section('Win — Outlaws Win (Sheriff Killed)');
+{
+  const engine = setupBasicGame();
+  engine.state.players[0].hp = 1;
+
+  engine.applyDamage(0, 1, 1);
+  assert(engine.state.winner !== null, 'Game over');
+  assertEqual(engine.state.winner.team, 'outlaw', 'Outlaws win');
+}
+
+section('Win — Renegade Wins (Last Standing After Sheriff)');
+{
+  const engine = setupBasicGame();
+  engine.state.players[1].hp = 1;
+  engine.state.players[2].hp = 1;
+  engine.state.players[0].hp = 1;
+
+  engine.applyDamage(1, 1, 3); // Kill outlaw 1
+  engine.applyDamage(2, 1, 3); // Kill outlaw 2
+  engine.applyDamage(0, 1, 3); // Kill sheriff — only renegade alive
+
+  assert(engine.state.winner !== null, 'Game over');
+  assertEqual(engine.state.winner.team, 'renegade', 'Renegade wins');
+}
+
+// ─── Rewards & Penalties ──────────────────────────────────
+section('Outlaw Reward — Killer Draws 3');
+{
+  const engine = setupBasicGame();
+  engine.state.players[1].hp = 1;
+
+  const handBefore = engine.state.players[0].hand.length;
+  engine.applyDamage(1, 1, 0);
+  assertEqual(engine.state.players[0].hand.length, handBefore + 3, 'Sheriff draws 3 for killing outlaw');
+}
+
+section('Deputy Penalty — Sheriff Discards All');
+{
+  const engine = setupBasicGame();
+  engine.state.players[3].role = 'deputy';
+  engine.state.players[3].hp = 1;
+  engine.state.players[0].hand = [makeCard('BANG!', 'b1'), makeCard('Beer', 'beer1')];
+  engine.state.players[0].inPlay = [makeCard('Barrel', 'bar1', 'blue')];
+
+  engine.applyDamage(3, 1, 0); // Sheriff kills deputy
+  assertEqual(engine.state.players[0].hand.length, 0, 'Sheriff loses all hand cards');
+  assertEqual(engine.state.players[0].inPlay.length, 0, 'Sheriff loses all in-play cards');
+}
+
+// ─── Character Abilities ──────────────────────────────────
 section('Willy the Kid — Unlimited BANGs');
 {
-  const engine = createTestGame();
-  engine.state.players.forEach(p => { p.inPlay = []; p.hp = 4; p.maxHp = 4; });
-  engine.state.players[0].character = { name: 'Willy the Kid', hp: 4, ability: 'Unlimited BANG!', set: 'base', effect: 'unlimited_bangs' };
-  engine.state.players[1].character = basicChar();
+  const engine = setupBasicGame();
+  engine.state.players[0].character = { name: 'Willy the Kid', hp: 4, ability: '', set: 'base', effect: 'unlimited_bangs' };
   setTurn(engine, 0);
-
   engine.state.players[0].hand = [
-    { id: 'b1', name: 'BANG!', type: 'brown', suit: 'D', value: 5 },
-    { id: 'b2', name: 'BANG!', type: 'brown', suit: 'D', value: 6 },
+    makeCard('BANG!', 'b1', 'brown', 'D', 5),
+    makeCard('BANG!', 'b2', 'brown', 'D', 6),
   ];
 
   engine.playCard(0, 'b1', 1);
   engine.handleAction(1, { type: 'respond', response: 'take_hit' });
 
-  // Second BANG! should also work for Willy
   engine.playCard(0, 'b2', 1);
   engine.handleAction(1, { type: 'respond', response: 'take_hit' });
   assertEqual(engine.state.players[1].hp, 2, 'Willy played 2 BANGs');
 }
 
-section('Calamity Janet — BANG!/Missed! Swap');
-{
-  const engine = createTestGame();
-  engine.state.players.forEach(p => { p.inPlay = []; p.hp = 4; p.maxHp = 4; });
-  engine.state.players[0].character = { name: 'Calamity Janet', hp: 4, ability: 'Swap', set: 'base', effect: 'bang_missed_swap' };
-  engine.state.players[1].character = basicChar();
-  setTurn(engine, 0);
-
-  // Calamity Janet plays Missed! as BANG!
-  engine.state.players[0].hand = [
-    { id: 'm1', name: 'Missed!', type: 'brown', suit: 'C', value: 10 },
-  ];
-
-  engine.playCard(0, 'm1', 1);
-  assert(engine.state.pending !== null, 'Missed! played as BANG! creates pending');
-  assertEqual(engine.state.pending.type, 'bang_response', 'Bang response for Missed!-as-BANG!');
-
-  engine.handleAction(1, { type: 'respond', response: 'take_hit' });
-  assertEqual(engine.state.players[1].hp, 3, 'Missed!-as-BANG! does damage');
-}
-
 section('Volcanic — Unlimited BANGs');
 {
-  const engine = createTestGame();
-  engine.state.players.forEach(p => { p.character = basicChar(); p.inPlay = []; p.hp = 4; p.maxHp = 4; });
-  engine.state.players[0].inPlay = [{ id: 'vol1', name: 'Volcanic', type: 'blue', suit: 'C', value: 10 }];
+  const engine = setupBasicGame();
   setTurn(engine, 0);
-
+  engine.state.players[0].inPlay = [makeCard('Volcanic', 'vol1', 'blue', 'C', 10)];
   engine.state.players[0].hand = [
-    { id: 'b1', name: 'BANG!', type: 'brown', suit: 'D', value: 5 },
-    { id: 'b2', name: 'BANG!', type: 'brown', suit: 'D', value: 6 },
+    makeCard('BANG!', 'b1', 'brown', 'D', 5),
+    makeCard('BANG!', 'b2', 'brown', 'D', 6),
   ];
 
   engine.playCard(0, 'b1', 1);
@@ -729,32 +1027,46 @@ section('Volcanic — Unlimited BANGs');
   assertEqual(engine.state.players[1].hp, 2, 'Volcanic allows 2 BANGs');
 }
 
-section('Bart Cassidy — Draw on Damage');
+section('Calamity Janet — Missed! as BANG!');
 {
-  const engine = createTestGame();
-  engine.state.players.forEach(p => { p.character = basicChar(); p.inPlay = []; p.hp = 4; p.maxHp = 4; });
-  engine.state.players[1].character = { name: 'Bart Cassidy', hp: 4, ability: 'Draw on damage', set: 'base', effect: 'on_damage_draw' };
-  engine.state.players[1].hand = [];
+  const engine = setupBasicGame();
+  engine.state.players[0].character = { name: 'Calamity Janet', hp: 4, ability: '', set: 'base', effect: 'bang_missed_swap' };
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('Missed!', 'm1', 'brown', 'C', 10)];
 
-  engine.applyDamage(1, 1, 0);
-  assertEqual(engine.state.players[1].hand.length, 1, 'Bart Cassidy drew 1 card on damage');
+  engine.playCard(0, 'm1', 1);
+  assertEqual(engine.state.pending.type, 'bang_response', 'Missed! played as BANG!');
+
+  engine.handleAction(1, { type: 'respond', response: 'take_hit' });
+  assertEqual(engine.state.players[1].hp, 3, 'Missed!-as-BANG! does damage');
 }
 
-section('Slab the Killer — Double Missed');
+section('Calamity Janet — BANG! as Missed!');
 {
-  const engine = createTestGame();
-  engine.state.players.forEach(p => { p.character = basicChar(); p.inPlay = []; p.hp = 4; p.maxHp = 4; });
-  engine.state.players[0].character = { name: 'Slab the Killer', hp: 4, ability: 'Double missed', set: 'base', effect: 'double_missed' };
+  const engine = setupBasicGame();
+  engine.state.players[1].character = { name: 'Calamity Janet', hp: 4, ability: '', set: 'base', effect: 'bang_missed_swap' };
   setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('BANG!', 'b1', 'brown', 'D', 5)];
+  engine.state.players[1].hand = [makeCard('BANG!', 'b2', 'brown', 'D', 6)];
 
-  engine.state.players[0].hand = [{ id: 'b1', name: 'BANG!', type: 'brown', suit: 'D', value: 5 }];
+  engine.playCard(0, 'b1', 1);
+  engine.handleAction(1, { type: 'respond', response: 'missed', cardId: 'b2' });
+  assertEqual(engine.state.players[1].hp, 4, 'BANG!-as-Missed! blocks damage');
+}
+
+section('Slab the Killer — Requires 2 Missed!');
+{
+  const engine = setupBasicGame();
+  engine.state.players[0].character = { name: 'Slab the Killer', hp: 4, ability: '', set: 'base', effect: 'double_missed' };
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('BANG!', 'b1', 'brown', 'D', 5)];
   engine.state.players[1].hand = [
-    { id: 'm1', name: 'Missed!', type: 'brown', suit: 'C', value: 10 },
-    { id: 'm2', name: 'Missed!', type: 'brown', suit: 'C', value: 11 },
+    makeCard('Missed!', 'm1', 'brown', 'C', 10),
+    makeCard('Missed!', 'm2', 'brown', 'C', 11),
   ];
 
   engine.playCard(0, 'b1', 1);
-  assertEqual(engine.state.pending.missedNeeded, 2, 'Need 2 Missed! cards');
+  assertEqual(engine.state.pending.missedNeeded, 2, 'Need 2 Missed!');
 
   engine.handleAction(1, { type: 'respond', response: 'missed', cardId: 'm1' });
   assert(engine.state.pending !== null, 'Still needs another Missed!');
@@ -763,9 +1075,531 @@ section('Slab the Killer — Double Missed');
   assertEqual(engine.state.players[1].hp, 4, 'Survived with 2 Missed!');
 }
 
-// ═══════════════════════════════════════════════════════
+section('Bart Cassidy — Draw on Damage');
+{
+  const engine = setupBasicGame();
+  engine.state.players[1].character = { name: 'Bart Cassidy', hp: 4, ability: '', set: 'base', effect: 'on_damage_draw' };
+  engine.state.players[1].hand = [];
+
+  engine.applyDamage(1, 1, 0);
+  assertEqual(engine.state.players[1].hand.length, 1, 'Bart Cassidy drew 1 card on damage');
+}
+
+section('El Gringo — Steal on Damage');
+{
+  const engine = setupBasicGame();
+  engine.state.players[1].character = { name: 'El Gringo', hp: 3, ability: '', set: 'base', effect: 'on_damage_steal' };
+  engine.state.players[1].hand = [];
+  engine.state.players[0].hand = [makeCard('BANG!', 'b1', 'brown', 'D', 5)];
+
+  engine.applyDamage(1, 1, 0);
+  assertEqual(engine.state.players[1].hand.length, 1, 'El Gringo stole card from attacker');
+  assertEqual(engine.state.players[0].hand.length, 0, 'Attacker lost card');
+}
+
+section('Vulture Sam — Takes Cards From Eliminated');
+{
+  const engine = setupBasicGame();
+  engine.state.players[2].character = { name: 'Vulture Sam', hp: 4, ability: '', set: 'base', effect: 'vulture' };
+  engine.state.players[2].hand = [];
+  engine.state.players[1].hp = 1;
+  engine.state.players[1].hand = [makeCard('BANG!', 'b1'), makeCard('Missed!', 'm1')];
+  engine.state.players[1].inPlay = [makeCard('Barrel', 'bar1', 'blue')];
+
+  engine.applyDamage(1, 1, 0);
+  assert(engine.state.players[1].eliminated, 'Player eliminated');
+  assertEqual(engine.state.players[2].hand.length, 3, 'Vulture Sam took all 3 cards');
+}
+
+section('Sid Ketchum — Discard 2 to Heal');
+{
+  const engine = setupBasicGame();
+  engine.state.players[0].character = { name: 'Sid Ketchum', hp: 4, ability: '', set: 'base', effect: 'discard_to_heal' };
+  engine.state.players[0].hp = 3;
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [
+    makeCard('BANG!', 'b1', 'brown', 'D', 2),
+    makeCard('BANG!', 'b2', 'brown', 'D', 3),
+  ];
+
+  engine.useAbility(0, 'sid_ketchum', { cardIds: ['b1', 'b2'] });
+  assertEqual(engine.state.players[0].hp, 4, 'Healed 1 HP');
+  assertEqual(engine.state.players[0].hand.length, 0, '2 cards discarded');
+}
+
+section('Chuck Wengam — Lose 1 HP Draw 2');
+{
+  const engine = setupBasicGame();
+  engine.state.players[0].character = { name: 'Chuck Wengam', hp: 4, ability: '', set: 'dodge', effect: 'hp_for_cards' };
+  engine.state.players[0].hp = 3;
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [];
+
+  engine.useAbility(0, 'chuck_wengam', {});
+  assertEqual(engine.state.players[0].hp, 2, 'Lost 1 HP');
+  assertEqual(engine.state.players[0].hand.length, 2, 'Drew 2 cards');
+}
+
+section('Chuck Wengam — Cannot Use at 1 HP');
+{
+  const engine = setupBasicGame();
+  engine.state.players[0].character = { name: 'Chuck Wengam', hp: 4, ability: '', set: 'dodge', effect: 'hp_for_cards' };
+  engine.state.players[0].hp = 1;
+  setTurn(engine, 0);
+
+  assertThrows(() => engine.useAbility(0, 'chuck_wengam', {}), 'Cannot use at 1 HP');
+}
+
+section('Suzy Lafayette — Draw When Hand Empty');
+{
+  const engine = setupBasicGame();
+  engine.state.players[0].character = { name: 'Suzy Lafayette', hp: 4, ability: '', set: 'base', effect: 'draw_on_empty' };
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('BANG!', 'b1', 'brown', 'D', 5)];
+
+  engine.playCard(0, 'b1', 1);
+  // Hand is now empty, Suzy draws
+  // Note: pending bang_response may exist, Suzy draws after card is played
+  // The check happens in playBang via the play path... actually it's checked after beer/stagecoach etc
+  // Let's verify she gets a card when hand empties through other means
+  const engine2 = setupBasicGame();
+  engine2.state.players[0].character = { name: 'Suzy Lafayette', hp: 4, ability: '', set: 'base', effect: 'draw_on_empty' };
+  setTurn(engine2, 0);
+  engine2.state.players[0].hand = [makeCard('Beer', 'beer1', 'brown', 'H', 6)];
+  engine2.state.players[0].hp = 3;
+
+  engine2.playCard(0, 'beer1');
+  assertEqual(engine2.state.players[0].hand.length, 1, 'Suzy drew card when hand became empty');
+}
+
+section('Sean Mallory — Hand Limit 10');
+{
+  const engine = setupBasicGame();
+  engine.state.players[0].character = { name: 'Sean Mallory', hp: 3, ability: '', set: 'dodge', effect: 'big_hand' };
+  assertEqual(engine.getHandLimit(0), 10, 'Hand limit is 10');
+}
+
+section('Tequila Joe — Beer Heals 2');
+{
+  const engine = setupBasicGame();
+  engine.state.players[0].character = { name: 'Tequila Joe', hp: 4, ability: '', set: 'dodge', effect: 'super_beer' };
+  engine.state.players[0].hp = 2;
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('Beer', 'beer1', 'brown', 'H', 6)];
+
+  engine.playCard(0, 'beer1');
+  assertEqual(engine.state.players[0].hp, 4, 'Tequila Joe: Beer heals 2');
+}
+
+section('Elena Fuente — Any Card as Missed!');
+{
+  const engine = setupBasicGame();
+  engine.state.players[1].character = { name: 'Elena Fuente', hp: 3, ability: '', set: 'dodge', effect: 'any_as_missed' };
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('BANG!', 'b1', 'brown', 'D', 5)];
+  engine.state.players[1].hand = [makeCard('Beer', 'beer1', 'brown', 'H', 6)]; // Not a Missed!
+
+  engine.playCard(0, 'b1', 1);
+  engine.handleAction(1, { type: 'respond', response: 'missed', cardId: 'beer1' });
+  assertEqual(engine.state.players[1].hp, 4, 'Elena Fuente: any card works as Missed!');
+}
+
+// ─── Vera Custer ──────────────────────────────────────────
+section('Vera Custer — Copy Ability (Array Index Mapping)');
+{
+  const engine = setupBasicGame();
+  engine.state.players[0].character = { name: 'Vera Custer', hp: 3, ability: '', set: 'dodge', effect: 'copy_ability' };
+  engine.state.players[1].character = { name: 'Willy the Kid', hp: 4, ability: '', set: 'base', effect: 'unlimited_bangs' };
+  engine.state.currentTurn = 0;
+
+  engine.startTurn();
+  assert(engine.state.pending !== null, 'Vera Custer pending');
+  assertEqual(engine.state.pending.type, 'vera_custer', 'Vera Custer choice prompt');
+
+  // UI sends array index 0, which maps to validTargets[0] (player 1)
+  engine.handleChoose(0, 0);
+  assert(engine.state.veraCusterCopy !== null, 'Copied ability');
+  assertEqual(engine.state.veraCusterCopy.effect, 'unlimited_bangs', 'Copied Willy the Kid');
+}
+
+// ─── Lucky Duke ───────────────────────────────────────────
+section('Lucky Duke — Pick via handlePick');
+{
+  const engine = setupBasicGame();
+  engine.state.players[1].character = { name: 'Lucky Duke', hp: 4, ability: '', set: 'base', effect: 'lucky_draw' };
+  // Set up a barrel check scenario
+  engine.state.players[1].inPlay = [makeCard('Barrel', 'bar1', 'blue', 'S', 12)];
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('BANG!', 'b1', 'brown', 'D', 5)];
+
+  // Stack 2 cards for Lucky Duke
+  const heartCard = makeCard('test', 'ld-heart', 'brown', 'H', 5);
+  const spadeCard = makeCard('test', 'ld-spade', 'brown', 'S', 5);
+  engine.state.deck.push(spadeCard, heartCard); // pop gives heart first
+
+  engine.playCard(0, 'b1', 1);
+  // Lucky Duke barrel check should trigger
+  if (engine.state.pending && engine.state.pending.type === 'lucky_duke') {
+    // Pick the heart card (index 0) via handlePick
+    engine.handlePick(1, 'ld-heart');
+    // Heart means barrel succeeds - player should be saved
+    assertEqual(engine.state.players[1].hp, 4, 'Lucky Duke: barrel saved with chosen heart');
+  }
+}
+
+// ─── Ability Name Normalization ───────────────────────────
+section('Ability Name Normalization');
+{
+  const engine = setupBasicGame();
+  assertEqual(engine._normalizeAbilityType('discard_to_heal'), 'sid_ketchum', 'discard_to_heal -> sid_ketchum');
+  assertEqual(engine._normalizeAbilityType('hp_for_cards'), 'chuck_wengam', 'hp_for_cards -> chuck_wengam');
+  assertEqual(engine._normalizeAbilityType('discard_to_bang'), 'doc_holyday', 'discard_to_bang -> doc_holyday');
+  assertEqual(engine._normalizeAbilityType('blue_for_cards'), 'jose_delgado', 'blue_for_cards -> jose_delgado');
+  assertEqual(engine._normalizeAbilityType('sid_ketchum'), 'sid_ketchum', 'Passthrough works');
+}
+
+// ─── Player View ──────────────────────────────────────────
+section('Player View — Role Visibility');
+{
+  const engine = setupBasicGame();
+
+  const view = engine.getPlayerView(1);
+  assertEqual(view.yourIndex, 1, 'Your index correct');
+  assert(Array.isArray(view.hand), 'Hand is array');
+  assert(view.role !== null, 'Own role visible');
+
+  // Sheriff is always visible
+  const sheriffView = view.players.find(p => p.role === 'sheriff');
+  assert(sheriffView !== undefined, 'Sheriff role visible to others');
+
+  // Other non-sheriff alive players' roles hidden
+  view.players.forEach((p, i) => {
+    if (i !== 1 && p.role !== 'sheriff' && !p.eliminated) {
+      assertEqual(p.role, null, 'Player ' + i + ' role hidden');
+    }
+  });
+}
+
+section('Player View — Eliminated Roles Revealed');
+{
+  const engine = setupBasicGame();
+  engine.state.players[1].eliminated = true;
+
+  const view = engine.getPlayerView(0);
+  const p1view = view.players[1];
+  assert(p1view.roleRevealed, 'Eliminated player role revealed');
+  assert(p1view.role !== null, 'Eliminated player role visible');
+}
+
+// ─── Action Dispatch ──────────────────────────────────────
+section('handleAction — Routes Correctly');
+{
+  const engine = setupBasicGame();
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [];
+
+  const turnBefore = engine.state.currentTurn;
+  engine.handleAction(0, { type: 'end_turn' });
+  assert(engine.state.currentTurn !== turnBefore || engine.state.pending !== null, 'end_turn advances');
+}
+
+section('handleAction — Game Over Rejects Actions');
+{
+  const engine = setupBasicGame();
+  engine.state.winner = { team: 'sheriff', desc: 'Sheriff wins!' };
+
+  assertThrows(() => engine.handleAction(0, { type: 'end_turn' }), 'Actions rejected after game over');
+}
+
+// ─── Draw Phase Characters ────────────────────────────────
+section('Black Jack — Red Second Card Draws Extra');
+{
+  const engine = setupBasicGame();
+  engine.state.players[0].character = { name: 'Black Jack', hp: 4, ability: '', set: 'base', effect: 'draw_bonus_red' };
+  engine.state.players[0].hand = [];
+  // Stack deck: first card anything, second card red (heart)
+  engine.state.deck.push(
+    makeCard('test', 'extra', 'brown', 'C', 5),
+    makeCard('test', 'second', 'brown', 'H', 7),
+    makeCard('test', 'first', 'brown', 'S', 3),
+  );
+  engine.state.currentTurn = 0;
+  engine.processDrawPhase(0);
+  // Should draw 2 + 1 bonus = 3 cards
+  assertEqual(engine.state.players[0].hand.length, 3, 'Black Jack drew 3 (bonus for red second card)');
+}
+
+section('Bill Noface — Draw 1 + Wounds');
+{
+  const engine = setupBasicGame();
+  engine.state.players[0].character = { name: 'Bill Noface', hp: 4, ability: '', set: 'dodge', effect: 'draw_per_wound' };
+  engine.state.players[0].hp = 2;
+  engine.state.players[0].hand = [];
+
+  engine.state.currentTurn = 0;
+  engine.processDrawPhase(0);
+  // Wounds = maxHp - hp = 5 - 2 = 3, draw count = 1 + 3 = 4
+  assertEqual(engine.state.players[0].hand.length, 4, 'Bill Noface drew 1 + 3 wounds = 4');
+}
+
+section('Pixie Pete — Draw 3');
+{
+  const engine = setupBasicGame();
+  engine.state.players[0].character = { name: 'Pixie Pete', hp: 3, ability: '', set: 'dodge', effect: 'draw_three' };
+  engine.state.players[0].hand = [];
+
+  engine.state.currentTurn = 0;
+  engine.processDrawPhase(0);
+  assertEqual(engine.state.players[0].hand.length, 3, 'Pixie Pete drew 3');
+}
+
+// ─── Belle Star ───────────────────────────────────────────
+section('Belle Star — Nullify Equipment Distance');
+{
+  const engine = setupBasicGame(5);
+  engine.state.players[0].character = { name: 'Belle Star', hp: 4, ability: '', set: 'dodge', effect: 'nullify_equipment' };
+  setTurn(engine, 0);
+  engine.state.players[2].inPlay = [makeCard('Mustang', 'must1', 'blue', 'H', 8)];
+
+  // During Belle Star's turn, Mustang shouldn't add distance
+  assertEqual(engine.calcDistance(0, 2), 2, 'Belle Star ignores Mustang during her turn');
+}
+
+// ─── Apache Kid ───────────────────────────────────────────
+section('Apache Kid — Diamond BANG! Ignored');
+{
+  const engine = setupBasicGame();
+  engine.state.players[1].character = { name: 'Apache Kid', hp: 3, ability: '', set: 'dodge', effect: 'diamond_immune' };
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('BANG!', 'b1', 'brown', 'D', 5)]; // Diamond BANG!
+
+  engine.playCard(0, 'b1', 1);
+  // Diamond BANG! should be ignored — no pending, no damage
+  assertEqual(engine.state.pending, null, 'Diamond BANG! ignored by Apache Kid');
+  assertEqual(engine.state.players[1].hp, 4, 'No damage taken');
+}
+
+section('Apache Kid — Non-Diamond BANG! Works');
+{
+  const engine = setupBasicGame();
+  engine.state.players[1].character = { name: 'Apache Kid', hp: 3, ability: '', set: 'dodge', effect: 'diamond_immune' };
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('BANG!', 'b1', 'brown', 'S', 5)]; // Spade BANG!
+
+  engine.playCard(0, 'b1', 1);
+  assertEqual(engine.state.pending.type, 'bang_response', 'Non-diamond BANG! works against Apache Kid');
+}
+
+// ─── Molly Stark ──────────────────────────────────────────
+section('Molly Stark — Draw on Out-of-Turn Card Play');
+{
+  const engine = setupBasicGame();
+  engine.state.players[1].character = { name: 'Molly Stark', hp: 4, ability: '', set: 'dodge', effect: 'draw_on_react' };
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('BANG!', 'b1', 'brown', 'D', 5)];
+  engine.state.players[1].hand = [makeCard('Missed!', 'm1', 'brown', 'C', 10)];
+
+  const handBefore = engine.state.players[1].hand.length;
+  engine.playCard(0, 'b1', 1);
+  engine.handleAction(1, { type: 'respond', response: 'missed', cardId: 'm1' });
+  // Molly played Missed! out of turn, should draw a card
+  assertEqual(engine.state.players[1].hand.length, handBefore, 'Molly Stark drew card after playing Missed! (net 0: -1 played +1 drawn)');
+}
+
+// ─── Green Cards ──────────────────────────────────────────
+section('Dodge Green Card — Missed! + Draw');
+{
+  const engine = setupBasicGame();
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('BANG!', 'b1', 'brown', 'D', 5)];
+  engine.state.players[1].inPlay = [makeCard('Dodge', 'dodge1', 'green', 'D', 11)];
+
+  engine.playCard(0, 'b1', 1);
+  const handBefore = engine.state.players[1].hand.length;
+  engine.handleAction(1, { type: 'respond', cardId: 'dodge1' });
+  assertEqual(engine.state.players[1].hp, 4, 'Dodge acts as Missed!');
+  assert(!engine.state.players[1].inPlay.some(c => c.id === 'dodge1'), 'Dodge removed from play');
+  assertEqual(engine.state.players[1].hand.length, handBefore + 1, 'Dodge: draw 1 card');
+}
+
+// ─── José Delgado ─────────────────────────────────────────
+section('José Delgado — Discard Blue to Draw 2');
+{
+  const engine = setupBasicGame();
+  engine.state.players[0].character = { name: 'José Delgado', hp: 4, ability: '', set: 'dodge', effect: 'blue_for_cards' };
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [
+    makeCard('Barrel', 'blue1', 'blue', 'S', 12),
+    makeCard('Scope', 'blue2', 'blue', 'S', 1),
+  ];
+
+  engine.useAbility(0, 'jose_delgado', { cardId: 'blue1' });
+  assertEqual(engine.state.joseDelgadoUsed, 1, 'Used once');
+  assertEqual(engine.state.players[0].hand.length, 3, 'Discarded 1 blue + drew 2 = net +1');
+
+  engine.useAbility(0, 'jose_delgado', { cardId: 'blue2' });
+  assertEqual(engine.state.joseDelgadoUsed, 2, 'Used twice');
+
+  assertThrows(() => engine.useAbility(0, 'jose_delgado', { cardId: 'any' }), 'Cannot use third time');
+}
+
+// ─── Brawl ────────────────────────────────────────────────
+section('Brawl — Discard + All Others Lose Card');
+{
+  const engine = setupBasicGame();
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [
+    makeCard('Brawl', 'brawl1', 'brown', 'S', 13),
+    makeCard('BANG!', 'discard-me', 'brown', 'D', 2),
+  ];
+  engine.state.players[1].hand = [makeCard('Beer', 'p1card', 'brown', 'H', 6)];
+  engine.state.players[2].hand = [];
+  engine.state.players[3].inPlay = [makeCard('Barrel', 'p3equip', 'blue', 'S', 12)];
+
+  engine.playCard(0, 'brawl1');
+  assertEqual(engine.state.pending.type, 'brawl_discard', 'Brawl discard pending');
+
+  // Discard a card for Brawl
+  engine.handleChoose(0, 'discard-me');
+  assertEqual(engine.state.pending.type, 'brawl_response', 'Brawl response pending');
+
+  // Player 1 loses random hand card
+  engine.handleChoose(1, null);
+  assertEqual(engine.state.players[1].hand.length, 0, 'Player 1 lost hand card');
+}
+
+// ─── Tequila ──────────────────────────────────────────────
+section('Tequila — Discard + Heal Target');
+{
+  const engine = setupBasicGame();
+  setTurn(engine, 0);
+  engine.state.players[1].hp = 2;
+  engine.state.players[0].hand = [
+    makeCard('Tequila', 'teq1', 'brown', 'C', 9),
+    makeCard('BANG!', 'discard-me', 'brown', 'D', 2),
+  ];
+
+  engine.playCard(0, 'teq1', 1);
+  if (engine.state.pending && engine.state.pending.type === 'choose_target') {
+    engine.handleChooseTarget(0, 1);
+  }
+  // Should require discard
+  assertEqual(engine.state.pending.type, 'tequila_discard', 'Tequila discard pending');
+
+  engine.handleChoose(0, 'discard-me');
+  assertEqual(engine.state.players[1].hp, 3, 'Tequila healed target 1 HP');
+}
+
+// ─── Edge Cases ───────────────────────────────────────────
+section('Multiple Damage — Bart Cassidy Draws Per HP Lost');
+{
+  const engine = setupBasicGame();
+  engine.state.players[0].character = { name: 'Bart Cassidy', hp: 4, ability: '', set: 'base', effect: 'on_damage_draw' };
+  engine.state.players[0].hand = [];
+
+  engine.applyDamage(0, 3, -1);
+  assertEqual(engine.state.players[0].hand.length, 3, 'Bart Cassidy drew 3 cards for 3 damage');
+  assertEqual(engine.state.players[0].hp, 2, 'Took 3 damage (5-3=2)');
+}
+
+section('Discard Wrong Count Rejected');
+{
+  const engine = setupBasicGame();
+  engine.state.players[0].hp = 2;
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [
+    makeCard('BANG!', 'hc-0'), makeCard('BANG!', 'hc-1'),
+    makeCard('BANG!', 'hc-2'), makeCard('BANG!', 'hc-3'),
+  ];
+
+  engine.endTurn(0);
+  assertEqual(engine.state.pending.count, 2, 'Need to discard 2');
+  assertThrows(() => engine.handleDiscard(0, ['hc-0']), 'Wrong discard count rejected');
+}
+
+section('Cannot End Turn During Wrong Phase');
+{
+  const engine = setupBasicGame();
+  engine.state.currentTurn = 0;
+  engine.state.turnPhase = 'draw';
+  assertThrows(() => engine.endTurn(0), 'Cannot end turn during draw phase');
+}
+
+section('Cannot Play Cards Out of Turn');
+{
+  const engine = setupBasicGame();
+  setTurn(engine, 0);
+  engine.state.players[1].hand = [makeCard('BANG!', 'b1', 'brown', 'D', 5)];
+  assertThrows(() => engine.playCard(1, 'b1', 0), 'Cannot play cards out of turn');
+}
+
+// ─── Kit Carlson ──────────────────────────────────────────
+section('Kit Carlson — Pick 2 of 3');
+{
+  const engine = setupBasicGame();
+  engine.state.players[0].character = { name: 'Kit Carlson', hp: 4, ability: '', set: 'base', effect: 'draw_pick_3' };
+  engine.state.players[0].hand = [];
+  engine.state.currentTurn = 0;
+
+  // Stack 3 cards on deck
+  engine.state.deck.push(
+    makeCard('test', 'kc3', 'brown', 'C', 3),
+    makeCard('test', 'kc2', 'brown', 'C', 2),
+    makeCard('test', 'kc1', 'brown', 'C', 1),
+  );
+
+  engine.processDrawPhase(0);
+  assertEqual(engine.state.pending.type, 'kit_carlson', 'Kit Carlson pending');
+  assertEqual(engine.state.pending.cards.length, 3, '3 cards to choose from');
+
+  // Pick 2 cards
+  engine.handlePick(0, 'kc1');
+  engine.handlePick(0, 'kc2');
+  assertEqual(engine.state.players[0].hand.length, 2, 'Picked 2 cards');
+  assertEqual(engine.state.pending, null, 'Kit Carlson resolved');
+}
+
+// ─── Pedro Ramirez ────────────────────────────────────────
+section('Pedro Ramirez — Draw from Discard');
+{
+  const engine = setupBasicGame();
+  engine.state.players[0].character = { name: 'Pedro Ramirez', hp: 4, ability: '', set: 'base', effect: 'draw_from_discard' };
+  engine.state.players[0].hand = [];
+  engine.state.discard = [makeCard('BANG!', 'discard-bang', 'brown', 'D', 5)];
+  engine.state.currentTurn = 0;
+
+  engine.processDrawPhase(0);
+  assertEqual(engine.state.pending.type, 'draw_choice', 'Draw choice pending');
+  assertEqual(engine.state.pending.choiceType, 'pedro_ramirez', 'Pedro Ramirez choice');
+
+  // Choose discard (option 1)
+  engine.handleChoose(0, 1);
+  assert(engine.state.players[0].hand.some(c => c.id === 'discard-bang'), 'Got card from discard');
+  assertEqual(engine.state.players[0].hand.length, 2, 'Drew 1 from discard + 1 from deck');
+}
+
+// ─── Jesse Jones ──────────────────────────────────────────
+section('Jesse Jones — Draw from Player');
+{
+  const engine = setupBasicGame();
+  engine.state.players[0].character = { name: 'Jesse Jones', hp: 4, ability: '', set: 'base', effect: 'draw_from_player' };
+  engine.state.players[0].hand = [];
+  engine.state.players[1].hand = [makeCard('Beer', 'target-beer', 'brown', 'H', 6)];
+  engine.state.currentTurn = 0;
+
+  engine.processDrawPhase(0);
+  assertEqual(engine.state.pending.type, 'draw_choice', 'Draw choice pending');
+  assertEqual(engine.state.pending.choiceType, 'jesse_jones', 'Jesse Jones choice');
+
+  // Choose to draw from player (option 1 = first valid target)
+  engine.handleChoose(0, 1);
+  assertEqual(engine.state.players[0].hand.length, 2, 'Drew 1 from player + 1 from deck');
+  assertEqual(engine.state.players[1].hand.length, 0, 'Target lost card');
+}
+
+// ═══════════════════════════════════════════════════════════
 // SUMMARY
-// ═══════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════
 const summaryEl = document.createElement('div');
 summaryEl.className = 'summary ' + (failed === 0 ? 'all-pass' : 'has-fail');
 summaryEl.textContent = passed + ' passed, ' + failed + ' failed';

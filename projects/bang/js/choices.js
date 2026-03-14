@@ -50,12 +50,14 @@ const ChoicesMixin = {
       // Normalize: UI sends choiceIdx: -1 for "random from hand" or a card ID string
       const choice = action.choice !== undefined ? action.choice : action.cardId;
 
+      const isDiscard = p.cardName === 'Cat Balou' || p.cardName === 'Rag Time';
+
       if (choice === 'hand' || choice === -1 || choice === null || choice === undefined) {
         // Random from hand
         if (target.hand.length === 0) throw new Error('Target has no cards in hand');
         const ri = Math.floor(Math.random() * target.hand.length);
         const card = target.hand.splice(ri, 1)[0];
-        if (p.cardName === 'Cat Balou') {
+        if (isDiscard) {
           this.state.discard.push(card);
           this.addLog('A card from ' + target.name + "'s hand is discarded.");
         } else {
@@ -68,7 +70,7 @@ const ChoicesMixin = {
         const cardIdx = target.inPlay.findIndex(c => c.id === cardId);
         if (cardIdx < 0) throw new Error('Card not found in play');
         const card = target.inPlay.splice(cardIdx, 1)[0];
-        if (p.cardName === 'Cat Balou') {
+        if (isDiscard) {
           this.state.discard.push(card);
           this.addLog(target.name + "'s " + card.name + ' is discarded.');
         } else {
@@ -87,6 +89,20 @@ const ChoicesMixin = {
     handlePick(playerIdx, cardIdOrIdx) {
       const p = this.state.pending;
       if (!p) throw new Error('No pending action');
+
+      if (p.type === 'lucky_duke') {
+        if (playerIdx !== p.playerIdx) throw new Error('Not your choice');
+        // Convert card ID to index (0 or 1)
+        let idx;
+        if (typeof cardIdOrIdx === 'number' && cardIdOrIdx >= 0 && cardIdOrIdx < p.cards.length) {
+          idx = cardIdOrIdx;
+        } else {
+          idx = p.cards.findIndex(c => c && c.id === cardIdOrIdx);
+        }
+        if (idx < 0 || idx >= p.cards.length) throw new Error('Invalid Lucky Duke choice');
+        this.handleChoose(playerIdx, idx);
+        return;
+      }
 
       if (p.type === 'general_store') {
         if (playerIdx !== p.pickOrder[p.currentIdx]) throw new Error('Not your pick');
@@ -151,8 +167,10 @@ const ChoicesMixin = {
 
       if (p.type === 'vera_custer') {
         if (playerIdx !== p.playerIdx) throw new Error('Not your choice');
-        if (!p.validTargets.includes(choice)) throw new Error('Invalid choice');
-        const copied = this.state.players[choice].character;
+        // choice is an array index into validTargets, map to player index
+        const targetIdx = typeof choice === 'number' ? p.validTargets[choice] : choice;
+        if (targetIdx === undefined || !p.validTargets.includes(targetIdx)) throw new Error('Invalid choice');
+        const copied = this.state.players[targetIdx].character;
         this.state.veraCusterCopy = { ...copied };
         this.addLog(this.state.players[playerIdx].name + ' copies ' + copied.name + "'s ability!");
         this.state.pending = null;

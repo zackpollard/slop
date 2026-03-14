@@ -866,13 +866,8 @@ const UI = {
         return;
       }
       if (prompt.type === 'discard_for_card') {
-        // Discard this card for the pending play
-        this.sendAction({
-          type: 'play_with_discard',
-          cardId: prompt.playCardId,
-          discardId: cardId,
-          targetIdx: prompt.targetIdx,
-        });
+        // Discard this card for the pending play (card already played, engine has _discard pending)
+        this.sendAction({ type: 'choose', choice: cardId });
         this._clearSelection();
         return;
       }

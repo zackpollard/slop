@@ -83,6 +83,13 @@ const TurnsMixin = {
         this.removeFromInPlay(pi, dynCard.id);
         this.state.discard.push(dynCard);
         this.applyDamage(pi, 3, -1);
+        // Attach continuation if beer_save interrupted
+        if (this.state.pending && this.state.pending.type === 'beer_save') {
+          this.state.pending.continuation = {
+            type: 'resume_turn_start',
+            playerIdx: pi,
+          };
+        }
       } else {
         this.addLog(p.name + "'s Dynamite doesn't explode. (" + (drawnCard ? D.cardDrawStr(drawnCard) : '?') + ')');
         this.removeFromInPlay(pi, dynCard.id);

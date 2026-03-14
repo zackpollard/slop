@@ -185,6 +185,60 @@ class BangEngine {
     if (idx >= 0) return p.inPlay.splice(idx, 1)[0];
     return null;
   }
+
+  /**
+   * Resume a continuation after beer_save or elimination resolves.
+   * Continuations allow multi-step flows (Indians, Gatling, dynamite turn start)
+   * to resume after being interrupted by a beer_save prompt.
+   */
+  _resumeContinuation(cont) {
+    if (!cont || this.state.winner) return;
+    switch (cont.type) {
+      case 'resume_turn_start': {
+        const pi = cont.playerIdx;
+        if (this.state.players[pi].eliminated) {
+          this.advanceTurn();
+        } else if (this.hasInPlay(pi, 'Jail')) {
+          this.processJail(pi);
+        } else {
+          this.processDrawPhase(pi);
+        }
+        break;
+      }
+      case 'resume_indians': {
+        let ni = cont.nextIdx;
+        while (ni < cont.respondents.length) {
+          if (!this.state.players[cont.respondents[ni]].eliminated) break;
+          ni++;
+        }
+        if (ni < cont.respondents.length) {
+          this.state.pending = {
+            type: 'indians_response',
+            sourceIdx: cont.sourceIdx,
+            respondents: cont.respondents,
+            currentIdx: ni,
+          };
+        }
+        break;
+      }
+      case 'resume_gatling': {
+        let ni = cont.nextIdx;
+        while (ni < cont.respondents.length) {
+          if (!this.state.players[cont.respondents[ni]].eliminated) break;
+          ni++;
+        }
+        if (ni < cont.respondents.length) {
+          this.state.pending = {
+            type: 'gatling_response',
+            sourceIdx: cont.sourceIdx,
+            respondents: cont.respondents,
+            currentIdx: ni,
+          };
+        }
+        break;
+      }
+    }
+  }
 }
 
 exports.BangEngine = BangEngine;
