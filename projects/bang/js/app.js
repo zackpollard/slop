@@ -121,22 +121,30 @@ function setupLobby() {
 
 // ── Host: player events ──
 function handlePlayerJoined(clientId, meta) {
+  // SlopLobby adds the player to lobby.players AFTER this callback returns,
+  // so we must insert eagerly to ensure getPlayerList() includes them now.
+  const name = (meta && meta.name) || 'Unknown';
+  lobby.players.set(clientId, { name, ...meta });
+
+  toast(name + ' joined');
   updateWaitingRoom();
-  lobby.send(clientId, {
-    type: 'waiting_room',
-    players: getPlayerList(),
-    useDodgeCity,
-  });
   broadcastWaitingRoom();
 }
 
 function handlePlayerRejoined(clientId, meta) {
+  // Ensure player is in the map (may have been removed on disconnect)
+  if (!lobby.players.has(clientId)) {
+    const name = (meta && meta.name) || 'Unknown';
+    lobby.players.set(clientId, { name, ...meta });
+  }
+
   if (engine && engine.state && engine.state.phase === 'playing') {
     const idx = playerOrder.indexOf(clientId);
     if (idx >= 0) {
       lobby.send(clientId, { type: 'game_view', view: engine.getPlayerView(idx) });
     }
   } else {
+    updateWaitingRoom();
     broadcastWaitingRoom();
   }
 }
