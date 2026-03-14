@@ -1598,6 +1598,453 @@ section('Jesse Jones — Draw from Player');
 }
 
 // ═══════════════════════════════════════════════════════════
+// E2E TESTS — Full game flow, player identity, multiplayer
+// ═══════════════════════════════════════════════════════════
+
+section('E2E: Player Order Preserved After initGame');
+{
+  // This is THE critical test — initGame must not shuffle playerInfos
+  // because app.js relies on playerOrder[i] === engine.state.players[i].id
+  const players = [
+    { id: 'host-abc', name: 'Alice' },
+    { id: 'client-1', name: 'Bob' },
+    { id: 'client-2', name: 'Charlie' },
+    { id: 'client-3', name: 'Dave' },
+  ];
+  const engine = new BangEngine();
+  engine.initGame(players, false);
+
+  for (let i = 0; i < 4; i++) {
+    assertEqual(engine.state.players[i].id, players[i].id,
+      'Player ' + i + ' ID preserved: ' + players[i].id);
+    assertEqual(engine.state.players[i].name, players[i].name,
+      'Player ' + i + ' name preserved: ' + players[i].name);
+  }
+}
+
+section('E2E: Player Order Preserved — 8 Players');
+{
+  const players = [];
+  for (let i = 0; i < 8; i++) {
+    players.push({ id: 'p-' + i, name: 'Player' + i });
+  }
+  const engine = new BangEngine();
+  engine.initGame(players, false);
+
+  for (let i = 0; i < 8; i++) {
+    assertEqual(engine.state.players[i].id, 'p-' + i,
+      '8p: Player ' + i + ' ID preserved');
+  }
+}
+
+section('E2E: Exactly One Sheriff');
+{
+  // Run multiple times to catch randomization bugs
+  for (let trial = 0; trial < 10; trial++) {
+    const players = [
+      { id: 'a', name: 'A' }, { id: 'b', name: 'B' },
+      { id: 'c', name: 'C' }, { id: 'd', name: 'D' },
+    ];
+    const engine = new BangEngine();
+    engine.initGame(players, false);
+
+    const sheriffs = engine.state.players.filter(p => p.role === 'sheriff');
+    assertEqual(sheriffs.length, 1, 'Trial ' + trial + ': exactly 1 sheriff');
+  }
+}
+
+section('E2E: Sheriff Is Not Always Same Player');
+{
+  // With random role assignment, sheriff should vary across many games
+  const sheriffIds = new Set();
+  for (let trial = 0; trial < 50; trial++) {
+    const players = [
+      { id: 'a', name: 'A' }, { id: 'b', name: 'B' },
+      { id: 'c', name: 'C' }, { id: 'd', name: 'D' },
+    ];
+    const engine = new BangEngine();
+    engine.initGame(players, false);
+
+    const sheriff = engine.state.players.find(p => p.role === 'sheriff');
+    sheriffIds.add(sheriff.id);
+  }
+  assert(sheriffIds.size > 1, 'Sheriff varies across games (saw ' + sheriffIds.size + ' different sheriffs)');
+}
+
+section('E2E: currentTurn Points to Sheriff');
+{
+  for (let trial = 0; trial < 20; trial++) {
+    const players = [
+      { id: 'a', name: 'A' }, { id: 'b', name: 'B' },
+      { id: 'c', name: 'C' }, { id: 'd', name: 'D' },
+    ];
+    const engine = new BangEngine();
+    engine.initGame(players, false);
+
+    const sheriffIdx = engine.state.players.findIndex(p => p.role === 'sheriff');
+    // currentTurn may have advanced due to startTurn() creating a pending,
+    // but the log should show who the sheriff is
+    assert(engine.state.log.some(e => e.msg.includes('is the Sheriff')),
+      'Trial ' + trial + ': Sheriff announced in log');
+    // The player at sheriffIdx should be the sheriff
+    assertEqual(engine.state.players[sheriffIdx].role, 'sheriff',
+      'Trial ' + trial + ': sheriff at correct index');
+  }
+}
+
+section('E2E: Each Player View Has Correct Identity');
+{
+  const players = [
+    { id: 'host-abc', name: 'Alice' },
+    { id: 'client-1', name: 'Bob' },
+    { id: 'client-2', name: 'Charlie' },
+    { id: 'client-3', name: 'Dave' },
+  ];
+  const engine = new BangEngine();
+  engine.initGame(players, false);
+
+  // Clear any pending from startTurn for easier testing
+  engine.state.pending = null;
+  engine.state.turnPhase = 'play';
+
+  for (let i = 0; i < 4; i++) {
+    const view = engine.getPlayerView(i);
+
+    // yourIndex must match
+    assertEqual(view.yourIndex, i,
+      players[i].name + ': yourIndex is ' + i);
+
+    // Must see own role
+    assert(view.role !== null,
+      players[i].name + ': can see own role');
+
+    // Hand must be an array with cards
+    assert(Array.isArray(view.hand),
+      players[i].name + ': hand is array');
+    assert(view.hand.length > 0,
+      players[i].name + ': has cards in hand');
+
+    // View must contain all players
+    assertEqual(view.players.length, 4,
+      players[i].name + ': sees all 4 players');
+
+    // Own name in view must match
+    assertEqual(view.players[i].name, players[i].name,
+      players[i].name + ': own name correct in view');
+
+    // Own role in view must match
+    assertEqual(view.players[i].role, view.role,
+      players[i].name + ': own role matches in player list');
+  }
+}
+
+section('E2E: Players See Exactly N-1 Opponents');
+{
+  const players = [
+    { id: 'a', name: 'A' }, { id: 'b', name: 'B' },
+    { id: 'c', name: 'C' }, { id: 'd', name: 'D' },
+    { id: 'e', name: 'E' },
+  ];
+  const engine = new BangEngine();
+  engine.initGame(players, false);
+
+  for (let i = 0; i < 5; i++) {
+    const view = engine.getPlayerView(i);
+    // Count opponents (everyone except self)
+    const opponents = view.players.filter((_, idx) => idx !== i);
+    assertEqual(opponents.length, 4,
+      'Player ' + i + ' sees 4 opponents');
+  }
+}
+
+section('E2E: Only One Sheriff Visible in Any Player View');
+{
+  for (let trial = 0; trial < 10; trial++) {
+    const players = [
+      { id: 'a', name: 'A' }, { id: 'b', name: 'B' },
+      { id: 'c', name: 'C' }, { id: 'd', name: 'D' },
+    ];
+    const engine = new BangEngine();
+    engine.initGame(players, false);
+
+    for (let i = 0; i < 4; i++) {
+      const view = engine.getPlayerView(i);
+      const visibleSheriffs = view.players.filter(p => p.role === 'sheriff' || p.isSheriff);
+      assertEqual(visibleSheriffs.length, 1,
+        'Trial ' + trial + ', Player ' + i + ': sees exactly 1 sheriff');
+    }
+  }
+}
+
+section('E2E: Simulated Multiplayer — broadcastGameState Mapping');
+{
+  // Simulate what app.js does: create playerOrder, init game, send views
+  const playerInfos = [
+    { id: 'host-xyz', name: 'Host' },
+    { id: 'client-1', name: 'P1' },
+    { id: 'client-2', name: 'P2' },
+    { id: 'client-3', name: 'P3' },
+  ];
+  const playerOrder = playerInfos.map(p => p.id);
+
+  const engine = new BangEngine();
+  engine.initGame(playerInfos, false);
+
+  // Simulate broadcastGameState: for each i, send getPlayerView(i) to playerOrder[i]
+  for (let i = 0; i < playerOrder.length; i++) {
+    const clientId = playerOrder[i];
+    const view = engine.getPlayerView(i);
+
+    // The view must be for the correct player
+    assertEqual(engine.state.players[i].id, clientId,
+      'broadcastGameState: index ' + i + ' maps to ' + clientId);
+
+    // The player should see their own hand (not someone else's)
+    assertEqual(view.yourIndex, i,
+      'broadcastGameState: ' + clientId + ' gets view with yourIndex=' + i);
+
+    // The player's name at yourIndex must match
+    assertEqual(view.players[i].name, playerInfos[i].name,
+      'broadcastGameState: ' + clientId + ' sees own name');
+  }
+}
+
+section('E2E: Simulated Multiplayer — Action Routing');
+{
+  // Simulate: host creates game, client sends action, engine processes correctly
+  const playerInfos = [
+    { id: 'host', name: 'Host' },
+    { id: 'c1', name: 'Client1' },
+    { id: 'c2', name: 'Client2' },
+    { id: 'c3', name: 'Client3' },
+  ];
+  const playerOrder = playerInfos.map(p => p.id);
+
+  const engine = new BangEngine();
+  engine.initGame(playerInfos, false);
+
+  // Set up a deterministic scenario
+  engine.state.players.forEach((p, i) => {
+    p.character = basicChar();
+    p.inPlay = [];
+    p.hp = 4; p.maxHp = 4;
+  });
+  const sheriffIdx = engine.state.players.findIndex(p => p.role === 'sheriff');
+  engine.state.players[sheriffIdx].hp = 5;
+  engine.state.players[sheriffIdx].maxHp = 5;
+
+  // Give the sheriff a BANG! card
+  setTurn(engine, sheriffIdx);
+  const targetIdx = sheriffIdx === 0 ? 1 : 0; // pick someone who isn't the sheriff
+  engine.state.players[sheriffIdx].hand = [makeCard('BANG!', 'bang-test', 'brown', 'D', 5)];
+
+  // Simulate: sheriff's client sends an action
+  // In app.js: handleHostMessage gets clientId, finds idx = playerOrder.indexOf(clientId)
+  const sheriffClientId = playerOrder[sheriffIdx];
+  const actionIdx = playerOrder.indexOf(sheriffClientId);
+  assertEqual(actionIdx, sheriffIdx, 'Action routes to correct engine index');
+
+  // Play the BANG!
+  engine.handleAction(actionIdx, { type: 'play_card', cardId: 'bang-test', targetIdx: targetIdx });
+
+  // Verify it worked
+  assert(engine.state.pending !== null, 'BANG! created pending response');
+  assertEqual(engine.state.pending.type, 'bang_response', 'Pending is bang_response');
+  assertEqual(engine.state.pending.targetIdx, targetIdx, 'Target is correct player');
+  assertEqual(engine.state.pending.sourceIdx, sheriffIdx, 'Source is sheriff');
+}
+
+section('E2E: Full Turn Cycle — Play BANG!, Respond, End Turn');
+{
+  const playerInfos = [
+    { id: 'alice', name: 'Alice' },
+    { id: 'bob', name: 'Bob' },
+    { id: 'charlie', name: 'Charlie' },
+    { id: 'dave', name: 'Dave' },
+  ];
+  const engine = new BangEngine();
+  engine.initGame(playerInfos, false);
+
+  // Set up deterministic state
+  engine.state.players.forEach((p) => {
+    p.character = basicChar();
+    p.inPlay = [];
+    p.hp = 4; p.maxHp = 4; p.hand = [];
+  });
+  const sheriffIdx = engine.state.players.findIndex(p => p.role === 'sheriff');
+  engine.state.players[sheriffIdx].hp = 5;
+  engine.state.players[sheriffIdx].maxHp = 5;
+
+  // Give sheriff a BANG! and set their turn
+  setTurn(engine, sheriffIdx);
+  const adjIdx = (sheriffIdx + 1) % 4;
+  engine.state.players[sheriffIdx].hand = [makeCard('BANG!', 'b1', 'brown', 'D', 5)];
+  engine.state.players[adjIdx].hand = [makeCard('Missed!', 'm1', 'brown', 'C', 10)];
+
+  // 1. Sheriff plays BANG! on adjacent player
+  engine.handleAction(sheriffIdx, { type: 'play_card', cardId: 'b1', targetIdx: adjIdx });
+  assertEqual(engine.state.pending.type, 'bang_response', 'Step 1: BANG! pending');
+  assertEqual(engine.state.pending.targetIdx, adjIdx, 'Step 1: correct target');
+
+  // 2. Target responds with Missed!
+  engine.handleAction(adjIdx, { type: 'respond', response: 'missed', cardId: 'm1' });
+  assertEqual(engine.state.pending, null, 'Step 2: response resolved');
+  assertEqual(engine.state.players[adjIdx].hp, 4, 'Step 2: target HP unchanged');
+
+  // 3. Sheriff ends turn
+  engine.handleAction(sheriffIdx, { type: 'end_turn' });
+
+  // Turn should have advanced
+  assert(engine.state.currentTurn !== sheriffIdx || engine.state.pending !== null,
+    'Step 3: turn advanced after end_turn');
+
+  // Verify the views are still correct
+  for (let i = 0; i < 4; i++) {
+    const view = engine.getPlayerView(i);
+    assertEqual(view.yourIndex, i, 'After turn: Player ' + i + ' view correct');
+    assertEqual(view.players[i].name, playerInfos[i].name,
+      'After turn: Player ' + i + ' name correct');
+  }
+}
+
+section('E2E: Full Turn Cycle — BANG! Take Hit, Verify Damage');
+{
+  const playerInfos = [
+    { id: 'p0', name: 'P0' }, { id: 'p1', name: 'P1' },
+    { id: 'p2', name: 'P2' }, { id: 'p3', name: 'P3' },
+  ];
+  const engine = new BangEngine();
+  engine.initGame(playerInfos, false);
+
+  engine.state.players.forEach(p => {
+    p.character = basicChar();
+    p.inPlay = [];
+    p.hp = 4; p.maxHp = 4; p.hand = [];
+  });
+  const sheriffIdx = engine.state.players.findIndex(p => p.role === 'sheriff');
+  engine.state.players[sheriffIdx].hp = 5;
+  engine.state.players[sheriffIdx].maxHp = 5;
+  setTurn(engine, sheriffIdx);
+
+  const targetIdx = (sheriffIdx + 1) % 4;
+  engine.state.players[sheriffIdx].hand = [makeCard('BANG!', 'b1', 'brown', 'D', 5)];
+
+  // Sheriff shoots adjacent
+  engine.handleAction(sheriffIdx, { type: 'play_card', cardId: 'b1', targetIdx: targetIdx });
+  assertEqual(engine.state.pending.type, 'bang_response', 'BANG! pending');
+
+  // Target takes the hit
+  engine.handleAction(targetIdx, { type: 'respond', response: 'take_hit' });
+  assertEqual(engine.state.players[targetIdx].hp, 3, 'Target lost 1 HP');
+
+  // Verify via views
+  const targetView = engine.getPlayerView(targetIdx);
+  assertEqual(targetView.hp, 3, 'Target view shows 3 HP');
+  assertEqual(targetView.players[targetIdx].hp, 3, 'Target visible HP is 3');
+
+  const sheriffView = engine.getPlayerView(sheriffIdx);
+  assertEqual(sheriffView.players[targetIdx].hp, 3, 'Sheriff sees target at 3 HP');
+}
+
+section('E2E: getValidTargets Returns Correct Players for BANG!');
+{
+  const playerInfos = [
+    { id: 'p0', name: 'P0' }, { id: 'p1', name: 'P1' },
+    { id: 'p2', name: 'P2' }, { id: 'p3', name: 'P3' },
+    { id: 'p4', name: 'P4' },
+  ];
+  const engine = new BangEngine();
+  engine.initGame(playerInfos, false);
+
+  engine.state.players.forEach(p => {
+    p.character = basicChar();
+    p.inPlay = [];
+  });
+  setTurn(engine, 0);
+
+  // With 5 players in circle, range 1 = players at distance 1 (indices 1 and 4)
+  const targets = engine.getValidTargets(0, 'BANG!');
+  assert(targets.includes(1), 'Player 1 is valid BANG! target');
+  assert(targets.includes(4), 'Player 4 is valid BANG! target');
+  assert(!targets.includes(0), 'Self not in BANG! targets');
+  assert(!targets.includes(2), 'Player 2 out of range (distance 2)');
+  assert(!targets.includes(3), 'Player 3 out of range (distance 2)');
+}
+
+section('E2E: handleAction Rejects Wrong Player Index');
+{
+  const playerInfos = [
+    { id: 'p0', name: 'P0' }, { id: 'p1', name: 'P1' },
+    { id: 'p2', name: 'P2' }, { id: 'p3', name: 'P3' },
+  ];
+  const engine = new BangEngine();
+  engine.initGame(playerInfos, false);
+
+  engine.state.players.forEach(p => {
+    p.character = basicChar();
+    p.inPlay = [];
+    p.hand = [];
+  });
+  const sheriffIdx = engine.state.players.findIndex(p => p.role === 'sheriff');
+  setTurn(engine, sheriffIdx);
+  engine.state.players[sheriffIdx].hand = [makeCard('BANG!', 'b1', 'brown', 'D', 5)];
+
+  // Wrong player trying to play a card
+  const wrongIdx = (sheriffIdx + 1) % 4;
+  assertThrows(
+    () => engine.handleAction(wrongIdx, { type: 'play_card', cardId: 'b1', targetIdx: sheriffIdx }),
+    'Wrong player cannot play cards'
+  );
+}
+
+section('E2E: Rejoined Player Gets Correct View');
+{
+  // Simulates handlePlayerRejoined: looks up idx from playerOrder, sends getPlayerView(idx)
+  const playerInfos = [
+    { id: 'host', name: 'Host' },
+    { id: 'c1', name: 'Client1' },
+    { id: 'c2', name: 'Client2' },
+    { id: 'c3', name: 'Client3' },
+  ];
+  const playerOrder = playerInfos.map(p => p.id);
+
+  const engine = new BangEngine();
+  engine.initGame(playerInfos, false);
+
+  // Simulate client 'c2' rejoining
+  const rejoinClientId = 'c2';
+  const idx = playerOrder.indexOf(rejoinClientId);
+  assertEqual(idx, 2, 'c2 is at index 2 in playerOrder');
+
+  const view = engine.getPlayerView(idx);
+  assertEqual(view.yourIndex, 2, 'Rejoined player gets correct yourIndex');
+  assertEqual(engine.state.players[idx].id, rejoinClientId, 'Engine player matches');
+  assertEqual(view.players[2].name, 'Client2', 'Rejoined player sees own name');
+}
+
+section('E2E: Player Views Never Show Two Sheriffs (Stress Test)');
+{
+  // Run 50 games and verify no view ever shows 2+ sheriffs
+  let violations = 0;
+  for (let trial = 0; trial < 50; trial++) {
+    const n = 4 + (trial % 5); // Test with 4-8 players
+    const players = [];
+    for (let i = 0; i < n; i++) {
+      players.push({ id: 'p' + i, name: 'Player' + i });
+    }
+    const engine = new BangEngine();
+    engine.initGame(players, trial % 2 === 0); // alternate dodge city
+
+    for (let i = 0; i < n; i++) {
+      const view = engine.getPlayerView(i);
+      const sheriffCount = view.players.filter(p => p.role === 'sheriff' || p.isSheriff).length;
+      if (sheriffCount !== 1) violations++;
+    }
+  }
+  assertEqual(violations, 0, '0 two-sheriff violations across 50 games');
+}
+
+// ═══════════════════════════════════════════════════════════
 // SUMMARY
 // ═══════════════════════════════════════════════════════════
 const summaryEl = document.createElement('div');

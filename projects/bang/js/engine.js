@@ -27,32 +27,30 @@ class BangEngine {
     const dist = D.ROLE_DIST[n];
     if (!dist) throw new Error('Need 4-8 players');
 
-    // Build role deck
+    // Build and shuffle role deck (all roles including sheriff)
     let roles = [];
     for (const [role, count] of Object.entries(dist)) {
       for (let i = 0; i < count; i++) roles.push(role);
     }
-    roles = roles.filter(r => r !== 'sheriff');
     roles = D.shuffle(roles);
-    roles.unshift('sheriff');
 
-    const shuffledInfos = D.shuffle([...playerInfos]);
-
-    // Pick characters
+    // Pick characters (shuffled, pick one per player)
     const chars = D.shuffle(
       D.CHARACTERS.filter(c => useDodgeCity || c.set === 'base')
     );
 
     const deck = D.createDeck(useDodgeCity);
 
+    // Players stay in input order — this must match the caller's playerOrder
+    // so that playerOrder[i] corresponds to engine.state.players[i]
     const players = [];
     for (let i = 0; i < n; i++) {
       const role = roles[i];
       const char = chars[i * 2]; // Auto-pick first of 2 offered
       const maxHp = char.hp + (role === 'sheriff' ? 1 : 0);
       players.push({
-        id: shuffledInfos[i].id,
-        name: shuffledInfos[i].name,
+        id: playerInfos[i].id,
+        name: playerInfos[i].name,
         role,
         character: { ...char },
         hp: maxHp,
@@ -63,12 +61,14 @@ class BangEngine {
       });
     }
 
+    const sheriffIdx = players.findIndex(p => p.role === 'sheriff');
+
     this.state = {
       phase: 'playing',
       players,
       deck,
       discard: [],
-      currentTurn: 0,
+      currentTurn: sheriffIdx,
       turnPhase: 'start',
       bangsPlayedThisTurn: 0,
       buffaloRifleUsed: false,
@@ -80,7 +80,7 @@ class BangEngine {
       veraCusterCopy: null,
     };
 
-    // Deal starting hands
+    // Deal starting hands (sheriff gets maxHp cards, which is already +1)
     for (let i = 0; i < n; i++) {
       const p = this.state.players[i];
       const cards = this.drawFromDeck(p.hp);
@@ -88,7 +88,7 @@ class BangEngine {
     }
 
     this.addLog('Game started with ' + n + ' players!');
-    this.addLog(players[0].name + ' is the Sheriff!');
+    this.addLog(players[sheriffIdx].name + ' is the Sheriff!');
 
     this.startTurn();
     return this.state;
