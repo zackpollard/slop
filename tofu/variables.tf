@@ -57,5 +57,8 @@ variable "projects" {
     cards-against-humanity = {
       subdomain = "cards-against-humanity.slop"
     }
+    bang = {
+      subdomain = "bang.slop"
+    }
   }
 }

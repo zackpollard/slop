@@ -166,6 +166,9 @@ jobs:
           - name: cards-against-humanity
             pages-project: slop-cards-against-humanity
             directory: projects/cards-against-humanity
+          - name: bang
+            pages-project: slop-bang
+            directory: projects/bang
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -173,7 +176,7 @@ jobs:
       - name: Copy shared libraries
         run: |
           # Copy shared libraries into projects that use PeerJS networking
-          for project in texas-holdem cards-against-humanity herd-mentality flip-7; do
+          for project in texas-holdem cards-against-humanity herd-mentality flip-7 bang; do
             if [ -d "projects/$project" ]; then
               mkdir -p "projects/$project/lib"
               cp lib/slopnet/slopnet.js "projects/$project/lib/slopnet.js"

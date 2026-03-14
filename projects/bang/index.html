@@ -1,0 +1,880 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bang! The Bullet | slop</title>
+  <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="lib/slop-theme.css">
+  <style>
+    /* ── Game-specific variables ── */
+    :root {
+      --bang-brown: #3a2518;
+      --bang-blue: #1a2a3a;
+      --bang-green: #1a3a2a;
+      --bang-red: #8b1a1a;
+      --bang-gold: #c4a24e;
+      --bang-sheriff: #daa520;
+      --bang-outlaw: #cd3333;
+      --bang-deputy: #4a90d9;
+      --bang-renegade: #888;
+    }
+
+    /* ── Base overrides ── */
+    body { font-size: 0.9rem; overflow-x: hidden; }
+    .container { max-width: 1100px; padding: 1.5rem 1rem; }
+    header { margin-bottom: 1.5rem; }
+    header h1 { font-size: 2rem; }
+
+    /* ── Western title styling ── */
+    .game-title {
+      font-size: 2.4rem;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      color: var(--bang-gold);
+      text-shadow: 0 2px 8px rgba(196, 162, 78, 0.3);
+    }
+
+    .game-title .bang-exclaim { color: var(--bang-red); color: #cd3333; }
+
+    .game-subtitle {
+      color: var(--color-text-muted);
+      font-size: 0.95rem;
+      margin-top: 0.25rem;
+    }
+
+    /* ── Sheriff star decorations ── */
+    .star-divider {
+      text-align: center;
+      color: var(--bang-gold);
+      font-size: 1.2rem;
+      letter-spacing: 0.5rem;
+      opacity: 0.5;
+      margin: 1rem 0;
+      user-select: none;
+    }
+
+    .bullet-divider {
+      text-align: center;
+      color: var(--color-text-muted);
+      font-size: 0.8rem;
+      letter-spacing: 1rem;
+      opacity: 0.35;
+      margin: 0.75rem 0;
+      user-select: none;
+    }
+
+    /* ── Lobby screen ── */
+    #screen-lobby .container { max-width: 480px; }
+
+    .player-count-note {
+      font-size: 0.8rem;
+      color: var(--color-text-muted);
+      text-align: center;
+      margin-top: 0.5rem;
+    }
+
+    .expansion-toggle {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      margin: 0.75rem 0;
+      font-size: 0.85rem;
+      color: var(--color-text-muted);
+    }
+
+    .expansion-toggle input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      accent-color: var(--bang-gold);
+      cursor: pointer;
+    }
+
+    .expansion-toggle label { cursor: pointer; }
+
+    .lobby-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      margin-top: 1rem;
+    }
+
+    .join-row {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+    }
+
+    .join-row input { flex: 1; }
+
+    .companion-link {
+      display: block;
+      text-align: center;
+      margin-top: 1.5rem;
+      font-size: 0.85rem;
+      color: var(--color-text-muted);
+    }
+
+    .companion-link a {
+      color: var(--bang-gold);
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    .companion-link a:hover { text-decoration: underline; }
+
+    /* ── Waiting screen ── */
+    #screen-waiting .container { max-width: 560px; }
+
+    .waiting-status {
+      text-align: center;
+      color: var(--color-text-muted);
+      font-size: 0.9rem;
+      margin-top: 1rem;
+    }
+
+    .waiting-status .spinner { margin-right: 0.4rem; }
+
+    .waiting-actions {
+      display: flex;
+      gap: 0.75rem;
+      justify-content: center;
+      margin-top: 1.25rem;
+      flex-wrap: wrap;
+    }
+
+    .host-controls {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      align-items: center;
+      margin-top: 1rem;
+    }
+
+    /* ── Game screen ── */
+    #screen-game {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    #screen-game.active { display: flex; }
+
+    .game-info-bar {
+      padding: 8px 16px;
+      border-bottom: 1px solid var(--color-border);
+      font-size: 0.85rem;
+      flex-shrink: 0;
+    }
+
+    .info-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .info-item {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .info-label {
+      color: var(--color-text-muted);
+      font-size: 0.8rem;
+    }
+
+    .info-value {
+      color: var(--color-text);
+      font-weight: 600;
+    }
+
+    .info-value.empty { color: var(--color-text-muted); font-weight: 400; }
+
+    .turn-indicator .info-value { color: var(--bang-gold); }
+
+    /* ── Opponents area ── */
+    #opponents {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+      padding: 8px;
+      flex-shrink: 0;
+    }
+
+    .opponent {
+      background: var(--color-surface);
+      border: 2px solid var(--color-border);
+      border-radius: 8px;
+      padding: 8px 12px;
+      min-width: 120px;
+      text-align: center;
+      transition: all 0.2s;
+      position: relative;
+    }
+
+    .opponent.active-turn {
+      border-color: var(--bang-gold);
+      box-shadow: 0 0 8px rgba(196, 162, 78, 0.3);
+    }
+
+    .opponent.eliminated { opacity: 0.4; }
+
+    .opponent.valid-target {
+      border-color: var(--bang-red);
+      cursor: pointer;
+    }
+
+    .opponent.valid-target:hover { background: rgba(139, 26, 26, 0.2); }
+
+    .opp-header {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      flex-wrap: wrap;
+    }
+
+    .opp-name {
+      font-weight: 600;
+      font-size: 0.85rem;
+    }
+
+    .opp-character {
+      font-size: 0.7rem;
+      color: var(--color-text-muted);
+      margin-bottom: 4px;
+    }
+
+    .opp-hp {
+      margin: 4px 0;
+    }
+
+    .opp-cards {
+      font-size: 0.7rem;
+      color: var(--color-text-muted);
+      font-family: var(--font-mono);
+      display: flex;
+      gap: 3px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-top: 4px;
+    }
+
+    .hand-count { color: var(--color-text-muted); }
+
+    .inplay-tag {
+      font-size: 0.6rem;
+      padding: 1px 4px;
+      border-radius: 3px;
+      background: rgba(255, 255, 255, 0.08);
+    }
+    .inplay-tag.weapon { color: var(--bang-gold); }
+
+    .sheriff-badge { color: var(--bang-sheriff); font-size: 0.9rem; }
+
+    .role-tag {
+      font-size: 0.65rem;
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-weight: 600;
+      text-transform: capitalize;
+    }
+    .role-sheriff { background: rgba(218, 165, 32, 0.2); color: var(--bang-sheriff); }
+    .role-deputy { background: rgba(74, 144, 217, 0.2); color: var(--bang-deputy); }
+    .role-outlaw { background: rgba(205, 51, 51, 0.2); color: var(--bang-outlaw); }
+    .role-renegade { background: rgba(136, 136, 136, 0.2); color: var(--bang-renegade); }
+
+    /* ── Game center ── */
+    #game-center {
+      display: flex;
+      gap: 16px;
+      padding: 8px 16px;
+      flex: 0 0 auto;
+    }
+
+    #discard-pile {
+      flex: 0 0 auto;
+    }
+
+    #game-log {
+      flex: 1;
+      max-height: 150px;
+      overflow-y: auto;
+      font-size: 0.75rem;
+      color: var(--color-text-muted);
+      padding: 8px;
+      font-family: var(--font-mono);
+      background: var(--color-surface);
+      border-radius: 6px;
+      border: 1px solid var(--color-border);
+    }
+
+    .log-title {
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--color-text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 4px;
+    }
+
+    .log-entries {
+      max-height: 120px;
+      overflow-y: auto;
+    }
+
+    .log-entry {
+      padding: 2px 0;
+      border-bottom: 1px solid rgba(51, 51, 51, 0.3);
+    }
+
+    .log-entry:last-child { border-bottom: none; }
+    .log-entry.muted { color: var(--color-text-muted); font-style: italic; }
+
+    /* ── Action panel ── */
+    #action-panel {
+      padding: 12px;
+      text-align: center;
+      min-height: 60px;
+      flex-shrink: 0;
+    }
+
+    .action-msg {
+      font-size: 0.95rem;
+      margin-bottom: 8px;
+      color: var(--color-text);
+    }
+    .action-msg.danger { color: var(--bang-red); font-weight: 600; }
+    .action-msg.waiting { color: var(--color-text-muted); font-style: italic; }
+    .action-msg.action-sub { font-size: 0.85rem; color: var(--color-text-muted); margin-top: 8px; }
+    .action-buttons { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+
+    .general-store-cards,
+    .kit-carlson-cards,
+    .lucky-duke-cards {
+      display: flex;
+      gap: 6px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin: 8px 0;
+    }
+
+    .damage-flash { animation: damageFlash 0.5s ease; }
+    @keyframes damageFlash {
+      0%, 100% { background: var(--color-surface); }
+      50% { background: rgba(139, 26, 26, 0.4); }
+    }
+    .card-played-flash { animation: cardFlash 0.6s ease; }
+    @keyframes cardFlash {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; transform: scale(1.05); }
+    }
+
+    /* Action buttons extend theme .btn */
+    #action-panel .btn { margin: 4px; }
+    .btn-secondary { background: var(--color-surface); color: var(--color-text); border-color: var(--color-border); }
+    .btn-secondary:hover { border-color: var(--bang-gold); }
+    .btn-accent { background: rgba(196,162,78,0.15); color: var(--bang-gold); border-color: rgba(196,162,78,0.3); }
+    .btn-accent:hover { background: rgba(196,162,78,0.25); border-color: var(--bang-gold); }
+    .btn-danger { background: var(--bang-red); color: #fff; border-color: var(--bang-red); }
+    .btn-danger:hover { background: #a52020; border-color: #a52020; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* ── Your area ── */
+    #your-area {
+      margin-top: auto;
+      border-top: 1px solid var(--color-border);
+      padding-bottom: 8px;
+      flex-shrink: 0;
+    }
+
+    .your-info {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 16px;
+      background: var(--color-surface);
+      border-radius: 8px;
+      border: 1px solid var(--color-border);
+      margin: 8px 16px;
+      flex-wrap: wrap;
+    }
+
+    .your-identity {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .your-character {
+      font-weight: 700;
+      font-size: 0.95rem;
+    }
+
+    .your-hp {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+    }
+
+    .hp-heart { font-size: 0.9rem; }
+    .hp-heart.full { color: #cd3333; }
+    .hp-heart.empty { color: var(--color-text-muted); opacity: 0.4; }
+    .hp-text { font-size: 0.75rem; color: var(--color-text-muted); margin-left: 4px; }
+
+    .your-ability {
+      font-size: 0.7rem;
+      color: var(--color-text-muted);
+      font-style: italic;
+      flex-basis: 100%;
+    }
+
+    .your-inplay {
+      padding: 4px 8px;
+    }
+
+    .inplay-label {
+      font-size: 0.7rem;
+      color: var(--color-text-muted);
+      margin-bottom: 4px;
+    }
+
+    .inplay-cards {
+      display: flex;
+      gap: 4px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    .your-hand {
+      display: flex;
+      gap: 4px;
+      justify-content: center;
+      flex-wrap: wrap;
+      padding: 8px;
+    }
+
+    .hand-empty {
+      color: var(--color-text-muted);
+      font-size: 0.85rem;
+      padding: 16px;
+    }
+
+    /* ── Card styling ── */
+    .game-card {
+      width: 72px;
+      height: 100px;
+      border-radius: 6px;
+      padding: 4px 6px;
+      cursor: default;
+      display: flex;
+      flex-direction: column;
+      font-size: 0.65rem;
+      font-weight: 600;
+      position: relative;
+      transition: transform 0.15s, box-shadow 0.15s;
+      user-select: none;
+      flex-shrink: 0;
+    }
+
+    .game-card.playable { cursor: pointer; }
+
+    .game-card.playable:hover {
+      transform: translateY(-8px);
+      box-shadow: 0 4px 12px rgba(196, 162, 78, 0.3);
+    }
+
+    .game-card.selected {
+      transform: translateY(-12px);
+      box-shadow: 0 4px 16px rgba(196, 162, 78, 0.5);
+      border-color: var(--bang-gold) !important;
+    }
+
+    .game-card.brown {
+      background: linear-gradient(135deg, #4a3520, #3a2518);
+      border: 2px solid #6b4423;
+      color: #e8d5b8;
+    }
+
+    .game-card.blue {
+      background: linear-gradient(135deg, #2a3a4a, #1a2a3a);
+      border: 2px solid #3a6a9a;
+      color: #b8d5e8;
+    }
+
+    .game-card.green {
+      background: linear-gradient(135deg, #2a4a3a, #1a3a2a);
+      border: 2px solid #3a8a5a;
+      color: #b8e8d5;
+    }
+
+    .card-suit {
+      font-size: 0.6rem;
+      opacity: 0.8;
+    }
+
+    .card-suit.red { color: #e74c3c; }
+
+    .card-name {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      font-size: 0.6rem;
+      line-height: 1.2;
+    }
+
+    .card-value {
+      font-size: 0.55rem;
+      opacity: 0.7;
+      text-align: right;
+    }
+
+    .card-back {
+      width: 72px;
+      height: 100px;
+      border-radius: 6px;
+      background: linear-gradient(135deg, #5a3a20, #3a2010);
+      border: 2px solid #6b4423;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.2rem;
+      color: var(--bang-gold);
+      opacity: 0.6;
+      flex-shrink: 0;
+    }
+
+    /* ── HP display ── */
+    .hp-display {
+      font-size: 0.9rem;
+      letter-spacing: 2px;
+    }
+
+    .hp-full { color: #e74c3c; }
+    .hp-empty { color: #444; }
+
+    /* ── Role badges ── */
+    .role-tag {
+      font-size: 0.65rem;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-weight: 600;
+      text-transform: uppercase;
+      display: inline-block;
+    }
+
+    .role-sheriff { background: var(--bang-sheriff); color: #000; }
+    .role-outlaw { background: var(--bang-outlaw); color: #fff; }
+    .role-deputy { background: var(--bang-deputy); color: #fff; }
+    .role-renegade { background: var(--bang-renegade); color: #fff; }
+
+    /* ── General Store overlay ── */
+    .overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.75);
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .overlay-content {
+      background: var(--color-surface);
+      border: 2px solid var(--color-border);
+      border-radius: 12px;
+      padding: 1.5rem;
+      max-width: 90vw;
+      max-height: 90vh;
+      overflow-y: auto;
+      text-align: center;
+    }
+
+    .overlay-content h3 {
+      font-size: 1.1rem;
+      margin-bottom: 1rem;
+      color: var(--bang-gold);
+    }
+
+    .overlay-cards {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-bottom: 1rem;
+    }
+
+    .overlay-cards .game-card.playable:hover {
+      transform: translateY(-8px) scale(1.05);
+    }
+
+    /* ── Game Over screen ── */
+    #screen-gameover .container { max-width: 600px; }
+
+    .winner-announcement {
+      text-align: center;
+      font-size: 1.8rem;
+      font-weight: 800;
+      color: var(--bang-gold);
+      margin-bottom: 1rem;
+      text-shadow: 0 2px 8px rgba(196, 162, 78, 0.3);
+    }
+
+    .winner-subtitle {
+      text-align: center;
+      color: var(--color-text-muted);
+      font-size: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .final-roles {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .final-role-card {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.5rem 0.75rem;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 8px;
+    }
+
+    .final-name {
+      font-weight: 600;
+      flex: 1;
+    }
+
+    .final-char {
+      font-size: 0.8rem;
+      color: var(--color-text-muted);
+    }
+
+    .final-status {
+      font-size: 0.75rem;
+      color: var(--color-text-muted);
+    }
+
+    .gameover-actions {
+      display: flex;
+      gap: 0.75rem;
+      justify-content: center;
+      margin-top: 1.25rem;
+    }
+
+    /* ── Responsive ── */
+    @media (max-width: 768px) {
+      .game-card {
+        width: 60px;
+        height: 84px;
+        font-size: 0.55rem;
+        padding: 3px 4px;
+      }
+
+      .game-card .card-name { font-size: 0.5rem; }
+      .game-card .card-suit { font-size: 0.5rem; }
+      .game-card .card-value { font-size: 0.45rem; }
+
+      .card-back { width: 60px; height: 84px; font-size: 1rem; }
+
+      .opponent { min-width: 100px; padding: 6px 8px; }
+      .opp-name { font-size: 0.75rem; }
+
+      .game-info-bar { font-size: 0.75rem; padding: 6px 10px; }
+      #game-center { flex-direction: column; padding: 8px 10px; }
+      #game-log { max-height: 100px; }
+
+      .your-info { padding: 6px 10px; margin: 6px 10px; gap: 8px; }
+      .your-hand { gap: 3px; padding: 6px; }
+
+      #action-panel { padding: 8px; }
+
+      .game-title { font-size: 1.8rem; }
+    }
+
+    @media (max-width: 480px) {
+      .game-card { width: 52px; height: 74px; padding: 2px 3px; }
+      .game-card .card-name { font-size: 0.45rem; }
+
+      .card-back { width: 52px; height: 74px; }
+
+      .opponent { min-width: 85px; padding: 4px 6px; font-size: 0.75rem; }
+
+      .hp-display { font-size: 0.75rem; letter-spacing: 1px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- Screen: Lobby                                          -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div id="screen-lobby" class="screen active">
+  <div class="container">
+    <header>
+      <h1 class="game-title"><span class="bang-exclaim">Bang!</span> The Bullet</h1>
+      <p class="game-subtitle">Play the classic spaghetti western card game online with friends!</p>
+    </header>
+
+    <div class="star-divider">&#9733; &#9733; &#9733;</div>
+
+    <div class="section">
+      <h2>Your Name</h2>
+      <input type="text" id="input-name" placeholder="Enter your name..." maxlength="20" autocomplete="off">
+    </div>
+
+    <div class="section">
+      <h2>Options</h2>
+      <div class="expansion-toggle">
+        <input type="checkbox" id="dodge-city-toggle">
+        <label for="dodge-city-toggle">Include <strong>Dodge City</strong> expansion</label>
+      </div>
+      <p class="player-count-note">&#x1F52B; 4&ndash;8 players</p>
+    </div>
+
+    <div class="section">
+      <div class="lobby-actions">
+        <button id="btn-create" class="btn btn-primary btn-wide">&#9733; Create Game</button>
+
+        <div class="bullet-divider">&bull; &bull; &bull;</div>
+
+        <div class="join-row">
+          <input type="text" id="input-code" placeholder="Room code" maxlength="10" autocomplete="off" style="text-transform:uppercase;">
+          <button id="btn-join" class="btn">Join Game</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="companion-link">
+      &#x2696; Looking for the offline companion tool?
+      <a href="companion.html">Companion Tool</a>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- Screen: Waiting Room                                   -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div id="screen-waiting" class="screen">
+  <div class="container">
+    <header>
+      <h1 class="game-title" style="font-size:1.6rem;"><span class="bang-exclaim">Bang!</span> The Bullet</h1>
+    </header>
+
+    <div class="section">
+      <div class="room-code-display">
+        <div class="label">Room Code</div>
+        <div class="code" id="room-code" title="Click to copy">----</div>
+      </div>
+
+      <div class="star-divider">&#9733; &#9733; &#9733;</div>
+
+      <h2>Players</h2>
+      <div id="player-list" class="player-tags"></div>
+
+      <div id="host-controls" class="host-controls">
+        <div class="expansion-toggle">
+          <input type="checkbox" id="waiting-dodge-city">
+          <label for="waiting-dodge-city">Dodge City expansion</label>
+        </div>
+        <button id="btn-start" class="btn btn-primary" disabled>Start Game</button>
+      </div>
+
+      <div id="non-host-status" class="waiting-status hidden">
+        <span class="spinner"></span> Waiting for host to start...
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- Screen: Game                                           -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div id="screen-game" class="screen">
+  <div id="game-info" class="game-info-bar"></div>
+  <div id="opponents"></div>
+  <div id="game-center">
+    <div id="discard-pile"></div>
+    <div id="game-log"></div>
+  </div>
+  <div id="action-panel"></div>
+  <div id="your-area">
+    <div id="your-info"></div>
+    <div id="your-inplay"></div>
+    <div id="your-hand"></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- Screen: Game Over                                      -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div id="screen-gameover" class="screen">
+  <div class="container">
+    <header>
+      <div class="star-divider">&#9733; &#9733; &#9733; &#9733; &#9733;</div>
+      <div id="winner-text" class="winner-announcement"></div>
+      <div id="winner-subtitle" class="winner-subtitle"></div>
+    </header>
+
+    <div class="section">
+      <h2>Roles Revealed</h2>
+      <div id="final-roles" class="final-roles"></div>
+    </div>
+
+    <div class="section">
+      <h2>Final Stats</h2>
+      <div id="final-stats"></div>
+    </div>
+
+    <div class="gameover-actions">
+      <button id="btn-play-again" class="btn btn-primary hidden">&#9733; Play Again</button>
+      <button id="btn-back-lobby" class="btn">Back to Lobby</button>
+    </div>
+
+    <div class="star-divider">&#9733; &#9733; &#9733;</div>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div id="toast" class="toast"></div>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- Scripts                                                -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<script src="lib/slopnet.js"></script>
+<script src="lib/sloplobby.js"></script>
+<script src="js/data.js"></script>
+<script src="js/deck.js"></script>
+<script src="js/distance.js"></script>
+<script src="js/turns.js"></script>
+<script src="js/cards.js"></script>
+<script src="js/responses.js"></script>
+<script src="js/choices.js"></script>
+<script src="js/abilities.js"></script>
+<script src="js/damage.js"></script>
+<script src="js/views.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/app.js"></script>
+
+</body>
+</html>

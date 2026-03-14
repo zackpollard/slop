@@ -28,6 +28,7 @@ projects/
 | [herd-mentality](projects/herd-mentality) | [herd-mentality.slop.zackpollard.pro](https://herd-mentality.slop.zackpollard.pro) | Herd Mentality game companion with question bank and answer collection |
 | [texas-holdem](projects/texas-holdem) | [texas-holdem.slop.zackpollard.pro](https://texas-holdem.slop.zackpollard.pro) | Multiplayer Texas Hold'em poker with PeerJS networking |
 | [cards-against-humanity](projects/cards-against-humanity) | [cards-against-humanity.slop.zackpollard.pro](https://cards-against-humanity.slop.zackpollard.pro) | Peer-to-peer Cards Against Humanity party game |
+| [bang](projects/bang) | [bang.slop.zackpollard.pro](https://bang.slop.zackpollard.pro) | Bang! The Bullet game companion with role assignment and distance calculator |
 
 ## Adding a new project
 

@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Bang! Engine Tests</title>
+  <style>
+    body { font-family: monospace; background: #1a1a1a; color: #ccc; padding: 1rem; }
+    .pass { color: #4caf50; }
+    .fail { color: #f44336; }
+    .section { margin: 1rem 0; padding: 0.5rem; border-left: 3px solid #555; }
+    .section-title { font-weight: bold; color: #c4a24e; margin-bottom: 0.5rem; }
+    .summary { margin-top: 1rem; padding: 1rem; border: 2px solid; font-weight: bold; font-size: 1.2rem; }
+    .summary.all-pass { border-color: #4caf50; color: #4caf50; }
+    .summary.has-fail { border-color: #f44336; color: #f44336; }
+  </style>
+</head>
+<body>
+<h1>Bang! The Bullet — Engine Tests</h1>
+<div id="output"></div>
+
+<!-- Load game modules (no networking needed) -->
+<script src="js/data.js"></script>
+<script src="js/deck.js"></script>
+<script src="js/distance.js"></script>
+<script src="js/turns.js"></script>
+<script src="js/cards.js"></script>
+<script src="js/responses.js"></script>
+<script src="js/choices.js"></script>
+<script src="js/abilities.js"></script>
+<script src="js/damage.js"></script>
+<script src="js/views.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/tests.js"></script>
+</body>
+</html>

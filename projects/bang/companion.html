@@ -1,0 +1,1157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bang! The Bullet — Game Companion</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="lib/slop-theme.css">
+<style>
+/* Game-specific styles — base theme loaded from lib/slop-theme.css */
+
+:root {
+  --color-surface-alt:#22221c;
+  --color-accent-dim-solid:#8a7235;
+  --color-warning:#d9a045;
+  --color-sheriff:#c4a24e;--color-deputy:#5b9bd5;--color-outlaw:#d94545;--color-renegade:#9b59b6;
+  --radius:10px;--radius-sm:6px;
+}
+
+.container{max-width:960px;padding:1.5rem 1rem 3rem}
+a{color:var(--color-accent);text-decoration:none}
+a:hover{text-decoration:underline}
+
+header{padding:2rem 0 1.5rem;border-bottom:1px solid var(--color-border);margin-bottom:2rem}
+header h1 .icon{display:inline-block}
+
+/* Tabs */
+.tabs{display:flex;gap:.5rem;margin-bottom:1.5rem;flex-wrap:wrap}
+.tab{padding:.5rem 1rem;background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-sm);cursor:pointer;font-size:.85rem;font-weight:600;color:var(--color-text-muted);transition:all .15s;user-select:none}
+.tab:hover{color:var(--color-text);border-color:var(--color-accent-dim-solid)}
+.tab.active{background:var(--color-accent);color:#0f0f0c;border-color:var(--color-accent)}
+.tab-content{display:none}
+.tab-content.active{display:block}
+
+.section-title{font-size:1.05rem;font-weight:700;margin-bottom:.75rem;display:flex;align-items:center;gap:.5rem}
+.section-title .icon{font-size:1.2rem}
+
+.btn-success{background:var(--color-success);color:#fff;border-color:var(--color-success)}
+.btn-success:hover{background:#38944a}
+.btn-group{display:flex;gap:.5rem;flex-wrap:wrap}
+
+select{padding:.5rem .75rem;background:var(--color-bg);border:1px solid var(--color-border);border-radius:var(--radius-sm);color:var(--color-text);font-family:inherit;font-size:.9rem;width:100%}
+select:focus{outline:none;border-color:var(--color-accent)}
+
+/* Setup */
+.setup-row{display:flex;gap:1rem;align-items:flex-end;margin-bottom:1rem;flex-wrap:wrap}
+.setup-row .field{flex:1;min-width:150px}
+.player-setup-list{display:flex;flex-direction:column;gap:.5rem;margin:1rem 0}
+.player-setup-item{display:flex;align-items:center;gap:.75rem;background:var(--color-bg);padding:.6rem .75rem;border-radius:var(--radius-sm);border:1px solid var(--color-border)}
+.player-setup-item .player-num{font-family:var(--font-mono);font-weight:700;color:var(--color-accent);min-width:24px}
+.player-setup-item input{flex:1}
+.player-setup-item .remove-player{background:none;border:none;color:var(--color-text-muted);cursor:pointer;font-size:1.1rem;padding:0 .25rem}
+.player-setup-item .remove-player:hover{color:var(--color-error)}
+
+.role-dist{display:flex;gap:1rem;flex-wrap:wrap;margin:.75rem 0}
+.role-chip{padding:.35rem .75rem;border-radius:99px;font-size:.8rem;font-weight:700;display:flex;align-items:center;gap:.35rem}
+.role-chip.sheriff{background:rgba(196,162,78,.2);color:var(--color-sheriff);border:1px solid rgba(196,162,78,.3)}
+.role-chip.deputy{background:rgba(91,155,213,.2);color:var(--color-deputy);border:1px solid rgba(91,155,213,.3)}
+.role-chip.outlaw{background:rgba(217,69,69,.2);color:var(--color-outlaw);border:1px solid rgba(217,69,69,.3)}
+.role-chip.renegade{background:rgba(155,89,182,.2);color:var(--color-renegade);border:1px solid rgba(155,89,182,.3)}
+
+/* Table view */
+.table-canvas-wrap{position:relative;width:100%;max-width:600px;margin:0 auto}
+.table-canvas{width:100%;aspect-ratio:1;position:relative}
+.table-center{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center}
+.table-center .turn-label{font-size:.7rem;text-transform:uppercase;letter-spacing:1px;color:var(--color-accent);font-weight:700}
+.table-center .turn-name{font-size:1.1rem;font-weight:800}
+
+.seat{position:absolute;transform:translate(-50%,-50%);text-align:center;cursor:pointer;transition:all .2s;z-index:2}
+.seat .seat-ring{width:72px;height:72px;border-radius:50%;border:3px solid var(--color-border);background:var(--color-surface);display:flex;align-items:center;justify-content:center;flex-direction:column;transition:all .2s;position:relative}
+.seat.current .seat-ring{border-color:var(--color-accent);box-shadow:0 0 16px rgba(196,162,78,.35)}
+.seat.eliminated .seat-ring{opacity:.35;border-style:dashed}
+.seat.selected .seat-ring{border-color:var(--color-accent);background:var(--color-surface-alt)}
+.seat .seat-hp{font-family:var(--font-mono);font-size:1rem;font-weight:700;line-height:1}
+.seat .seat-hp-max{font-family:var(--font-mono);font-size:.6rem;color:var(--color-text-muted)}
+.seat .seat-name{font-size:.7rem;font-weight:700;margin-top:.35rem;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.seat .seat-role{font-size:.6rem;font-weight:600;margin-top:.1rem}
+.seat .seat-character{font-size:.6rem;color:var(--color-text-muted);margin-top:.1rem;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.seat .seat-role.sheriff{color:var(--color-sheriff)}
+.seat .seat-role.deputy{color:var(--color-deputy)}
+.seat .seat-role.outlaw{color:var(--color-outlaw)}
+.seat .seat-role.renegade{color:var(--color-renegade)}
+
+.seat .hp-bullets{display:flex;gap:2px;justify-content:center;margin-top:2px}
+.seat .hp-bullet{width:8px;height:8px;border-radius:50%;background:var(--color-error);transition:all .2s}
+.seat .hp-bullet.lost{background:var(--color-border);opacity:.3}
+
+.distance-lines{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:1}
+
+/* Player detail panel */
+.player-detail{background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius);padding:1.25rem;margin-top:1rem}
+.player-detail .detail-header{display:flex;align-items:center;gap:1rem;margin-bottom:1rem;flex-wrap:wrap}
+.player-detail .detail-name{font-size:1.3rem;font-weight:800}
+.player-detail .detail-role{font-size:.85rem;font-weight:700;padding:.2rem .7rem;border-radius:99px}
+.player-detail .detail-character{font-size:.9rem;color:var(--color-text-muted)}
+.player-detail .detail-ability{font-size:.85rem;color:var(--color-accent);margin-top:.25rem;font-style:italic}
+
+.hp-control{display:flex;align-items:center;gap:.75rem;margin:.75rem 0}
+.hp-control .hp-btn{width:36px;height:36px;border-radius:50%;border:2px solid var(--color-border);background:var(--color-surface-alt);color:var(--color-text);font-size:1.2rem;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s}
+.hp-control .hp-btn:hover{border-color:var(--color-accent)}
+.hp-control .hp-btn.minus:hover{border-color:var(--color-error);color:var(--color-error)}
+.hp-control .hp-btn.plus:hover{border-color:var(--color-success);color:var(--color-success)}
+.hp-display{display:flex;gap:4px;align-items:center}
+.hp-display .bullet{width:16px;height:16px;border-radius:50%;transition:all .2s}
+.hp-display .bullet.full{background:var(--color-error);box-shadow:0 0 6px rgba(217,69,69,.3)}
+.hp-display .bullet.empty{background:var(--color-border);opacity:.35}
+
+.equip-section{margin-top:.75rem}
+.equip-row{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.35rem}
+.equip-tag{padding:.2rem .6rem;border-radius:99px;font-size:.75rem;font-weight:600;background:var(--color-surface-alt);border:1px solid var(--color-border);display:flex;align-items:center;gap:.3rem}
+.equip-tag .remove-equip{cursor:pointer;opacity:.5}
+.equip-tag .remove-equip:hover{opacity:1;color:var(--color-error)}
+
+.distance-table{width:100%;border-collapse:collapse;margin-top:.75rem;font-size:.8rem}
+.distance-table th,.distance-table td{padding:.4rem .6rem;text-align:center;border:1px solid var(--color-border)}
+.distance-table th{background:var(--color-surface-alt);font-weight:700;color:var(--color-accent)}
+.distance-table td{font-family:var(--font-mono)}
+.distance-table td.in-range{color:var(--color-success);font-weight:700}
+.distance-table td.out-range{color:var(--color-text-muted)}
+.distance-table td.self{background:var(--color-surface-alt);color:var(--color-text-muted)}
+
+/* Card reference */
+.card-filters{display:flex;gap:.5rem;margin-bottom:1rem;flex-wrap:wrap}
+.card-filters input,.card-filters select{width:auto;min-width:150px;flex:1}
+.card-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:.75rem}
+.card-entry{background:var(--color-bg);border:1px solid var(--color-border);border-radius:var(--radius-sm);padding:.75rem;transition:border-color .15s}
+.card-entry:hover{border-color:var(--color-accent-dim-solid)}
+.card-entry .card-header{display:flex;align-items:center;gap:.5rem;margin-bottom:.35rem;flex-wrap:wrap}
+.card-entry .card-name{font-weight:700;font-size:.9rem}
+.card-entry .card-type{font-size:.7rem;padding:.1rem .4rem;border-radius:99px;font-weight:600}
+.card-entry .card-type.brown{background:rgba(160,82,45,.25);color:#d4a574;border:1px solid rgba(160,82,45,.3)}
+.card-entry .card-type.blue{background:rgba(70,130,180,.2);color:#7cb9e8;border:1px solid rgba(70,130,180,.3)}
+.card-entry .card-type.green{background:rgba(69,168,90,.15);color:var(--color-success);border:1px solid rgba(69,168,90,.3)}
+.card-entry .card-desc{font-size:.8rem;color:var(--color-text-muted);line-height:1.5}
+.card-entry .card-set{font-size:.7rem;color:var(--color-accent-dim-solid);margin-top:.3rem}
+
+/* Character reference */
+.char-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:.75rem}
+.char-card{background:var(--color-bg);border:1px solid var(--color-border);border-radius:var(--radius-sm);padding:.75rem;transition:border-color .15s}
+.char-card:hover{border-color:var(--color-accent-dim-solid)}
+.char-card .char-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:.35rem}
+.char-card .char-name{font-weight:700;font-size:.9rem}
+.char-card .char-hp{font-family:var(--font-mono);font-size:.8rem;color:var(--color-error);font-weight:700}
+.char-card .char-ability{font-size:.8rem;color:var(--color-text-muted);line-height:1.5}
+.char-card .char-set{font-size:.7rem;color:var(--color-accent-dim-solid);margin-top:.3rem}
+
+/* Event log */
+.event-log{max-height:200px;overflow-y:auto;font-size:.8rem;font-family:var(--font-mono);background:var(--color-bg);border-radius:var(--radius-sm);padding:.75rem}
+.event-log::-webkit-scrollbar{width:6px}
+.event-log::-webkit-scrollbar-thumb{background:var(--color-border);border-radius:3px}
+.event-entry{padding:.25rem 0;border-bottom:1px solid var(--color-border);color:var(--color-text-muted)}
+.event-entry:last-child{border:none}
+.event-entry .event-time{color:var(--color-accent-dim-solid)}
+
+/* Role reveal overlay */
+.reveal-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.92);z-index:100;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:1.5rem;padding:2rem}
+.reveal-card{background:var(--color-surface);border:2px solid var(--color-border);border-radius:16px;padding:2.5rem 3rem;text-align:center;max-width:360px;width:100%;transform:scale(0.95);opacity:0;transition:all .3s ease}
+.reveal-card.show{transform:scale(1);opacity:1}
+.reveal-card .reveal-player{font-size:.85rem;color:var(--color-text-muted);margin-bottom:.5rem}
+.reveal-card .reveal-role{font-size:1.8rem;font-weight:800;margin-bottom:.25rem}
+.reveal-card .reveal-role.sheriff{color:var(--color-sheriff)}
+.reveal-card .reveal-role.deputy{color:var(--color-deputy)}
+.reveal-card .reveal-role.outlaw{color:var(--color-outlaw)}
+.reveal-card .reveal-role.renegade{color:var(--color-renegade)}
+.reveal-card .reveal-character{font-size:1.1rem;font-weight:700;color:var(--color-text);margin-top:.75rem}
+.reveal-card .reveal-ability{font-size:.85rem;color:var(--color-accent);margin-top:.25rem;font-style:italic}
+.reveal-card .reveal-hp{font-family:var(--font-mono);font-size:.9rem;color:var(--color-error);margin-top:.5rem}
+.reveal-card .reveal-hidden{font-size:1.2rem;color:var(--color-text-muted);padding:2rem 0}
+.reveal-nav{display:flex;gap:1rem}
+
+/* Toast — override shared theme for multi-toast support */
+.toast-container{position:fixed;top:1rem;right:1rem;z-index:1000;display:flex;flex-direction:column;gap:.5rem}
+.toast-container .toast{position:static;transform:none;pointer-events:auto;padding:.6rem 1rem;border-radius:var(--radius-sm);font-size:.85rem;font-weight:600;max-width:320px;box-shadow:0 4px 12px rgba(0,0,0,.4);animation:fadeIn .3s ease}
+.toast-container .toast.info{background:var(--color-surface);border:1px solid var(--color-accent);color:var(--color-accent)}
+.toast-container .toast.danger{background:#2a1010;border:1px solid var(--color-error);color:var(--color-error)}
+.toast-container .toast.success{background:#102a14;border:1px solid var(--color-success);color:var(--color-success)}
+
+.checkbox-group{display:flex;flex-wrap:wrap;gap:.75rem}
+.checkbox-item{display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.85rem}
+.checkbox-item input{accent-color:var(--color-accent);width:16px;height:16px}
+
+footer{text-align:center;padding:2rem 0 1rem;color:var(--color-text-muted);font-size:.8rem;border-top:1px solid var(--color-border);margin-top:2rem}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.fade-in{animation:fadeIn .3s ease}
+
+@media(max-width:600px){
+  .table-canvas-wrap{max-width:100%}
+  .seat .seat-ring{width:56px;height:56px}
+  .seat .seat-hp{font-size:.85rem}
+  .seat .seat-name{font-size:.6rem;max-width:64px}
+  .seat .seat-role,.seat .seat-character{font-size:.55rem;max-width:64px}
+  .tabs{gap:.35rem}
+  .tab{padding:.4rem .7rem;font-size:.8rem}
+  .char-grid,.card-list{grid-template-columns:1fr}
+  .reveal-card{padding:2rem 1.5rem}
+  .distance-table{font-size:.7rem}
+  .distance-table th,.distance-table td{padding:.3rem .4rem}
+}
+</style>
+</head>
+<body>
+<div class="toast-container" id="toastContainer"></div>
+<div class="container">
+  <header>
+    <h1><span class="icon">&#x1F52B;</span> Bang! The Bullet</h1>
+    <p class="subtitle">Game companion &mdash; setup, track, and play with ease</p>
+  </header>
+
+  <div class="tabs" id="mainTabs">
+    <div class="tab active" data-tab="setup">Setup</div>
+    <div class="tab" data-tab="game">Game</div>
+    <div class="tab" data-tab="characters">Characters</div>
+    <div class="tab" data-tab="cards">Cards</div>
+    <div class="tab" data-tab="rules">Rules</div>
+  </div>
+
+  <main>
+    <!-- ========== SETUP TAB ========== -->
+    <div class="tab-content active" id="tab-setup">
+      <div class="section">
+        <div class="section-title"><span class="icon">&#x1F3AE;</span> Game Setup</div>
+        <div style="margin-bottom:1rem">
+          <label>Expansions</label>
+          <div class="checkbox-group" style="margin-top:.35rem">
+            <label class="checkbox-item"><input type="checkbox" id="exp-base" checked disabled> Base Game</label>
+            <label class="checkbox-item"><input type="checkbox" id="exp-dodge"> Dodge City</label>
+          </div>
+        </div>
+        <div class="setup-row">
+          <div class="field">
+            <label>Add Player</label>
+            <div style="display:flex;gap:.5rem">
+              <input type="text" id="newPlayerName" placeholder="Player name..." maxlength="20">
+              <button class="btn btn-primary" id="addPlayerBtn">Add</button>
+            </div>
+          </div>
+        </div>
+        <div id="playerSetupList" class="player-setup-list"></div>
+        <div style="margin-top:.75rem">
+          <label>Role Distribution for <span id="roleDistCount">0</span> players:</label>
+          <div class="role-dist" id="roleDist"></div>
+        </div>
+        <div class="btn-group" style="margin-top:1.25rem">
+          <button class="btn btn-primary" id="startGameBtn" disabled>Start Game</button>
+          <button class="btn" id="randomNamesBtn">Fill Random Names</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== GAME TAB ========== -->
+    <div class="tab-content" id="tab-game">
+      <div id="noGameMsg" class="section" style="text-align:center;padding:3rem 1rem">
+        <p style="color:var(--color-text-muted);font-size:1.1rem">No game in progress. Go to <strong>Setup</strong> to start a game.</p>
+      </div>
+      <div id="gameArea" class="hidden">
+        <div class="section">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;margin-bottom:.75rem">
+            <div class="section-title" style="margin-bottom:0"><span class="icon">&#x1F3AF;</span> The Table</div>
+            <div class="btn-group">
+              <button class="btn btn-sm" id="nextTurnBtn">Next Turn &#x27A1;</button>
+              <button class="btn btn-danger btn-sm" id="endGameBtn">End Game</button>
+            </div>
+          </div>
+          <div class="table-canvas-wrap">
+            <svg class="distance-lines" id="distanceLines"></svg>
+            <div class="table-canvas" id="tableCanvas">
+              <div class="table-center" id="tableCenter">
+                <div class="turn-label">Current Turn</div>
+                <div class="turn-name" id="turnName">—</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="playerDetailPanel" class="player-detail hidden">
+          <div class="detail-header">
+            <div>
+              <div class="detail-name" id="detailName"></div>
+              <div class="detail-character" id="detailCharacter"></div>
+              <div class="detail-ability" id="detailAbility"></div>
+            </div>
+            <span class="detail-role" id="detailRole"></span>
+          </div>
+          <div>
+            <label>Life Points</label>
+            <div class="hp-control">
+              <button class="hp-btn minus" id="hpMinus">−</button>
+              <div class="hp-display" id="hpDisplay"></div>
+              <button class="hp-btn plus" id="hpPlus">+</button>
+              <span style="font-family:var(--font-mono);font-size:.85rem;color:var(--color-text-muted)" id="hpText"></span>
+            </div>
+          </div>
+          <div class="equip-section">
+            <label>Equipment Modifiers</label>
+            <div style="display:flex;gap:.5rem;margin-top:.35rem;flex-wrap:wrap">
+              <button class="btn btn-sm" onclick="toggleEquip('mustang')">Mustang (+1 dist seen)</button>
+              <button class="btn btn-sm" onclick="toggleEquip('scope')">Scope (-1 dist see)</button>
+              <button class="btn btn-sm" onclick="toggleEquip('hideout')">Hideout (+1 dist seen)</button>
+            </div>
+            <div class="equip-row" id="equipRow"></div>
+          </div>
+          <div style="margin-top:.75rem">
+            <label>Weapon Range</label>
+            <div style="display:flex;gap:.5rem;align-items:center;margin-top:.35rem">
+              <select id="weaponSelect" style="width:auto;min-width:140px">
+                <option value="1">Colt .45 (1)</option>
+                <option value="2">Volcanic (1) — special</option>
+                <option value="2">Schofield (2)</option>
+                <option value="3">Remington (3)</option>
+                <option value="3">Rev. Carabine (3)</option>
+                <option value="4">Winchester (4)</option>
+                <option value="5">Buffalo Rifle (5)</option>
+              </select>
+            </div>
+          </div>
+          <div style="margin-top:1rem">
+            <label>Distance to Other Players</label>
+            <div id="distanceInfo" style="overflow-x:auto"></div>
+          </div>
+          <div class="btn-group" style="margin-top:1rem">
+            <button class="btn btn-danger btn-sm" id="eliminateBtn">Eliminate Player</button>
+            <button class="btn btn-success btn-sm" id="reviveBtn" style="display:none">Revive Player</button>
+          </div>
+        </div>
+
+        <div class="section" style="margin-top:1rem">
+          <div class="section-title"><span class="icon">&#x1F4DC;</span> Game Log</div>
+          <div class="event-log" id="eventLog">
+            <div class="event-entry" style="color:var(--color-text-muted);font-style:italic">Game events will appear here...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== CHARACTERS TAB ========== -->
+    <div class="tab-content" id="tab-characters">
+      <div class="section">
+        <div class="section-title"><span class="icon">&#x1F464;</span> Character Reference</div>
+        <div class="card-filters">
+          <input type="text" id="charSearch" placeholder="Search characters...">
+          <select id="charSetFilter">
+            <option value="all">All Sets</option>
+            <option value="base">Base Game</option>
+            <option value="dodge">Dodge City</option>
+          </select>
+        </div>
+        <div class="char-grid" id="charGrid"></div>
+      </div>
+    </div>
+
+    <!-- ========== CARDS TAB ========== -->
+    <div class="tab-content" id="tab-cards">
+      <div class="section">
+        <div class="section-title"><span class="icon">&#x1F0CF;</span> Card Reference</div>
+        <div class="card-filters">
+          <input type="text" id="cardSearch" placeholder="Search cards...">
+          <select id="cardTypeFilter">
+            <option value="all">All Types</option>
+            <option value="brown">Brown (Play & Discard)</option>
+            <option value="blue">Blue (Equipment)</option>
+            <option value="green">Green (Dodge City)</option>
+          </select>
+        </div>
+        <div class="card-list" id="cardList"></div>
+      </div>
+    </div>
+
+    <!-- ========== RULES TAB ========== -->
+    <div class="tab-content" id="tab-rules">
+      <div class="section">
+        <div class="section-title"><span class="icon">&#x1F4D6;</span> Quick Rules Reference</div>
+        <div style="font-size:.9rem;line-height:1.7">
+          <h3 style="color:var(--color-accent);margin:1rem 0 .5rem">Roles &amp; Win Conditions</h3>
+          <ul style="padding-left:1.25rem">
+            <li><strong style="color:var(--color-sheriff)">Sheriff</strong> — Eliminate all Outlaws and the Renegade. The Sheriff is the only revealed role.</li>
+            <li><strong style="color:var(--color-deputy)">Deputy</strong> — Protect the Sheriff. Deputies win when the Sheriff wins.</li>
+            <li><strong style="color:var(--color-outlaw)">Outlaw</strong> — Kill the Sheriff. Outlaws win immediately if the Sheriff is eliminated.</li>
+            <li><strong style="color:var(--color-renegade)">Renegade</strong> — Be the last one standing. Must kill everyone, including the Sheriff (but last).</li>
+          </ul>
+
+          <h3 style="color:var(--color-accent);margin:1rem 0 .5rem">Turn Structure</h3>
+          <ol style="padding-left:1.25rem">
+            <li><strong>Draw 2 cards</strong> from the deck (unless character ability says otherwise).</li>
+            <li><strong>Play any number of cards</strong> — but only one BANG! per turn (unless you're Willy the Kid or have a Volcanic).</li>
+            <li><strong>Discard</strong> down to your current life points (hand limit = HP).</li>
+          </ol>
+
+          <h3 style="color:var(--color-accent);margin:1rem 0 .5rem">Distance</h3>
+          <p>Players sit in a circle. Distance = minimum number of seats between two players (counting either direction around the circle), <em>skipping eliminated players</em>. Equipment modifies distance:</p>
+          <ul style="padding-left:1.25rem">
+            <li><strong>Mustang / Hideout</strong> — Other players see you at distance +1</li>
+            <li><strong>Scope</strong> — You see other players at distance -1</li>
+            <li><strong>Weapons</strong> — Determine your BANG! range (default Colt .45 = range 1)</li>
+          </ul>
+
+          <h3 style="color:var(--color-accent);margin:1rem 0 .5rem">Key Cards</h3>
+          <ul style="padding-left:1.25rem">
+            <li><strong>BANG!</strong> — Shoot a player within weapon range. They must play a Missed! or lose 1 HP.</li>
+            <li><strong>Missed!</strong> — Cancel a BANG! aimed at you.</li>
+            <li><strong>Beer</strong> — Regain 1 life point (not usable with only 2 players left).</li>
+            <li><strong>Saloon</strong> — All players regain 1 life point.</li>
+            <li><strong>Stagecoach / Wells Fargo</strong> — Draw 2 / 3 cards.</li>
+            <li><strong>Panic!</strong> — Draw a card from a player at distance 1.</li>
+            <li><strong>Cat Balou</strong> — Force any player to discard a card.</li>
+            <li><strong>Duel</strong> — Challenge any player. Take turns discarding BANG! cards; first who can't loses 1 HP.</li>
+            <li><strong>Indians!</strong> — All other players discard a BANG! or lose 1 HP.</li>
+            <li><strong>Gatling</strong> — All other players lose 1 HP (counts as a BANG! to all).</li>
+            <li><strong>Barrel</strong> — "Draw!" when targeted by BANG!; heart = Missed!</li>
+            <li><strong>Dynamite</strong> — Passes each turn; "Draw!" 2-9 of spades = 3 damage!</li>
+            <li><strong>Jail</strong> — Target "Draws!" next turn; heart = escape, otherwise skip turn. Cannot jail the Sheriff.</li>
+          </ul>
+
+          <h3 style="color:var(--color-accent);margin:1rem 0 .5rem">Elimination Rewards</h3>
+          <ul style="padding-left:1.25rem">
+            <li><strong>Killing an Outlaw</strong> — The killer draws 3 cards.</li>
+            <li><strong>Sheriff kills a Deputy</strong> — The Sheriff discards their entire hand and all cards in play.</li>
+          </ul>
+
+          <h3 style="color:var(--color-accent);margin:1rem 0 .5rem">Role Distribution</h3>
+          <table class="distance-table" style="max-width:400px">
+            <thead><tr><th>Players</th><th style="color:var(--color-sheriff)">Sheriff</th><th style="color:var(--color-deputy)">Deputy</th><th style="color:var(--color-outlaw)">Outlaw</th><th style="color:var(--color-renegade)">Renegade</th></tr></thead>
+            <tbody>
+              <tr><td>4</td><td>1</td><td>0</td><td>2</td><td>1</td></tr>
+              <tr><td>5</td><td>1</td><td>1</td><td>2</td><td>1</td></tr>
+              <tr><td>6</td><td>1</td><td>1</td><td>3</td><td>1</td></tr>
+              <tr><td>7</td><td>1</td><td>2</td><td>3</td><td>1</td></tr>
+              <tr><td>8</td><td>1</td><td>2</td><td>3</td><td>2</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <p>Bang! The Bullet is &copy; dV Giochi. This is an unofficial fan-made companion tool.</p>
+  </footer>
+</div>
+
+<script>
+// ============================================================
+// DATA
+// ============================================================
+const CHARACTERS = [
+  // Base Game
+  {name:"Bart Cassidy",hp:4,ability:"Each time he loses a life point, he draws a card from the deck.",set:"base"},
+  {name:"Black Jack",hp:4,ability:"During the draw phase, show the second card drawn: if it's a Heart or Diamond, draw one more card.",set:"base"},
+  {name:"Calamity Janet",hp:4,ability:"She can use BANG! cards as Missed! and vice versa.",set:"base"},
+  {name:"El Gringo",hp:3,ability:"Each time he loses a life point due to a card played by another player, he draws a random card from that player's hand.",set:"base"},
+  {name:"Jesse Jones",hp:4,ability:"He may draw his first card from the hand of any player instead of the deck.",set:"base"},
+  {name:"Jourdonnais",hp:4,ability:"He has a built-in Barrel: anytime he is the target of a BANG!, he may \"draw!\" — on a Heart, he is missed.",set:"base"},
+  {name:"Kit Carlson",hp:4,ability:"During the draw phase, he looks at the top 3 cards of the deck, chooses 2, and puts the other one back on top.",set:"base"},
+  {name:"Lucky Duke",hp:4,ability:"Each time he is required to \"draw!\", he flips the top 2 cards and chooses the one he prefers.",set:"base"},
+  {name:"Paul Regret",hp:3,ability:"All other players see him at distance +1 (built-in Mustang).",set:"base"},
+  {name:"Pedro Ramirez",hp:4,ability:"He may draw his first card from the top of the discard pile.",set:"base"},
+  {name:"Rose Doolan",hp:4,ability:"She sees all other players at distance -1 (built-in Scope).",set:"base"},
+  {name:"Sid Ketchum",hp:4,ability:"He may discard 2 cards from his hand to regain 1 life point.",set:"base"},
+  {name:"Slab the Killer",hp:4,ability:"Players targeted by his BANG! need 2 Missed! cards to cancel it.",set:"base"},
+  {name:"Suzy Lafayette",hp:4,ability:"As soon as she has no cards in her hand, she draws a card from the deck.",set:"base"},
+  {name:"Vulture Sam",hp:4,ability:"Whenever a player is eliminated, he takes all their cards (hand and in play).",set:"base"},
+  {name:"Willy the Kid",hp:4,ability:"He can play any number of BANG! cards during his turn.",set:"base"},
+  // Dodge City
+  {name:"Apache Kid",hp:3,ability:"Cards of Diamonds played by other players have no effect on him.",set:"dodge"},
+  {name:"Belle Star",hp:4,ability:"During her turn, no other player's cards in play have any effect.",set:"dodge"},
+  {name:"Bill Noface",hp:4,ability:"He draws 1 card, plus 1 card for each wound he has.",set:"dodge"},
+  {name:"Chuck Wengam",hp:4,ability:"During his turn, he may choose to lose 1 life point to draw 2 cards.",set:"dodge"},
+  {name:"Doc Holyday",hp:4,ability:"During his turn, he may discard 2 cards from hand to shoot a BANG! at any player in range.",set:"dodge"},
+  {name:"Elena Fuente",hp:3,ability:"She may use any card from her hand as a Missed!",set:"dodge"},
+  {name:"Greg Digger",hp:4,ability:"Each time another player is eliminated, he regains 2 life points.",set:"dodge"},
+  {name:"Herb Hunter",hp:4,ability:"Each time another player is eliminated, he draws 2 extra cards from the deck.",set:"dodge"},
+  {name:"José Delgado",hp:4,ability:"Twice per turn, he may discard a blue card from hand to draw 2 cards.",set:"dodge"},
+  {name:"Molly Stark",hp:4,ability:"Each time she uses or plays a card out of her turn, she draws a card.",set:"dodge"},
+  {name:"Pat Brennan",hp:4,ability:"He may draw only 1 card in play in front of any player instead of his normal draw.",set:"dodge"},
+  {name:"Pixie Pete",hp:3,ability:"He draws 3 cards instead of 2 during the draw phase.",set:"dodge"},
+  {name:"Sean Mallory",hp:3,ability:"He may hold up to 10 cards in his hand at the end of his turn.",set:"dodge"},
+  {name:"Tequila Joe",hp:4,ability:"Each time he plays a Beer, he regains 2 life points instead of 1.",set:"dodge"},
+  {name:"Vera Custer",hp:3,ability:"At the start of her turn, she chooses another living player's character and copies their ability for the whole turn.",set:"dodge"},
+];
+
+const CARDS = [
+  // Brown cards (play and discard) — Base
+  {name:"BANG!",type:"brown",desc:"Shoot a player within your weapon range. They must play Missed! or lose 1 HP. Limit: 1 per turn (unless special ability).",set:"base"},
+  {name:"Missed!",type:"brown",desc:"Cancel a BANG! card targeting you.",set:"base"},
+  {name:"Beer",type:"brown",desc:"Regain 1 life point. Cannot be used when only 2 players remain.",set:"base"},
+  {name:"Saloon",type:"brown",desc:"All players (including you) regain 1 life point.",set:"base"},
+  {name:"Stagecoach",type:"brown",desc:"Draw 2 cards from the deck.",set:"base"},
+  {name:"Wells Fargo",type:"brown",desc:"Draw 3 cards from the deck.",set:"base"},
+  {name:"Panic!",type:"brown",desc:"Draw a card from a player at distance 1 (from hand or in play).",set:"base"},
+  {name:"Cat Balou",type:"brown",desc:"Force any player to discard a card (from hand or in play).",set:"base"},
+  {name:"General Store",type:"brown",desc:"Reveal as many cards as players. Each player (starting with you) picks one.",set:"base"},
+  {name:"Duel",type:"brown",desc:"Challenge any player regardless of distance. Alternate discarding BANG! cards. First who can't loses 1 HP.",set:"base"},
+  {name:"Indians!",type:"brown",desc:"All other players must discard a BANG! card or lose 1 life point.",set:"base"},
+  {name:"Gatling",type:"brown",desc:"All other players lose 1 life point (like a BANG! to everyone).",set:"base"},
+  // Blue cards (equipment) — Base
+  {name:"Barrel",type:"blue",desc:"When targeted by BANG!, \"draw!\" — if it's a Heart, the BANG! is a miss.",set:"base"},
+  {name:"Scope",type:"blue",desc:"You see all other players at distance -1.",set:"base"},
+  {name:"Mustang",type:"blue",desc:"All other players see you at distance +1.",set:"base"},
+  {name:"Jail",type:"blue",desc:"Play on any player except the Sheriff. At their turn start, \"draw!\" — Heart = free, otherwise skip turn and discard Jail.",set:"base"},
+  {name:"Dynamite",type:"blue",desc:"At turn start, \"draw!\" — 2-9 of Spades = 3 damage and Dynamite is discarded. Otherwise pass it to the next player.",set:"base"},
+  {name:"Volcanic",type:"blue",desc:"Weapon (range 1). You may play any number of BANG! cards during your turn.",set:"base"},
+  {name:"Schofield",type:"blue",desc:"Weapon (range 2).",set:"base"},
+  {name:"Remington",type:"blue",desc:"Weapon (range 3).",set:"base"},
+  {name:"Rev. Carabine",type:"blue",desc:"Weapon (range 4).",set:"base"},
+  {name:"Winchester",type:"blue",desc:"Weapon (range 5).",set:"base"},
+  // Dodge City cards
+  {name:"Dodge",type:"green",desc:"When hit by a BANG!, discard this to draw a card — acts as Missed! (Dodge City green card).",set:"dodge"},
+  {name:"Bible",type:"green",desc:"When you would lose a life point, you may discard this to \"draw!\" — Heart or Diamond = avoid the hit.",set:"dodge"},
+  {name:"Iron Plate",type:"green",desc:"When you would lose a life point, you may discard this to \"draw!\" — Spade or Club = avoid the hit.",set:"dodge"},
+  {name:"Derringer",type:"green",desc:"During your turn, you may discard this to shoot a BANG! at a player at distance 1 and draw a card.",set:"dodge"},
+  {name:"Howitzer",type:"green",desc:"During your turn, you may discard this to deal 1 damage to all other players (like Gatling).",set:"dodge"},
+  {name:"Pepperbox",type:"green",desc:"During your turn, you may discard this to shoot a BANG! at any player regardless of distance.",set:"dodge"},
+  {name:"Buffalo Rifle",type:"green",desc:"During your turn, you may discard this to shoot any player regardless of distance. You cannot play any BANG! this turn.",set:"dodge"},
+  {name:"Can Can",type:"green",desc:"When hit by a BANG!, discard this to draw a card from the attacker.",set:"dodge"},
+  {name:"Conestoga",type:"green",desc:"When hit by a BANG!, discard this to draw a card from any player at distance 1.",set:"dodge"},
+  {name:"Pony Express",type:"brown",desc:"Draw 3 cards from the deck.",set:"dodge"},
+  {name:"Rag Time",type:"brown",desc:"Force any player to discard a card (like Cat Balou) and draw a card.",set:"dodge"},
+  {name:"Brawl",type:"brown",desc:"Discard a card from your hand. All other players must discard a card from play or lose one at random from hand.",set:"dodge"},
+  {name:"Punch",type:"brown",desc:"Like BANG! but doesn't count toward the one-BANG!-per-turn limit.",set:"dodge"},
+  {name:"Springfield",type:"brown",desc:"Discard a card to shoot any player regardless of distance.",set:"dodge"},
+  {name:"Whisky",type:"brown",desc:"Discard a card to regain 2 life points.",set:"dodge"},
+  {name:"Tequila",type:"brown",desc:"Discard a card. Any one player regains 1 life point.",set:"dodge"},
+  {name:"Hideout",type:"blue",desc:"All other players see you at distance +1 (stacks with Mustang).",set:"dodge"},
+  {name:"Silver",type:"blue",desc:"You see all other players at distance -1 (like Scope but equipment).",set:"dodge"},
+  {name:"Binocular",type:"blue",desc:"You see all other players at distance -1.",set:"dodge"},
+  {name:"Sombrero",type:"blue",desc:"When you lose a life point you may discard this to cancel it.",set:"dodge"},
+  {name:"Ten Gallon Hat",type:"blue",desc:"When you lose a life point you may discard this to cancel it.",set:"dodge"},
+];
+
+const ROLE_DIST = {
+  4: {sheriff:1, deputy:0, outlaw:2, renegade:1},
+  5: {sheriff:1, deputy:1, outlaw:2, renegade:1},
+  6: {sheriff:1, deputy:1, outlaw:3, renegade:1},
+  7: {sheriff:1, deputy:2, outlaw:3, renegade:1},
+  8: {sheriff:1, deputy:2, outlaw:3, renegade:2},
+};
+
+const RANDOM_NAMES = ["Doc","Kid","Duke","Ace","Slim","Buck","Red","Jake","Clay","Hank","Wyatt","Billy","Jesse","Cole","Dutch","Annie","Pearl","Rosa","Belle","Sadie"];
+
+// ============================================================
+// STATE
+// ============================================================
+let state = {
+  phase: 'setup', // setup | playing
+  players: [],    // [{name, role, character, hp, maxHp, eliminated, equipment:[], weaponRange:1}]
+  currentTurn: 0,
+  selectedPlayer: null,
+  events: [],
+  useDodgeCity: false,
+};
+
+// ============================================================
+// SETUP
+// ============================================================
+const setupPlayers = [];
+
+function addPlayer(name) {
+  name = name.trim();
+  if (!name) return;
+  if (setupPlayers.length >= 8) { toast('Maximum 8 players','danger'); return; }
+  if (setupPlayers.some(p => p.toLowerCase() === name.toLowerCase())) { toast('Name already taken','danger'); return; }
+  setupPlayers.push(name);
+  renderSetup();
+  document.getElementById('newPlayerName').value = '';
+  document.getElementById('newPlayerName').focus();
+}
+
+function removePlayer(idx) {
+  setupPlayers.splice(idx, 1);
+  renderSetup();
+}
+
+function renderSetup() {
+  const list = document.getElementById('playerSetupList');
+  list.innerHTML = setupPlayers.map((name, i) =>
+    `<div class="player-setup-item fade-in">
+      <span class="player-num">${i+1}</span>
+      <input type="text" value="${escHtml(name)}" onchange="setupPlayers[${i}]=this.value.trim();renderSetup()" maxlength="20">
+      <button class="remove-player" onclick="removePlayer(${i})">&times;</button>
+    </div>`
+  ).join('');
+
+  const count = setupPlayers.length;
+  document.getElementById('roleDistCount').textContent = count;
+  const distEl = document.getElementById('roleDist');
+  if (count >= 4 && count <= 8) {
+    const d = ROLE_DIST[count];
+    distEl.innerHTML = `
+      <span class="role-chip sheriff">&#x2B50; Sheriff &times;${d.sheriff}</span>
+      ${d.deputy ? `<span class="role-chip deputy">&#x1F6E1; Deputy &times;${d.deputy}</span>` : ''}
+      <span class="role-chip outlaw">&#x1F52B; Outlaw &times;${d.outlaw}</span>
+      <span class="role-chip renegade">&#x1F3AD; Renegade &times;${d.renegade}</span>
+    `;
+  } else {
+    distEl.innerHTML = `<span style="color:var(--color-text-muted);font-size:.85rem">${count < 4 ? 'Need at least 4 players' : 'Maximum 8 players'}</span>`;
+  }
+
+  document.getElementById('startGameBtn').disabled = count < 4 || count > 8;
+}
+
+document.getElementById('addPlayerBtn').addEventListener('click', () => {
+  addPlayer(document.getElementById('newPlayerName').value);
+});
+document.getElementById('newPlayerName').addEventListener('keydown', e => {
+  if (e.key === 'Enter') addPlayer(e.target.value);
+});
+document.getElementById('randomNamesBtn').addEventListener('click', () => {
+  const shuffled = [...RANDOM_NAMES].sort(() => Math.random() - 0.5);
+  const needed = Math.max(0, 4 - setupPlayers.length);
+  for (let i = 0; i < needed && setupPlayers.length < 8; i++) {
+    const name = shuffled.find(n => !setupPlayers.some(p => p.toLowerCase() === n.toLowerCase()));
+    if (name) setupPlayers.push(name);
+  }
+  renderSetup();
+});
+
+// ============================================================
+// START GAME
+// ============================================================
+document.getElementById('startGameBtn').addEventListener('click', startGame);
+
+function startGame() {
+  const count = setupPlayers.length;
+  if (count < 4 || count > 8) return;
+
+  state.useDodgeCity = document.getElementById('exp-dodge').checked;
+
+  // Assign roles
+  const dist = ROLE_DIST[count];
+  let roles = [];
+  for (let i = 0; i < dist.sheriff; i++) roles.push('sheriff');
+  for (let i = 0; i < dist.deputy; i++) roles.push('deputy');
+  for (let i = 0; i < dist.outlaw; i++) roles.push('outlaw');
+  for (let i = 0; i < dist.renegade; i++) roles.push('renegade');
+  roles = shuffle(roles);
+
+  // Assign characters
+  let availChars = CHARACTERS.filter(c => c.set === 'base' || (state.useDodgeCity && c.set === 'dodge'));
+  availChars = shuffle(availChars);
+
+  state.players = setupPlayers.map((name, i) => {
+    const char = availChars[i];
+    const role = roles[i];
+    const maxHp = char.hp + (role === 'sheriff' ? 1 : 0);
+    return {
+      name,
+      role,
+      character: char,
+      hp: maxHp,
+      maxHp,
+      eliminated: false,
+      equipment: [],
+      weaponRange: 1,
+    };
+  });
+
+  // Sheriff goes first
+  const sheriffIdx = state.players.findIndex(p => p.role === 'sheriff');
+  state.currentTurn = sheriffIdx;
+  state.selectedPlayer = null;
+  state.events = [];
+  state.phase = 'playing';
+
+  addEvent(`Game started with ${count} players`);
+  addEvent(`${state.players[sheriffIdx].name} is the Sheriff`);
+
+  switchTab('game');
+  renderGame();
+  startRoleReveal();
+}
+
+// ============================================================
+// ROLE REVEAL (pass-and-peek)
+// ============================================================
+function startRoleReveal() {
+  let currentReveal = 0;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'reveal-overlay';
+  overlay.innerHTML = `
+    <div class="reveal-card" id="revealCard">
+      <div class="reveal-player" id="revealPlayerLabel"></div>
+      <div id="revealContent"></div>
+    </div>
+    <div class="reveal-nav">
+      <button class="btn" id="revealPeekBtn">Tap to Peek</button>
+      <button class="btn btn-primary hidden" id="revealNextBtn">Next Player</button>
+      <button class="btn btn-primary hidden" id="revealDoneBtn">Start Playing!</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const card = document.getElementById('revealCard');
+  const content = document.getElementById('revealContent');
+  const label = document.getElementById('revealPlayerLabel');
+  const peekBtn = document.getElementById('revealPeekBtn');
+  const nextBtn = document.getElementById('revealNextBtn');
+  const doneBtn = document.getElementById('revealDoneBtn');
+
+  function showPlayer(idx) {
+    const p = state.players[idx];
+    label.textContent = `Pass the device to ${p.name}`;
+    content.innerHTML = `<div class="reveal-hidden">Tap "Peek" to see your role</div>`;
+    peekBtn.classList.remove('hidden');
+    nextBtn.classList.add('hidden');
+    doneBtn.classList.add('hidden');
+    setTimeout(() => card.classList.add('show'), 50);
+  }
+
+  function revealPlayer(idx) {
+    const p = state.players[idx];
+    const roleClass = p.role;
+    content.innerHTML = `
+      <div class="reveal-role ${roleClass}">${capitalize(p.role)}</div>
+      <div class="reveal-character">${p.character.name}</div>
+      <div class="reveal-ability">${p.character.ability}</div>
+      <div class="reveal-hp">${'&#x2764; '.repeat(p.maxHp)} (${p.maxHp} HP)</div>
+    `;
+    peekBtn.classList.add('hidden');
+    if (idx < state.players.length - 1) {
+      nextBtn.classList.remove('hidden');
+    } else {
+      doneBtn.classList.remove('hidden');
+    }
+  }
+
+  peekBtn.addEventListener('click', () => revealPlayer(currentReveal));
+  nextBtn.addEventListener('click', () => {
+    card.classList.remove('show');
+    currentReveal++;
+    setTimeout(() => showPlayer(currentReveal), 200);
+  });
+  doneBtn.addEventListener('click', () => {
+    overlay.remove();
+  });
+
+  showPlayer(0);
+}
+
+// ============================================================
+// GAME RENDERING
+// ============================================================
+function renderGame() {
+  if (state.phase !== 'playing') {
+    document.getElementById('noGameMsg').classList.remove('hidden');
+    document.getElementById('gameArea').classList.add('hidden');
+    return;
+  }
+  document.getElementById('noGameMsg').classList.add('hidden');
+  document.getElementById('gameArea').classList.remove('hidden');
+
+  renderTable();
+  renderSelectedPlayer();
+  renderEventLog();
+}
+
+function renderTable() {
+  const canvas = document.getElementById('tableCanvas');
+  const svg = document.getElementById('distanceLines');
+
+  canvas.querySelectorAll('.seat').forEach(s => s.remove());
+
+  const players = state.players;
+  const count = players.length;
+  const rect = canvas.getBoundingClientRect();
+  const cx = rect.width / 2;
+  const cy = rect.height / 2;
+  const radius = Math.min(cx, cy) * 0.72;
+
+  const current = players[state.currentTurn];
+  document.getElementById('turnName').textContent = current ? current.name : '—';
+
+  players.forEach((p, i) => {
+    const angle = (2 * Math.PI * i / count) - Math.PI / 2;
+    const x = cx + radius * Math.cos(angle);
+    const y = cy + radius * Math.sin(angle);
+
+    const seat = document.createElement('div');
+    seat.className = `seat${i === state.currentTurn ? ' current' : ''}${p.eliminated ? ' eliminated' : ''}${state.selectedPlayer === i ? ' selected' : ''}`;
+    seat.style.left = x + 'px';
+    seat.style.top = y + 'px';
+
+    const bullets = Array.from({length: p.maxHp}, (_, bi) =>
+      `<div class="hp-bullet ${bi < p.hp ? '' : 'lost'}"></div>`
+    ).join('');
+
+    seat.innerHTML = `
+      <div class="seat-ring">
+        <div class="seat-hp">${p.hp}/${p.maxHp}</div>
+        <div class="hp-bullets">${bullets}</div>
+      </div>
+      <div class="seat-name">${escHtml(p.name)}</div>
+      <div class="seat-role ${p.role}">${p.role === 'sheriff' || p.eliminated ? capitalize(p.role) : '???'}</div>
+      <div class="seat-character">${escHtml(p.character.name)}</div>
+    `;
+    seat.addEventListener('click', () => selectPlayer(i));
+    canvas.appendChild(seat);
+  });
+
+  // Draw distance lines if a player is selected
+  svg.innerHTML = '';
+  if (state.selectedPlayer !== null) {
+    const sel = state.selectedPlayer;
+    const selAngle = (2 * Math.PI * sel / count) - Math.PI / 2;
+    const sx = cx + radius * Math.cos(selAngle);
+    const sy = cy + radius * Math.sin(selAngle);
+    const weapon = players[sel].weaponRange;
+
+    players.forEach((p, i) => {
+      if (i === sel || p.eliminated) return;
+      const angle = (2 * Math.PI * i / count) - Math.PI / 2;
+      const tx = cx + radius * Math.cos(angle);
+      const ty = cy + radius * Math.sin(angle);
+
+      const dist = calcDistance(sel, i);
+      const inRange = dist <= weapon;
+
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('x1', sx);
+      line.setAttribute('y1', sy);
+      line.setAttribute('x2', tx);
+      line.setAttribute('y2', ty);
+      line.setAttribute('stroke', inRange ? 'rgba(69,168,90,0.3)' : 'rgba(154,150,134,0.1)');
+      line.setAttribute('stroke-width', inRange ? '2' : '1');
+      line.setAttribute('stroke-dasharray', inRange ? '' : '4,4');
+      svg.appendChild(line);
+    });
+  }
+}
+
+function selectPlayer(idx) {
+  state.selectedPlayer = state.selectedPlayer === idx ? null : idx;
+  renderGame();
+}
+
+function renderSelectedPlayer() {
+  const panel = document.getElementById('playerDetailPanel');
+  if (state.selectedPlayer === null) {
+    panel.classList.add('hidden');
+    return;
+  }
+  panel.classList.remove('hidden');
+
+  const p = state.players[state.selectedPlayer];
+
+  document.getElementById('detailName').textContent = p.name;
+  document.getElementById('detailCharacter').textContent = p.character.name;
+  document.getElementById('detailAbility').textContent = p.character.ability;
+
+  const roleEl = document.getElementById('detailRole');
+  roleEl.textContent = capitalize(p.role);
+  roleEl.className = `detail-role role-chip ${p.role}`;
+
+  renderHpDisplay(p);
+
+  const equipRow = document.getElementById('equipRow');
+  equipRow.innerHTML = p.equipment.map(eq =>
+    `<span class="equip-tag">${capitalize(eq)} <span class="remove-equip" onclick="removeEquip('${eq}')">&times;</span></span>`
+  ).join('');
+
+  const ws = document.getElementById('weaponSelect');
+  ws.value = p.weaponRange;
+
+  renderDistanceTable(state.selectedPlayer);
+
+  document.getElementById('eliminateBtn').style.display = p.eliminated ? 'none' : '';
+  document.getElementById('reviveBtn').style.display = p.eliminated ? '' : 'none';
+}
+
+function renderHpDisplay(p) {
+  const display = document.getElementById('hpDisplay');
+  display.innerHTML = Array.from({length: p.maxHp}, (_, i) =>
+    `<div class="bullet ${i < p.hp ? 'full' : 'empty'}"></div>`
+  ).join('');
+  document.getElementById('hpText').textContent = `${p.hp} / ${p.maxHp}`;
+}
+
+document.getElementById('hpMinus').addEventListener('click', () => {
+  if (state.selectedPlayer === null) return;
+  const p = state.players[state.selectedPlayer];
+  if (p.hp > 0) {
+    p.hp--;
+    addEvent(`${p.name} lost a life point (${p.hp}/${p.maxHp})`);
+    if (p.hp === 0) {
+      p.eliminated = true;
+      addEvent(`${p.name} has been eliminated!`);
+      if (state.currentTurn === state.selectedPlayer) nextTurn();
+    }
+    renderGame();
+  }
+});
+
+document.getElementById('hpPlus').addEventListener('click', () => {
+  if (state.selectedPlayer === null) return;
+  const p = state.players[state.selectedPlayer];
+  if (p.hp < p.maxHp) {
+    p.hp++;
+    if (p.eliminated && p.hp > 0) p.eliminated = false;
+    addEvent(`${p.name} regained a life point (${p.hp}/${p.maxHp})`);
+    renderGame();
+  }
+});
+
+document.getElementById('weaponSelect').addEventListener('change', e => {
+  if (state.selectedPlayer === null) return;
+  state.players[state.selectedPlayer].weaponRange = parseInt(e.target.value);
+  renderGame();
+});
+
+document.getElementById('eliminateBtn').addEventListener('click', () => {
+  if (state.selectedPlayer === null) return;
+  const p = state.players[state.selectedPlayer];
+  p.hp = 0;
+  p.eliminated = true;
+  addEvent(`${p.name} has been eliminated!`);
+  if (state.currentTurn === state.selectedPlayer) nextTurn();
+  renderGame();
+});
+
+document.getElementById('reviveBtn').addEventListener('click', () => {
+  if (state.selectedPlayer === null) return;
+  const p = state.players[state.selectedPlayer];
+  p.hp = 1;
+  p.eliminated = false;
+  addEvent(`${p.name} has been revived with 1 HP`);
+  renderGame();
+});
+
+function toggleEquip(equip) {
+  if (state.selectedPlayer === null) return;
+  const p = state.players[state.selectedPlayer];
+  const idx = p.equipment.indexOf(equip);
+  if (idx >= 0) {
+    p.equipment.splice(idx, 1);
+  } else {
+    p.equipment.push(equip);
+  }
+  renderGame();
+}
+
+function removeEquip(equip) {
+  if (state.selectedPlayer === null) return;
+  const p = state.players[state.selectedPlayer];
+  const idx = p.equipment.indexOf(equip);
+  if (idx >= 0) p.equipment.splice(idx, 1);
+  renderGame();
+}
+
+// ============================================================
+// DISTANCE CALCULATION
+// ============================================================
+function calcDistance(fromIdx, toIdx) {
+  if (fromIdx === toIdx) return 0;
+  const alive = state.players.map((p, i) => ({idx: i, eliminated: p.eliminated}));
+  const aliveIndices = alive.filter(a => !a.eliminated || a.idx === fromIdx || a.idx === toIdx).map(a => a.idx);
+
+  const fromPos = aliveIndices.indexOf(fromIdx);
+  const toPos = aliveIndices.indexOf(toIdx);
+  if (fromPos === -1 || toPos === -1) return 99;
+
+  const n = aliveIndices.length;
+  const clockwise = (toPos - fromPos + n) % n;
+  const counter = (fromPos - toPos + n) % n;
+  let baseDist = Math.min(clockwise, counter);
+
+  const from = state.players[fromIdx];
+  const to = state.players[toIdx];
+
+  // Target's distance-increasing equipment
+  if (to.equipment.includes('mustang')) baseDist++;
+  if (to.equipment.includes('hideout')) baseDist++;
+  if (to.character.name === 'Paul Regret') baseDist++;
+
+  // Shooter's distance-decreasing equipment
+  if (from.equipment.includes('scope')) baseDist = Math.max(1, baseDist - 1);
+  if (from.character.name === 'Rose Doolan') baseDist = Math.max(1, baseDist - 1);
+
+  return baseDist;
+}
+
+function renderDistanceTable(fromIdx) {
+  const container = document.getElementById('distanceInfo');
+  const from = state.players[fromIdx];
+  const weapon = from.weaponRange;
+
+  let html = '<table class="distance-table"><thead><tr><th>Player</th><th>Distance</th><th>In Range?</th></tr></thead><tbody>';
+  state.players.forEach((p, i) => {
+    if (i === fromIdx) return;
+    const dist = calcDistance(fromIdx, i);
+    const inRange = dist <= weapon;
+    const cls = p.eliminated ? 'out-range' : (inRange ? 'in-range' : 'out-range');
+    html += `<tr${p.eliminated ? ' style="opacity:.4"' : ''}>
+      <td style="text-align:left;font-family:inherit">${escHtml(p.name)}${p.eliminated ? ' (dead)' : ''}</td>
+      <td class="${cls}">${dist}</td>
+      <td class="${cls}">${p.eliminated ? '—' : (inRange ? '&#x2705;' : '&#x274C;')}</td>
+    </tr>`;
+  });
+  html += '</tbody></table>';
+  container.innerHTML = html;
+}
+
+// ============================================================
+// TURN MANAGEMENT
+// ============================================================
+document.getElementById('nextTurnBtn').addEventListener('click', nextTurn);
+
+function nextTurn() {
+  const count = state.players.length;
+  let next = (state.currentTurn + 1) % count;
+  let safety = 0;
+  while (state.players[next].eliminated && safety < count) {
+    next = (next + 1) % count;
+    safety++;
+  }
+  state.currentTurn = next;
+  addEvent(`${state.players[next].name}'s turn`);
+  renderGame();
+}
+
+document.getElementById('endGameBtn').addEventListener('click', () => {
+  if (confirm('End the current game?')) {
+    state.phase = 'setup';
+    state.players = [];
+    state.selectedPlayer = null;
+    switchTab('setup');
+    renderGame();
+  }
+});
+
+// ============================================================
+// EVENT LOG
+// ============================================================
+function addEvent(msg) {
+  const now = new Date();
+  const time = now.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+  state.events.unshift({time, msg});
+  if (state.events.length > 100) state.events.pop();
+}
+
+function renderEventLog() {
+  const el = document.getElementById('eventLog');
+  if (state.events.length === 0) {
+    el.innerHTML = '<div class="event-entry" style="font-style:italic">No events yet</div>';
+    return;
+  }
+  el.innerHTML = state.events.map(e =>
+    `<div class="event-entry"><span class="event-time">${e.time}</span> ${escHtml(e.msg)}</div>`
+  ).join('');
+}
+
+// ============================================================
+// CHARACTER REFERENCE
+// ============================================================
+function renderCharacters() {
+  const search = document.getElementById('charSearch').value.toLowerCase();
+  const setFilter = document.getElementById('charSetFilter').value;
+
+  const filtered = CHARACTERS.filter(c => {
+    if (setFilter !== 'all' && c.set !== setFilter) return false;
+    if (search && !c.name.toLowerCase().includes(search) && !c.ability.toLowerCase().includes(search)) return false;
+    return true;
+  });
+
+  document.getElementById('charGrid').innerHTML = filtered.map(c => `
+    <div class="char-card">
+      <div class="char-header">
+        <span class="char-name">${escHtml(c.name)}</span>
+        <span class="char-hp">${'&#x2764; '.repeat(c.hp)} ${c.hp} HP</span>
+      </div>
+      <div class="char-ability">${escHtml(c.ability)}</div>
+      <div class="char-set">${c.set === 'base' ? 'Base Game' : 'Dodge City'}</div>
+    </div>
+  `).join('');
+}
+
+document.getElementById('charSearch').addEventListener('input', renderCharacters);
+document.getElementById('charSetFilter').addEventListener('change', renderCharacters);
+
+// ============================================================
+// CARD REFERENCE
+// ============================================================
+function renderCards() {
+  const search = document.getElementById('cardSearch').value.toLowerCase();
+  const typeFilter = document.getElementById('cardTypeFilter').value;
+
+  const filtered = CARDS.filter(c => {
+    if (typeFilter !== 'all' && c.type !== typeFilter) return false;
+    if (search && !c.name.toLowerCase().includes(search) && !c.desc.toLowerCase().includes(search)) return false;
+    return true;
+  });
+
+  document.getElementById('cardList').innerHTML = filtered.map(c => `
+    <div class="card-entry">
+      <div class="card-header">
+        <span class="card-name">${escHtml(c.name)}</span>
+        <span class="card-type ${c.type}">${c.type === 'brown' ? 'Brown' : c.type === 'blue' ? 'Blue' : 'Green'}</span>
+      </div>
+      <div class="card-desc">${escHtml(c.desc)}</div>
+      <div class="card-set">${c.set === 'base' ? 'Base Game' : 'Dodge City'}</div>
+    </div>
+  `).join('');
+}
+
+document.getElementById('cardSearch').addEventListener('input', renderCards);
+document.getElementById('cardTypeFilter').addEventListener('change', renderCards);
+
+// ============================================================
+// TAB NAVIGATION
+// ============================================================
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.toggle('active', t.id === `tab-${name}`));
+}
+
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => switchTab(tab.dataset.tab));
+});
+
+// ============================================================
+// UTILITIES
+// ============================================================
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+
+function escHtml(s) {
+  const div = document.createElement('div');
+  div.textContent = s;
+  return div.innerHTML;
+}
+
+function toast(msg, type = 'info') {
+  const container = document.getElementById('toastContainer');
+  const t = document.createElement('div');
+  t.className = `toast ${type}`;
+  t.textContent = msg;
+  container.appendChild(t);
+  setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, 3000);
+}
+
+// ============================================================
+// INIT
+// ============================================================
+renderSetup();
+renderCharacters();
+renderCards();
+</script>
+</body>
+</html>
