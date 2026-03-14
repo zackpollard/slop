@@ -97,7 +97,15 @@ const UI = {
 
     const prompt = view.prompt || null;
     const needsTarget = prompt && prompt.type === 'choose_target';
-    const validTargets = (needsTarget && prompt.validTargets) ? prompt.validTargets : [];
+    let validTargets = (needsTarget && prompt.validTargets) ? prompt.validTargets : [];
+
+    // Also highlight targets when user has selected a card locally (BANG!, Punch, etc.)
+    if (validTargets.length === 0 && this.state.selectedCard &&
+        (this.state.pendingAction === 'choose_target' || this.state.pendingAction === 'target_then_discard')) {
+      validTargets = view.players
+        .map((p, i) => (!p.eliminated && i !== this.myIdx) ? i : -1)
+        .filter(i => i >= 0);
+    }
 
     let html = '';
     view.players.forEach((p, i) => {

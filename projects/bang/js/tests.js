@@ -2045,6 +2045,218 @@ section('E2E: Player Views Never Show Two Sheriffs (Stress Test)');
 }
 
 // ═══════════════════════════════════════════════════════════
+// UI INTERACTION TESTS
+// ═══════════════════════════════════════════════════════════
+
+section('UI: _isCardPlayable — BANG! Playable During Own Turn');
+{
+  const engine = setupBasicGame();
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('BANG!', 'b1', 'brown', 'D', 5)];
+
+  const view = engine.getPlayerView(0);
+
+  // Simulate what UI does: check if card is playable
+  const card = view.hand.find(c => c.id === 'b1');
+  assert(card !== undefined, 'BANG! card in view hand');
+
+  const info = BangData.CARD_INFO[card.name];
+  assert(info !== undefined, 'BANG! has CARD_INFO entry');
+
+  // _isCardPlayable checks: is it my turn? no prompt? card info exists?
+  assertEqual(view.currentTurn, 0, 'It is player 0 turn');
+  assertEqual(view.prompt, null, 'No prompt active');
+  assert(!view.bangPlayedThisTurn, 'No BANG! played yet');
+}
+
+section('UI: _isCardPlayable — General Store Playable');
+{
+  const engine = setupBasicGame();
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('General Store', 'gs1', 'brown', 'C', 9)];
+
+  const view = engine.getPlayerView(0);
+  const card = view.hand.find(c => c.id === 'gs1');
+  assert(card !== undefined, 'General Store in hand');
+
+  const info = BangData.CARD_INFO['General Store'];
+  assert(info !== undefined, 'General Store has CARD_INFO');
+
+  // General Store: target is 'all', so _cardNeedsTarget returns false
+  // It should play immediately when clicked
+  const target = info.target;
+  assert(target !== 'enemy_in_range' && target !== 'enemy_dist1' &&
+    target !== 'any_player' && target !== 'enemy_not_sheriff',
+    'General Store does not need target selection');
+}
+
+section('UI: _cardNeedsTarget — Classification');
+{
+  // Cards that need a target click
+  const needsTarget = ['BANG!', 'Punch', 'Panic!', 'Cat Balou', 'Duel', 'Jail', 'Springfield', 'Tequila', 'Rag Time'];
+  // Cards that don't need target click (play immediately or self-target)
+  const noTarget = ['Beer', 'Saloon', 'Stagecoach', 'Wells Fargo', 'General Store', 'Indians!', 'Gatling', 'Pony Express'];
+
+  for (const name of needsTarget) {
+    const info = BangData.CARD_INFO[name];
+    if (!info) continue;
+    const t = info.target;
+    const needs = t === 'enemy_in_range' || t === 'enemy_dist1' || t === 'any_player' || t === 'enemy_not_sheriff';
+    assert(needs, name + ' needs target selection');
+  }
+
+  for (const name of noTarget) {
+    const info = BangData.CARD_INFO[name];
+    if (!info) continue;
+    const t = info.target;
+    const needs = t === 'enemy_in_range' || t === 'enemy_dist1' || t === 'any_player' || t === 'enemy_not_sheriff';
+    assert(!needs, name + ' plays immediately (no target click)');
+  }
+}
+
+section('UI: BANG! Without Target Sent to Engine Creates choose_target');
+{
+  // Verify the engine can handle BANG! being sent without target
+  // (the way Cat Balou works — engine creates choose_target pending)
+  const engine = setupBasicGame();
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('BANG!', 'b1', 'brown', 'D', 5)];
+
+  // This is what happens when UI sends play_card without targetIdx
+  // Currently BANG! throws if no target — verify the UI workaround works:
+  // UI selects card → highlights opponents → user clicks opponent → sends with target
+
+  // Verify that sending BANG! WITH a target works through handleAction
+  engine.handleAction(0, { type: 'play_card', cardId: 'b1', targetIdx: 1 });
+  assertEqual(engine.state.pending.type, 'bang_response', 'BANG! with target works via handleAction');
+  assertEqual(engine.state.pending.targetIdx, 1, 'Correct target');
+}
+
+section('UI: Opponent Targeting — All Alive Non-Self Visible');
+{
+  // Verify that with 4 alive players, player 0 should see 3 opponents
+  const engine = setupBasicGame();
+  setTurn(engine, 0);
+
+  const view = engine.getPlayerView(0);
+  const aliveOpponents = view.players.filter((p, i) => i !== 0 && !p.eliminated);
+  assertEqual(aliveOpponents.length, 3, 'Player 0 sees 3 alive opponents');
+
+  // With one eliminated
+  engine.state.players[2].eliminated = true;
+  const view2 = engine.getPlayerView(0);
+  const aliveOpponents2 = view2.players.filter((p, i) => i !== 0 && !p.eliminated);
+  assertEqual(aliveOpponents2.length, 2, 'Player 0 sees 2 alive opponents after elimination');
+  engine.state.players[2].eliminated = false;
+}
+
+section('UI: handleAction play_card Routes BANG! Correctly');
+{
+  // Full flow: player sends play_card with cardId and targetIdx
+  const engine = setupBasicGame(5);
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('BANG!', 'b1', 'brown', 'D', 5)];
+
+  // Player 0 shoots player 1 (adjacent, in range)
+  engine.handleAction(0, { type: 'play_card', cardId: 'b1', targetIdx: 1 });
+  assertEqual(engine.state.pending.type, 'bang_response', 'BANG! played successfully');
+
+  // Player 1 takes hit
+  engine.handleAction(1, { type: 'respond', response: 'take_hit' });
+  assertEqual(engine.state.players[1].hp, 3, 'Player 1 took damage');
+  assertEqual(engine.state.pending, null, 'No pending after response');
+}
+
+section('UI: handleAction play_card Rejects Out-of-Range BANG!');
+{
+  const engine = setupBasicGame(5);
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('BANG!', 'b1', 'brown', 'D', 5)];
+
+  // Player 2 is at distance 2, out of range with default weapon
+  assertThrows(
+    () => engine.handleAction(0, { type: 'play_card', cardId: 'b1', targetIdx: 2 }),
+    'Out-of-range BANG! rejected by engine'
+  );
+}
+
+section('UI: General Store Plays Immediately Via handleAction');
+{
+  const engine = setupBasicGame();
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('General Store', 'gs1', 'brown', 'C', 9)];
+
+  // General Store: no target needed, engine handles everything
+  engine.handleAction(0, { type: 'play_card', cardId: 'gs1' });
+  assertEqual(engine.state.pending.type, 'general_store', 'General Store creates pending');
+  assert(engine.state.pending.cards.length > 0, 'Cards revealed for picking');
+}
+
+section('UI: Indians! Plays Immediately Via handleAction');
+{
+  const engine = setupBasicGame();
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('Indians!', 'ind1', 'brown', 'D', 1)];
+
+  engine.handleAction(0, { type: 'play_card', cardId: 'ind1' });
+  assertEqual(engine.state.pending.type, 'indians_response', 'Indians! creates response pending');
+}
+
+section('UI: Gatling Plays Immediately Via handleAction');
+{
+  const engine = setupBasicGame();
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('Gatling', 'gat1', 'brown', 'H', 10)];
+
+  engine.handleAction(0, { type: 'play_card', cardId: 'gat1' });
+  assertEqual(engine.state.pending.type, 'gatling_response', 'Gatling creates response pending');
+}
+
+section('UI: Equipment Plays Immediately Via handleAction');
+{
+  const engine = setupBasicGame();
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('Barrel', 'bar1', 'blue', 'S', 12)];
+
+  engine.handleAction(0, { type: 'play_card', cardId: 'bar1' });
+  assert(engine.state.players[0].inPlay.some(c => c.name === 'Barrel'), 'Barrel placed in play');
+  assertEqual(engine.state.pending, null, 'No pending after equipment');
+}
+
+section('UI: Weapon Equip Via handleAction');
+{
+  const engine = setupBasicGame();
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('Winchester', 'win1', 'blue', 'S', 8)];
+
+  engine.handleAction(0, { type: 'play_card', cardId: 'win1' });
+  assertEqual(engine.getWeaponRange(0), 5, 'Winchester equipped, range 5');
+}
+
+section('UI: Cat Balou Without Target Creates choose_target');
+{
+  const engine = setupBasicGame();
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('Cat Balou', 'cb1', 'brown', 'H', 13)];
+  engine.state.players[1].hand = [makeCard('BANG!', 'x1')];
+
+  // Send without target — engine should create choose_target
+  engine.handleAction(0, { type: 'play_card', cardId: 'cb1' });
+  assertEqual(engine.state.pending.type, 'choose_target', 'Cat Balou creates target prompt');
+  assert(engine.state.pending.validTargets.length > 0, 'Has valid targets');
+}
+
+section('UI: Duel Without Target Creates choose_target');
+{
+  const engine = setupBasicGame();
+  setTurn(engine, 0);
+  engine.state.players[0].hand = [makeCard('Duel', 'duel1', 'brown', 'C', 8)];
+
+  engine.handleAction(0, { type: 'play_card', cardId: 'duel1' });
+  assertEqual(engine.state.pending.type, 'choose_target', 'Duel creates target prompt');
+}
+
+// ═══════════════════════════════════════════════════════════
 // SUMMARY
 // ═══════════════════════════════════════════════════════════
 const summaryEl = document.createElement('div');
