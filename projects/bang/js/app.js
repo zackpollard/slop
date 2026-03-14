@@ -29,10 +29,13 @@ document.getElementById('btn-back-lobby').addEventListener('click', function() {
 // ── Lobby setup ──
 function setupLobby() {
   $('btn-create').onclick = async () => {
+    const btn = $('btn-create');
     const name = $('input-name').value.trim();
     if (!name) return toast('Enter your name');
     useDodgeCity = $('dodge-city-toggle').checked;
 
+    btn.disabled = true;
+    btn.textContent = 'Creating...';
     try {
       lobby = new SlopLobby.SlopLobby({
         roomPrefix: 'bang-',
@@ -64,33 +67,47 @@ function setupLobby() {
     } catch (err) {
       console.error('Create room failed:', err);
       toast('Failed to create room: ' + (err.message || err));
+      btn.disabled = false;
+      btn.textContent = 'Create Game';
+      if (lobby) { lobby.destroy(); lobby = null; }
     }
   };
 
   $('btn-join').onclick = async () => {
+    const btn = $('btn-join');
     const name = $('input-name').value.trim();
     const code = $('input-code').value.trim().toUpperCase();
     if (!name) return toast('Enter your name');
     if (!code) return toast('Enter room code');
 
-    lobby = new SlopLobby.SlopLobby({
-      roomPrefix: 'bang-',
-      storageKey: 'bang-client-id',
-      onClientData: handleClientMessage,
-      onStateChange: handleStateChange,
-    });
+    btn.disabled = true;
+    btn.textContent = 'Connecting...';
+    try {
+      lobby = new SlopLobby.SlopLobby({
+        roomPrefix: 'bang-',
+        storageKey: 'bang-client-id',
+        onClientData: handleClientMessage,
+        onStateChange: handleStateChange,
+      });
 
-    await lobby.joinRoom(code, name);
-    isHost = false;
-    myId = lobby.clientId;
+      await lobby.joinRoom(code, name);
+      isHost = false;
+      myId = lobby.clientId;
 
-    BangUI.init(lobby);
-    BangUI.isHost = false;
+      BangUI.init(lobby);
+      BangUI.isHost = false;
 
-    $('host-controls').classList.add('hidden');
-    $('non-host-status').classList.remove('hidden');
+      $('host-controls').classList.add('hidden');
+      $('non-host-status').classList.remove('hidden');
 
-    showScreen('waiting');
+      showScreen('waiting');
+    } catch (err) {
+      console.error('Join room failed:', err);
+      toast('Failed to join: ' + (err.message || err));
+      btn.disabled = false;
+      btn.textContent = 'Join Game';
+      if (lobby) { lobby.destroy(); lobby = null; }
+    }
   };
 
   $('input-name').addEventListener('keydown', (e) => {
@@ -164,6 +181,13 @@ function handleClientMessage(data) {
 function handleStateChange(status) {
   if (status === 'disconnected') toast('Disconnected from host...');
   if (status === 'reconnected') toast('Reconnected!');
+  if (status === 'reconnect-failed') {
+    toast('Lost connection to game');
+    if (lobby) { lobby.destroy(); lobby = null; }
+    showScreen('lobby');
+    const btn = $('btn-join');
+    if (btn) { btn.disabled = false; btn.textContent = 'Join Game'; }
+  }
 }
 
 // ── Host: game management ──
