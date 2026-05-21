@@ -28,6 +28,7 @@ projects/
 | [herd-mentality](projects/herd-mentality) | [herd-mentality.slop.zackpollard.pro](https://herd-mentality.slop.zackpollard.pro) | Herd Mentality game companion with question bank and answer collection |
 | [texas-holdem](projects/texas-holdem) | [texas-holdem.slop.zackpollard.pro](https://texas-holdem.slop.zackpollard.pro) | Multiplayer Texas Hold'em poker with PeerJS networking |
 | [cards-against-humanity](projects/cards-against-humanity) | [cards-against-humanity.slop.zackpollard.pro](https://cards-against-humanity.slop.zackpollard.pro) | Peer-to-peer Cards Against Humanity party game |
+| [waze-beep-sound-pack](projects/waze-beep-sound-pack) | [waze-beep-sound-pack.slop.zackpollard.pro](https://waze-beep-sound-pack.slop.zackpollard.pro) | Beeps-only Waze sound pack generator with WAV export |
 
 ## Adding a new project
 

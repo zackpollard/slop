@@ -1,0 +1,860 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Waze Beeps — slop</title>
+    <meta name="description" content="A beeps-only Waze sound pack: one short attention beep for every turn instruction, plus loud, obvious alerts for speed cameras and police. Preview and download as WAV.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --color-bg: #0f0f0c;
+            --color-surface: #1a1a16;
+            --color-surface-hover: #222218;
+            --color-border: #2e2e24;
+            --color-text: #e8e4d4;
+            --color-text-muted: #9a9686;
+            --color-accent: #c4a24e;
+            --color-accent-dim: rgba(196, 162, 78, 0.15);
+            --color-error: #c45e4e;
+            --color-error-dim: rgba(196, 94, 78, 0.13);
+            --color-success: #4a9e6e;
+            --font-body: 'Inter', sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+        }
+
+        body {
+            font-family: var(--font-body);
+            background: var(--color-bg);
+            color: var(--color-text);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 820px;
+            margin: 0 auto;
+            padding: 2.5rem 1.5rem 4rem;
+        }
+
+        header {
+            margin-bottom: 1.75rem;
+            text-align: center;
+        }
+
+        header h1 {
+            font-size: 2.1rem;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+        }
+
+        header h1 .accent { color: var(--color-accent); }
+
+        header p {
+            color: var(--color-text-muted);
+            margin-top: 0.4rem;
+            font-size: 0.98rem;
+        }
+
+        /* ── Toolbar ── */
+        .toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 1rem;
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: 12px;
+            padding: 1rem 1.25rem;
+            margin-bottom: 2rem;
+        }
+
+        .volume {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            flex: 1;
+            min-width: 200px;
+        }
+
+        .volume label {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--color-text-muted);
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            flex: 1;
+            height: 4px;
+            background: var(--color-border);
+            border-radius: 4px;
+            outline: none;
+            cursor: pointer;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 16px; height: 16px;
+            background: var(--color-accent);
+            border-radius: 50%;
+            cursor: pointer;
+        }
+        input[type="range"]::-moz-range-thumb {
+            width: 16px; height: 16px;
+            background: var(--color-accent);
+            border: none;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+
+        .toolbar-actions { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.45rem;
+            padding: 0.55rem 1rem;
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            background: var(--color-surface);
+            color: var(--color-text);
+            font-family: var(--font-body);
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.15s, border-color 0.15s, transform 0.05s;
+            user-select: none;
+            white-space: nowrap;
+        }
+        .btn:hover { background: var(--color-surface-hover); border-color: var(--color-accent); }
+        .btn:active { transform: translateY(1px); }
+        .btn:disabled { opacity: 0.5; cursor: progress; pointer-events: none; }
+
+        .btn-primary {
+            background: var(--color-accent);
+            color: #0f0f0c;
+            border-color: var(--color-accent);
+        }
+        .btn-primary:hover { background: #d4b25e; border-color: #d4b25e; }
+
+        .btn-icon { font-family: var(--font-mono); font-size: 0.95em; line-height: 1; }
+
+        /* ── Groups ── */
+        .group { margin-bottom: 2rem; }
+        .group h2 {
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--color-text-muted);
+            margin-bottom: 0.85rem;
+            padding-bottom: 0.4rem;
+            border-bottom: 1px solid var(--color-border);
+        }
+
+        /* ── Sound cards ── */
+        .cards { display: grid; gap: 0.85rem; }
+
+        .card {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            grid-template-areas:
+                "info actions"
+                "wave actions";
+            gap: 0.5rem 1rem;
+            align-items: center;
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-left: 3px solid var(--color-accent);
+            border-radius: 10px;
+            padding: 1rem 1.1rem;
+            transition: border-color 0.15s, background 0.15s;
+        }
+        .card.alert { border-left-color: var(--color-error); }
+        .card.playing { background: var(--color-surface-hover); }
+
+        .card-info { grid-area: info; min-width: 0; }
+        .card-name {
+            font-weight: 700;
+            font-size: 1rem;
+            display: flex;
+            align-items: baseline;
+            gap: 0.6rem;
+            flex-wrap: wrap;
+        }
+        .card-file {
+            font-family: var(--font-mono);
+            font-size: 0.72rem;
+            color: var(--color-accent);
+            background: var(--color-accent-dim);
+            padding: 0.1em 0.45em;
+            border-radius: 4px;
+            font-weight: 500;
+        }
+        .card.alert .card-file { color: var(--color-error); background: var(--color-error-dim); }
+        .card-desc { color: var(--color-text-muted); font-size: 0.86rem; margin-top: 0.15rem; }
+
+        .card-wave { grid-area: wave; }
+        canvas.wave {
+            display: block;
+            width: 100%;
+            height: 40px;
+            background: var(--color-bg);
+            border: 1px solid var(--color-border);
+            border-radius: 6px;
+        }
+
+        .card-actions {
+            grid-area: actions;
+            display: flex;
+            flex-direction: column;
+            gap: 0.45rem;
+        }
+        .card-actions .btn { padding: 0.5rem 0.85rem; min-width: 116px; }
+
+        /* ── Usage ── */
+        .usage {
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-top: 2.5rem;
+        }
+        .usage h2 {
+            font-size: 1rem;
+            font-weight: 700;
+            margin-bottom: 0.85rem;
+        }
+        .usage h3 {
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--color-accent);
+            margin: 1.25rem 0 0.5rem;
+        }
+        .usage p { font-size: 0.92rem; color: var(--color-text); margin-bottom: 0.7rem; }
+        .usage ol, .usage ul { margin: 0 0 0.7rem 1.25rem; }
+        .usage li { font-size: 0.92rem; margin-bottom: 0.35rem; color: var(--color-text); }
+        .usage code {
+            font-family: var(--font-mono);
+            background: var(--color-bg);
+            border: 1px solid var(--color-border);
+            padding: 0.1em 0.4em;
+            border-radius: 4px;
+            font-size: 0.85em;
+            color: var(--color-accent);
+        }
+        .usage a { color: var(--color-accent); }
+        .usage .muted { color: var(--color-text-muted); font-size: 0.85rem; }
+
+        footer {
+            margin-top: 2.5rem;
+            padding-top: 1.5rem;
+            border-top: 1px solid var(--color-border);
+            color: var(--color-text-muted);
+            font-size: 0.85rem;
+            text-align: center;
+        }
+        footer a { color: var(--color-text-muted); text-decoration: underline; }
+        footer a:hover { color: var(--color-accent); }
+
+        .toast {
+            position: fixed;
+            bottom: 1.5rem;
+            left: 50%;
+            transform: translateX(-50%) translateY(120px);
+            background: var(--color-accent);
+            color: #0f0f0c;
+            padding: 0.7rem 1.4rem;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 0.88rem;
+            z-index: 1000;
+            transition: transform 0.3s ease;
+            max-width: 90vw;
+            text-align: center;
+            pointer-events: none;
+        }
+        .toast.show { transform: translateX(-50%) translateY(0); }
+
+        @media (max-width: 560px) {
+            .card {
+                grid-template-columns: 1fr;
+                grid-template-areas: "info" "wave" "actions";
+            }
+            .card-actions { flex-direction: row; }
+            .card-actions .btn { flex: 1; min-width: 0; }
+            header h1 { font-size: 1.7rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>waze <span class="accent">beeps</span></h1>
+            <p>A beeps-only sound pack. One short beep for every turn &mdash; loud, obvious alerts for the things that matter.</p>
+        </header>
+
+        <div class="toolbar">
+            <div class="volume">
+                <label for="vol">Volume</label>
+                <input type="range" id="vol" min="0" max="100" value="80" aria-label="Preview volume">
+            </div>
+            <div class="toolbar-actions">
+                <button class="btn" id="playAll"><span class="btn-icon">&#9654;</span> Play all</button>
+                <button class="btn btn-primary" id="downloadPack"><span class="btn-icon">&#8595;</span> Download pack (.zip)</button>
+            </div>
+        </div>
+
+        <div id="groups"></div>
+
+        <section class="usage">
+            <h2>How to use these sounds</h2>
+            <p>
+                Every sound here is synthesised live in your browser with the Web Audio API &mdash;
+                <strong>what you hear in preview is exactly what downloads</strong>. Files are
+                standard 16-bit mono WAVs, so they work anywhere a custom sound is accepted.
+            </p>
+
+            <h3>Beeps-only turn instructions in Waze</h3>
+            <p>
+                Waze lets you build a <strong>custom voice pack</strong> by supplying one clip per spoken
+                prompt (turn left, exit, &ldquo;in 500 feet&rdquo;, etc.). Assign the single
+                <code>instruction.wav</code> beep to <em>every</em> navigation prompt and Waze will only
+                ever beep at you &mdash; drawing your attention without reading the maneuver aloud.
+            </p>
+            <ol>
+                <li>Open Waze &rarr; <code>Settings</code> &rarr; <code>Voice &amp; sound</code> &rarr; <code>Waze voice</code>.</li>
+                <li>Choose <code>Add a voice</code> / the custom-voice recorder.</li>
+                <li>For each prompt, upload (or play into the mic) <code>instruction.wav</code>.</li>
+                <li>Use the <code>arrival.wav</code> chime for the &ldquo;you have arrived&rdquo; prompt.</li>
+            </ol>
+
+            <h3>Speed cameras &amp; police alerts</h3>
+            <p>
+                Waze&rsquo;s report-alert chimes (speed camera, police, crash&hellip;) aren&rsquo;t
+                replaceable from inside the app. The distinct, deliberately loud alert sounds in this pack
+                are designed to cut through music &mdash; use them as your phone&rsquo;s notification /
+                alert tones, or in any navigation or automation app that lets you pick a custom alert
+                sound, so each hazard is instantly recognisable.
+            </p>
+            <p class="muted">
+                Tip: the alert sounds use richer, brighter tones than the gentle instruction beep
+                specifically so they stand out over a podcast or song.
+            </p>
+        </section>
+
+        <footer>
+            <p>Part of <a href="https://slop.zackpollard.pro">slop.zackpollard.pro</a> &middot; sounds generated entirely in your browser, nothing uploaded.</p>
+        </footer>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script>
+    (function () {
+        "use strict";
+
+        const SR = 44100;
+
+        /* ───────────────────────── Synthesis helpers ───────────────────────── */
+
+        // ADSR-ish gain envelope feeding `dest`. Returns the gain node.
+        function env(ctx, dest, start, dur, peak, attack, release) {
+            attack = attack == null ? 0.005 : attack;
+            release = release == null ? 0.04 : release;
+            const g = ctx.createGain();
+            g.connect(dest);
+            const hold = Math.max(start + attack, start + dur - release);
+            g.gain.setValueAtTime(0.0001, start);
+            g.gain.linearRampToValueAtTime(peak, start + attack);
+            g.gain.setValueAtTime(peak, hold);
+            g.gain.linearRampToValueAtTime(0.0001, start + dur);
+            return g;
+        }
+
+        // Single oscillator note, optional linear pitch glide to `freqEnd`.
+        function tone(ctx, dest, opts) {
+            const g = env(ctx, dest, opts.start, opts.dur, opts.peak,
+                opts.attack, opts.release);
+            const o = ctx.createOscillator();
+            o.type = opts.type || "sine";
+            o.frequency.setValueAtTime(opts.freq, opts.start);
+            if (opts.freqEnd != null) {
+                o.frequency.linearRampToValueAtTime(opts.freqEnd, opts.start + opts.dur);
+            }
+            o.connect(g);
+            o.start(opts.start);
+            o.stop(opts.start + opts.dur + 0.02);
+        }
+
+        // Filtered white-noise burst — used for camera-shutter clicks.
+        function noise(ctx, dest, opts) {
+            const len = Math.ceil(SR * (opts.dur + 0.02)) + 1;
+            const buf = ctx.createBuffer(1, len, SR);
+            const d = buf.getChannelData(0);
+            for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+            const src = ctx.createBufferSource();
+            src.buffer = buf;
+            const filt = ctx.createBiquadFilter();
+            filt.type = opts.filter || "bandpass";
+            filt.frequency.value = opts.freq;
+            filt.Q.value = opts.q == null ? 1 : opts.q;
+            const g = env(ctx, dest, opts.start, opts.dur, opts.peak,
+                opts.attack == null ? 0.001 : opts.attack,
+                opts.release == null ? 0.02 : opts.release);
+            src.connect(filt);
+            filt.connect(g);
+            src.start(opts.start);
+            src.stop(opts.start + opts.dur + 0.02);
+        }
+
+        // A camera-shutter "k-chk": bright open click + mechanical close click.
+        // Levels kept clear of full scale — filtered noise overshoots, so peaks
+        // are conservative to avoid digital clipping.
+        function shutter(ctx, dest, t) {
+            noise(ctx, dest, { start: t, dur: 0.022, peak: 0.42, filter: "highpass", freq: 3500, q: 0.6 });
+            noise(ctx, dest, { start: t + 0.045, dur: 0.05, peak: 0.38, filter: "bandpass", freq: 1400, q: 0.7 });
+        }
+
+        /* ───────────────────────── Sound definitions ───────────────────────── */
+        // Each build() schedules its graph onto `dest` starting at time `t0`.
+
+        const SOUNDS = [
+            {
+                id: "instruction",
+                name: "Turn instruction",
+                file: "instruction.wav",
+                group: "Navigation",
+                desc: "Short, gentle two-note beep for every maneuver. Grabs attention without saying which way.",
+                dur: 0.30,
+                build: function (ctx, dest, t0) {
+                    tone(ctx, dest, { type: "triangle", freq: 880,    start: t0,        dur: 0.085, peak: 0.55, release: 0.04 });
+                    tone(ctx, dest, { type: "triangle", freq: 1318.5, start: t0 + 0.1,  dur: 0.12,  peak: 0.55, release: 0.06 });
+                }
+            },
+            {
+                id: "arrival",
+                name: "Arrival",
+                file: "arrival.wav",
+                group: "Navigation",
+                desc: "Cheerful rising arpeggio for “you have arrived”.",
+                dur: 0.65,
+                build: function (ctx, dest, t0) {
+                    const notes = [523.25, 659.25, 783.99, 1046.5];
+                    notes.forEach(function (f, i) {
+                        const last = i === notes.length - 1;
+                        tone(ctx, dest, {
+                            type: "triangle", freq: f,
+                            start: t0 + i * 0.11,
+                            dur: last ? 0.34 : 0.13,
+                            peak: 0.45,
+                            release: last ? 0.3 : 0.07
+                        });
+                    });
+                }
+            },
+            {
+                id: "speed_camera",
+                name: "Speed camera",
+                file: "speed-camera.wav",
+                group: "Alerts",
+                desc: "Camera shutter snap, then a bright high blip. Unmistakably “camera ahead”.",
+                dur: 0.45,
+                build: function (ctx, dest, t0) {
+                    shutter(ctx, dest, t0);
+                    tone(ctx, dest, { type: "sine", freq: 2100, start: t0 + 0.16, dur: 0.16, peak: 0.5, attack: 0.004, release: 0.07 });
+                }
+            },
+            {
+                id: "red_light_camera",
+                name: "Red-light camera",
+                file: "red-light-camera.wav",
+                group: "Alerts",
+                desc: "Shutter snap followed by two descending blips — the camera that catches you stopped.",
+                dur: 0.55,
+                build: function (ctx, dest, t0) {
+                    shutter(ctx, dest, t0);
+                    tone(ctx, dest, { type: "sine", freq: 1568, start: t0 + 0.16, dur: 0.12, peak: 0.48, release: 0.05 });
+                    tone(ctx, dest, { type: "sine", freq: 1046, start: t0 + 0.31, dur: 0.16, peak: 0.48, release: 0.07 });
+                }
+            },
+            {
+                id: "police",
+                name: "Police",
+                file: "police.wav",
+                group: "Alerts",
+                desc: "Two rising siren whoops. Reads as “cop ahead” over any music.",
+                dur: 0.6,
+                build: function (ctx, dest, t0) {
+                    const lp = ctx.createBiquadFilter();
+                    lp.type = "lowpass"; lp.frequency.value = 3200;
+                    lp.connect(dest);
+                    tone(ctx, lp, { type: "sawtooth", freq: 620, freqEnd: 1240, start: t0,        dur: 0.22, peak: 0.34, attack: 0.012, release: 0.05 });
+                    tone(ctx, lp, { type: "sawtooth", freq: 620, freqEnd: 1240, start: t0 + 0.27, dur: 0.22, peak: 0.34, attack: 0.012, release: 0.05 });
+                }
+            },
+            {
+                id: "accident",
+                name: "Crash / accident",
+                file: "accident.wav",
+                group: "Alerts",
+                desc: "Urgent alternating klaxon. Says “danger ahead, slow down”.",
+                dur: 0.55,
+                build: function (ctx, dest, t0) {
+                    const lp = ctx.createBiquadFilter();
+                    lp.type = "lowpass"; lp.frequency.value = 3000;
+                    lp.connect(dest);
+                    const seq = [920, 660, 920, 660];
+                    seq.forEach(function (f, i) {
+                        tone(ctx, lp, { type: "sawtooth", freq: f, start: t0 + i * 0.105, dur: 0.095, peak: 0.34, attack: 0.006, release: 0.03 });
+                    });
+                }
+            },
+            {
+                id: "hazard",
+                name: "Hazard on road",
+                file: "hazard.wav",
+                group: "Alerts",
+                desc: "Two firm caution beeps for objects, potholes and stopped vehicles.",
+                dur: 0.4,
+                build: function (ctx, dest, t0) {
+                    tone(ctx, dest, { type: "square", freq: 740, start: t0,        dur: 0.1, peak: 0.3, release: 0.04 });
+                    tone(ctx, dest, { type: "square", freq: 740, start: t0 + 0.16, dur: 0.1, peak: 0.3, release: 0.04 });
+                }
+            },
+            {
+                id: "traffic",
+                name: "Heavy traffic",
+                file: "traffic.wav",
+                group: "Alerts",
+                desc: "Descending three-note motif — the “things are slowing down” cue.",
+                dur: 0.6,
+                build: function (ctx, dest, t0) {
+                    const notes = [660, 550, 440];
+                    notes.forEach(function (f, i) {
+                        tone(ctx, dest, { type: "triangle", freq: f, start: t0 + i * 0.14, dur: 0.16, peak: 0.42, release: 0.07 });
+                    });
+                }
+            }
+        ];
+
+        /* ───────────────────────── Rendering / playback ───────────────────────── */
+
+        const buffers = {};   // id -> AudioBuffer (rendered offline; source of truth)
+        let liveCtx = null;
+        let masterGain = null;
+        let masterVol = 0.8;
+
+        async function renderSound(s) {
+            const length = Math.ceil((s.dur + 0.08) * SR);
+            const octx = new OfflineAudioContext(1, length, SR);
+            s.build(octx, octx.destination, 0);
+            return await octx.startRendering();
+        }
+
+        async function getBuffer(s) {
+            if (!buffers[s.id]) buffers[s.id] = await renderSound(s);
+            return buffers[s.id];
+        }
+
+        function ensureLive() {
+            if (!liveCtx) {
+                const AC = window.AudioContext || window.webkitAudioContext;
+                liveCtx = new AC();
+                masterGain = liveCtx.createGain();
+                masterGain.gain.value = masterVol;
+                masterGain.connect(liveCtx.destination);
+            }
+            if (liveCtx.state === "suspended") liveCtx.resume();
+        }
+
+        async function play(s, onDone) {
+            ensureLive();
+            const buf = await getBuffer(s);
+            const src = liveCtx.createBufferSource();
+            src.buffer = buf;
+            src.connect(masterGain);
+            if (onDone) src.onended = onDone;
+            src.start();
+            return buf.duration;
+        }
+
+        /* ───────────────────────── WAV encoding ───────────────────────── */
+
+        function writeString(view, offset, str) {
+            for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+        }
+
+        function encodeWav(buffer) {
+            const numCh = buffer.numberOfChannels;
+            const sampleRate = buffer.sampleRate;
+            const frames = buffer.length;
+            const bytesPerSample = 2;
+            const blockAlign = numCh * bytesPerSample;
+            const dataSize = frames * blockAlign;
+            const ab = new ArrayBuffer(44 + dataSize);
+            const view = new DataView(ab);
+
+            writeString(view, 0, "RIFF");
+            view.setUint32(4, 36 + dataSize, true);
+            writeString(view, 8, "WAVE");
+            writeString(view, 12, "fmt ");
+            view.setUint32(16, 16, true);
+            view.setUint16(20, 1, true);            // PCM
+            view.setUint16(22, numCh, true);
+            view.setUint32(24, sampleRate, true);
+            view.setUint32(28, sampleRate * blockAlign, true);
+            view.setUint16(32, blockAlign, true);
+            view.setUint16(34, 16, true);           // bits per sample
+            writeString(view, 36, "data");
+            view.setUint32(40, dataSize, true);
+
+            const channels = [];
+            for (let c = 0; c < numCh; c++) channels.push(buffer.getChannelData(c));
+            let offset = 44;
+            for (let i = 0; i < frames; i++) {
+                for (let c = 0; c < numCh; c++) {
+                    let s = Math.max(-1, Math.min(1, channels[c][i]));
+                    s = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                    view.setInt16(offset, s, true);
+                    offset += 2;
+                }
+            }
+            return ab;
+        }
+
+        function triggerDownload(blob, filename) {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+        }
+
+        async function downloadOne(s) {
+            const buf = await getBuffer(s);
+            const blob = new Blob([encodeWav(buf)], { type: "audio/wav" });
+            triggerDownload(blob, s.file);
+        }
+
+        function packReadme() {
+            const lines = [
+                "Waze Beeps — a beeps-only sound pack",
+                "Generated at waze-beep-sound-pack.slop.zackpollard.pro",
+                "",
+                "Files (16-bit mono WAV):",
+            ];
+            SOUNDS.forEach(function (s) {
+                lines.push("  " + s.file.padEnd(22) + s.name + " — " + s.desc);
+            });
+            lines.push("");
+            lines.push("Beeps-only turn instructions: in Waze, build a custom voice pack and");
+            lines.push("assign instruction.wav to every navigation prompt. Use arrival.wav for");
+            lines.push("the arrival prompt. The alert sounds are for use as phone/app alert tones.");
+            return lines.join("\n");
+        }
+
+        async function downloadPack(btn) {
+            if (typeof JSZip === "undefined") {
+                showToast("Zip library failed to load — try the per-sound downloads.");
+                return;
+            }
+            btn.disabled = true;
+            const original = btn.innerHTML;
+            btn.innerHTML = "Building…";
+            try {
+                const zip = new JSZip();
+                for (const s of SOUNDS) {
+                    const buf = await getBuffer(s);
+                    zip.file(s.file, encodeWav(buf));
+                }
+                zip.file("README.txt", packReadme());
+                const blob = await zip.generateAsync({ type: "blob" });
+                triggerDownload(blob, "waze-beeps.zip");
+                showToast("Downloaded waze-beeps.zip");
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = original;
+            }
+        }
+
+        /* ───────────────────────── Waveform rendering ───────────────────────── */
+
+        function drawWave(canvas, buffer, accent) {
+            const dpr = window.devicePixelRatio || 1;
+            const cssW = canvas.clientWidth || 300;
+            const cssH = canvas.clientHeight || 40;
+            canvas.width = Math.round(cssW * dpr);
+            canvas.height = Math.round(cssH * dpr);
+            const ctx = canvas.getContext("2d");
+            ctx.scale(dpr, dpr);
+            ctx.clearRect(0, 0, cssW, cssH);
+
+            const data = buffer.getChannelData(0);
+            const mid = cssH / 2;
+            const step = data.length / cssW;
+
+            ctx.strokeStyle = "rgba(255,255,255,0.06)";
+            ctx.beginPath(); ctx.moveTo(0, mid); ctx.lineTo(cssW, mid); ctx.stroke();
+
+            ctx.strokeStyle = accent;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            for (let x = 0; x < cssW; x++) {
+                let min = 1, max = -1;
+                const from = Math.floor(x * step);
+                const to = Math.min(data.length, Math.floor((x + 1) * step));
+                for (let i = from; i < to; i++) {
+                    const v = data[i];
+                    if (v < min) min = v;
+                    if (v > max) max = v;
+                }
+                ctx.moveTo(x + 0.5, mid - max * mid * 0.95);
+                ctx.lineTo(x + 0.5, mid - min * mid * 0.95);
+            }
+            ctx.stroke();
+        }
+
+        /* ───────────────────────── UI ───────────────────────── */
+
+        const cards = {};   // id -> { el, canvas, accent }
+        let playingAll = false;
+
+        function showToast(msg) {
+            const t = document.getElementById("toast");
+            t.textContent = msg;
+            t.classList.add("show");
+            clearTimeout(showToast._t);
+            showToast._t = setTimeout(function () { t.classList.remove("show"); }, 2200);
+        }
+
+        async function previewSound(s) {
+            const card = cards[s.id];
+            card.el.classList.add("playing");
+            await play(s, function () { card.el.classList.remove("playing"); });
+        }
+
+        function buildUI() {
+            const groupsEl = document.getElementById("groups");
+            const groupNames = [];
+            SOUNDS.forEach(function (s) {
+                if (groupNames.indexOf(s.group) === -1) groupNames.push(s.group);
+            });
+
+            groupNames.forEach(function (gName) {
+                const wrap = document.createElement("div");
+                wrap.className = "group";
+                const h = document.createElement("h2");
+                h.textContent = gName;
+                wrap.appendChild(h);
+
+                const list = document.createElement("div");
+                list.className = "cards";
+
+                SOUNDS.filter(function (s) { return s.group === gName; }).forEach(function (s) {
+                    const isAlert = s.group === "Alerts";
+                    const accent = isAlert ? "#c45e4e" : "#c4a24e";
+
+                    const card = document.createElement("div");
+                    card.className = "card" + (isAlert ? " alert" : "");
+                    card.innerHTML =
+                        '<div class="card-info">' +
+                            '<div class="card-name">' + s.name +
+                                '<span class="card-file">' + s.file + '</span>' +
+                            '</div>' +
+                            '<div class="card-desc">' + s.desc + '</div>' +
+                        '</div>' +
+                        '<div class="card-wave"><canvas class="wave"></canvas></div>' +
+                        '<div class="card-actions">' +
+                            '<button class="btn btn-play"><span class="btn-icon">&#9654;</span> Play</button>' +
+                            '<button class="btn btn-dl"><span class="btn-icon">&#8595;</span> WAV</button>' +
+                        '</div>';
+
+                    const canvas = card.querySelector("canvas.wave");
+                    cards[s.id] = { el: card, canvas: canvas, accent: accent };
+
+                    card.querySelector(".btn-play").addEventListener("click", function () {
+                        previewSound(s);
+                    });
+                    card.querySelector(".btn-dl").addEventListener("click", function (e) {
+                        downloadOne(s);
+                        showToast("Downloaded " + s.file);
+                    });
+
+                    list.appendChild(card);
+                });
+
+                wrap.appendChild(list);
+                groupsEl.appendChild(wrap);
+            });
+        }
+
+        async function renderAllWaves() {
+            for (const s of SOUNDS) {
+                const buf = await getBuffer(s);
+                const c = cards[s.id];
+                drawWave(c.canvas, buf, c.accent);
+            }
+        }
+
+        async function playAll(btn) {
+            if (playingAll) return;
+            playingAll = true;
+            btn.disabled = true;
+            for (const s of SOUNDS) {
+                const card = cards[s.id];
+                card.el.classList.add("playing");
+                const dur = await play(s);
+                await new Promise(function (r) { setTimeout(r, dur * 1000 + 250); });
+                card.el.classList.remove("playing");
+            }
+            playingAll = false;
+            btn.disabled = false;
+        }
+
+        function init() {
+            buildUI();
+            renderAllWaves();
+
+            document.getElementById("vol").addEventListener("input", function (e) {
+                masterVol = e.target.value / 100;
+                if (masterGain) masterGain.gain.value = masterVol;
+            });
+            document.getElementById("playAll").addEventListener("click", function (e) {
+                playAll(e.currentTarget);
+            });
+            document.getElementById("downloadPack").addEventListener("click", function (e) {
+                downloadPack(e.currentTarget);
+            });
+
+            let resizeT;
+            window.addEventListener("resize", function () {
+                clearTimeout(resizeT);
+                resizeT = setTimeout(renderAllWaves, 150);
+            });
+        }
+
+        if (document.readyState === "loading") {
+            document.addEventListener("DOMContentLoaded", init);
+        } else {
+            init();
+        }
+    })();
+    </script>
+</body>
+</html>
