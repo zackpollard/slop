@@ -420,12 +420,14 @@
             src.stop(opts.start + opts.dur + 0.02);
         }
 
-        // A camera-shutter "k-chk": bright open click + mechanical close click.
-        // Levels kept clear of full scale — filtered noise overshoots, so peaks
-        // are conservative to avoid digital clipping.
+        // A DSLR-style shutter: mirror-up tick, the loud "CHK", then a softer
+        // mirror-down tick — the three-click mechanical rhythm is what reads as
+        // "camera". Sharp transients (fast attack/decay) keep it snappy; peaks
+        // stay clear of full scale because filtered noise overshoots.
         function shutter(ctx, dest, t) {
-            noise(ctx, dest, { start: t, dur: 0.022, peak: 0.42, filter: "highpass", freq: 3500, q: 0.6 });
-            noise(ctx, dest, { start: t + 0.045, dur: 0.05, peak: 0.38, filter: "bandpass", freq: 1400, q: 0.7 });
+            noise(ctx, dest, { start: t,         dur: 0.018, peak: 0.5,  filter: "highpass", freq: 4800, q: 0.7, attack: 0.0004, release: 0.014 });
+            noise(ctx, dest, { start: t + 0.045, dur: 0.05,  peak: 0.52, filter: "bandpass", freq: 1900, q: 1.1, attack: 0.0006, release: 0.04 });
+            noise(ctx, dest, { start: t + 0.12,  dur: 0.032, peak: 0.34, filter: "bandpass", freq: 1150, q: 0.9, attack: 0.0006, release: 0.026 });
         }
 
         /* ───────────────────────── Sound definitions ───────────────────────── */
@@ -470,11 +472,12 @@
                 name: "Speed camera",
                 file: "speed-camera.wav",
                 group: "Alerts",
-                desc: "Camera shutter snap, then a bright high blip. Unmistakably “camera ahead”.",
-                dur: 0.45,
+                desc: "Three-click camera shutter, then two bright blips. Unmistakably “camera ahead”.",
+                dur: 0.78,
                 build: function (ctx, dest, t0) {
                     shutter(ctx, dest, t0);
-                    tone(ctx, dest, { type: "sine", freq: 2100, start: t0 + 0.16, dur: 0.16, peak: 0.5, attack: 0.004, release: 0.07 });
+                    tone(ctx, dest, { type: "sine", freq: 2100, start: t0 + 0.24, dur: 0.16, peak: 0.5, attack: 0.004, release: 0.06 });
+                    tone(ctx, dest, { type: "sine", freq: 2100, start: t0 + 0.44, dur: 0.22, peak: 0.5, attack: 0.004, release: 0.1 });
                 }
             },
             {
@@ -482,12 +485,13 @@
                 name: "Red-light camera",
                 file: "red-light-camera.wav",
                 group: "Alerts",
-                desc: "Shutter snap followed by two descending blips — the camera that catches you stopped.",
-                dur: 0.55,
+                desc: "Shutter snap, then a descending three-note fall — the camera that catches you stopped.",
+                dur: 0.92,
                 build: function (ctx, dest, t0) {
                     shutter(ctx, dest, t0);
-                    tone(ctx, dest, { type: "sine", freq: 1568, start: t0 + 0.16, dur: 0.12, peak: 0.48, release: 0.05 });
-                    tone(ctx, dest, { type: "sine", freq: 1046, start: t0 + 0.31, dur: 0.16, peak: 0.48, release: 0.07 });
+                    tone(ctx, dest, { type: "sine", freq: 1568, start: t0 + 0.24, dur: 0.14, peak: 0.48, release: 0.05 });
+                    tone(ctx, dest, { type: "sine", freq: 1175, start: t0 + 0.42, dur: 0.14, peak: 0.48, release: 0.05 });
+                    tone(ctx, dest, { type: "sine", freq: 880,  start: t0 + 0.60, dur: 0.22, peak: 0.48, release: 0.1 });
                 }
             },
             {

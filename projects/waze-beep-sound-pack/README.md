@@ -15,8 +15,8 @@ either individually or as a single `waze-beeps.zip` pack.
 |------|---------|
 | `instruction.wav` | Generic short beep for every navigation prompt |
 | `arrival.wav` | "You have arrived" chime |
-| `speed-camera.wav` | Camera shutter + bright blip |
-| `red-light-camera.wav` | Shutter + two descending blips |
+| `speed-camera.wav` | Three-click camera shutter + two bright blips |
+| `red-light-camera.wav` | Shutter + descending three-note fall |
 | `police.wav` | Two rising siren whoops |
 | `accident.wav` | Urgent alternating klaxon |
 | `hazard.wav` | Two firm caution beeps |
