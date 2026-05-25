@@ -1,0 +1,111 @@
+# Builds the beeps-only Waze voice pack and uploads it to Waze, printing the
+# resulting install link (https://waze.com/ul?acvp=<UUID>) in the run summary.
+#
+# Heads up:
+#   * This impersonates the Waze app against its private endpoints via a
+#     reverse-engineered protobuf protocol (the cloned GPLv3 tool below). It
+#     likely violates Waze's ToS and is inherently fragile — pinned to a Waze
+#     app version, it will break when Waze changes the protocol. It needs no
+#     Waze account: the uploader uses an anonymous session.
+#   * The uploader is GPLv3, so it is cloned and run at build time rather than
+#     vendored into this repo (which would impose GPL on the repo).
+#   * You only need to mint the link once. The push trigger is here so we can
+#     iterate; switch to workflow_dispatch-only once it works.
+name: Waze Pack
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/waze-beep-sound-pack-L5as3]
+    paths:
+      - "projects/waze-beep-sound-pack/**"
+      - ".github/workflows/waze-pack.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: waze-pack-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TOOL: ${{ github.workspace }}/_tool
+  PACK_NAME: slop-beeps
+
+jobs:
+  build-and-upload:
+    name: Build and upload Waze pack
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          # 3.8 has prebuilt wheels for the uploader's pinned protobuf==3.10.0
+          python-version: "3.8"
+
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Clone Waze voicepack uploader (GPLv3)
+        run: |
+          git clone --depth 1 https://github.com/pipeeeeees/waze-voicepack-links "$TOOL"
+          echo "Cloned uploader at: $(git -C "$TOOL" rev-parse HEAD)"
+
+      - name: Install uploader dependencies
+        run: pip install -r "$TOOL/requirements.txt"
+
+      - name: Render beeps to WAV (headless Chromium)
+        working-directory: projects/waze-beep-sound-pack/scripts
+        run: |
+          npm install
+          npx playwright install --with-deps chromium
+          node render-wavs.mjs "$GITHUB_WORKSPACE/_wavs"
+
+      - name: Build MP3 pack
+        run: |
+          node projects/waze-beep-sound-pack/scripts/build-pack.mjs \
+            "$GITHUB_WORKSPACE/_wavs" \
+            "$TOOL/mp3_upload/input_packs/$PACK_NAME"
+
+      - name: Upload to Waze
+        id: upload
+        run: |
+          set -o pipefail
+          cd "$TOOL"
+          python mp3_upload/main.py | tee "$GITHUB_WORKSPACE/upload.log"
+          link=$(grep -oE 'https://waze\.com/ul\?acvp=[0-9a-fA-F-]+' "$GITHUB_WORKSPACE/upload.log" | head -1 || true)
+          echo "link=$link" >> "$GITHUB_OUTPUT"
+
+      - name: Write summary
+        if: always()
+        run: |
+          {
+            echo "## Waze beeps pack"
+            if [ -n "${{ steps.upload.outputs.link }}" ]; then
+              echo ""
+              echo "**Install link:** ${{ steps.upload.outputs.link }}"
+              echo ""
+              echo "Open it on a phone with Waze installed to add the pack."
+            else
+              echo ""
+              echo "No \`acvp\` link was captured — check the **upload-log** artifact."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: waze-pack
+          path: |
+            _tool/mp3_upload/input_packs/${{ env.PACK_NAME }}/
+            upload.log
+          if-no-files-found: warn

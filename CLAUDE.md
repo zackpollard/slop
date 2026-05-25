@@ -26,7 +26,8 @@ projects/
 tofu/                  # OpenTofu infrastructure (Cloudflare Pages + DNS)
 .github/workflows/
 ├── deploy.yml         # Infrastructure (tofu plan/apply) + production deployment
-└── preview.yml        # PR preview deployment (combined subpath site)
+├── preview.yml        # PR preview deployment (combined subpath site)
+└── waze-pack.yml      # Builds + uploads the Waze beep voice pack (CI-only, opt-in)
 ```
 
 ## Projects
@@ -70,6 +71,7 @@ tofu/                  # OpenTofu infrastructure (Cloudflare Pages + DNS)
 - **Workflows:**
   - `.github/workflows/deploy.yml` — Runs `tofu plan` (and comments on PRs), then `tofu apply` + deploys each project to its Cloudflare Pages project on push to `main`
   - `.github/workflows/preview.yml` — Preview deploys: assembles all projects under subpaths into a single `slop-preview` Pages project on PRs. No per-project Pages project needed for previews.
+  - `.github/workflows/waze-pack.yml` — CI-only, opt-in (not a deploy): renders the `waze-beep-sound-pack` beeps in headless Chromium, builds an MP3 voice pack, and uploads it to Waze via a cloned GPLv3 tool, printing the `acvp` install link. Uses Node/Playwright + ffmpeg + Python (the only place the repo uses these); needs no secrets. This is the lone exception to the "no build step / no package managers" rule, and it only touches the Waze pack, not the served sites.
 - **Preview deployments:** PRs automatically get a combined preview deployment to a single `slop-preview` Cloudflare Pages project. All projects are served under subpaths (e.g. `/homepage/`, `/roof-calculator/`). Preview URLs are posted as PR comments. This avoids needing to create per-project Pages infrastructure before previews work.
 - **Domains:**
   - Homepage → `slop.zackpollard.pro`
