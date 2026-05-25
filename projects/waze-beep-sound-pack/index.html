@@ -340,6 +340,41 @@
                 <li>Use the <code>arrival.wav</code> chime for the &ldquo;you have arrived&rdquo; prompt.</li>
             </ol>
 
+            <h3>Installing a pack from a single Waze link</h3>
+            <p>
+                Waze can install a whole voice pack from one link of the form
+                <code>https://waze.com/ul?acvp=&lt;UUID&gt;</code>. Tapping it on a phone with Waze
+                installed opens the app and downloads that pack &mdash; perfect for sharing or for
+                moving a pack you built onto your phone.
+            </p>
+            <p>
+                The catch: the pack has to live on Waze&rsquo;s own servers (as
+                <code>&lt;UUID&gt;.tar.gz</code>), and there&rsquo;s <strong>no public web API</strong>
+                to upload one &mdash; so this page can&rsquo;t mint a link for you. You create the pack
+                (and its link) through Waze itself:
+            </p>
+            <ol>
+                <li>
+                    <strong>In-app recorder</strong> &mdash; <code>Settings</code> &rarr;
+                    <code>Voice &amp; sound</code> &rarr; <code>Waze voice</code> &rarr; record a custom
+                    voice, then use Waze&rsquo;s <em>Share</em> button to get the
+                    <code>acvp</code> link. Easiest, but it captures audio through the mic so quality
+                    suffers.
+                </li>
+                <li>
+                    <strong>File upload (best quality)</strong> &mdash; supply MP3s named to Waze&rsquo;s
+                    exact prompt list, keeping the <strong>total under 0.8&nbsp;MB</strong>, then upload
+                    via the community tooling (an Android emulator with file-system access). Waze then
+                    gives you the shareable <code>acvp</code> link.
+                </li>
+            </ol>
+            <p class="muted">
+                Filename list and step-by-step upload guides:
+                <a href="https://github.com/pipeeeeees/waze-voicepack-links" target="_blank" rel="noopener">github.com/pipeeeeees/waze-voicepack-links</a>.
+                For a beeps-only pack, map <code>instruction.wav</code> (re-encoded to MP3) onto every
+                navigation prompt and <code>arrival.wav</code> onto the arrival prompt.
+            </p>
+
             <h3>Speed cameras &amp; police alerts</h3>
             <p>
                 Waze&rsquo;s report-alert chimes (speed camera, police, crash&hellip;) aren&rsquo;t
