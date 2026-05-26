@@ -397,16 +397,24 @@
 
             <h3>Beeps-only turn instructions in Waze</h3>
             <p>
-                Waze lets you build a <strong>custom voice pack</strong> by supplying one clip per spoken
-                prompt (turn left, exit, &ldquo;in 500 feet&rdquo;, etc.). Assign the single
-                <code>instruction.wav</code> beep to <em>every</em> navigation prompt and Waze will only
-                ever beep at you &mdash; drawing your attention without reading the maneuver aloud.
+                Waze plays a single announcement by stitching together several prompt files
+                (e.g. <em>&ldquo;in 800 meters take the third exit&rdquo;</em> =
+                <code>800meters</code> + <code>Third</code> + <code>ExitRight</code>). If
+                every file beeps you&rsquo;ll hear <em>three</em> beeps for one instruction.
+                So the beep is assigned only to the <strong>action verbs</strong> &mdash;
+                <code>TurnLeft</code>, <code>TurnRight</code>, <code>KeepLeft</code>,
+                <code>KeepRight</code>, <code>ExitLeft</code>, <code>ExitRight</code>,
+                <code>Straight</code>, <code>uturn</code> &mdash; while the distance,
+                ordinal and connector prompts are <strong>silent</strong>. Waze still plays
+                them (so it doesn&rsquo;t fall back to its default voice for those pieces),
+                you just don&rsquo;t hear anything until the action word. Result:
+                <strong>one beep per maneuver</strong>.
             </p>
             <ol>
                 <li>Open Waze &rarr; <code>Settings</code> &rarr; <code>Voice &amp; sound</code> &rarr; <code>Waze voice</code>.</li>
                 <li>Choose <code>Add a voice</code> / the custom-voice recorder.</li>
-                <li>For each prompt, upload (or play into the mic) <code>instruction.wav</code>.</li>
-                <li>Use the <code>arrival.wav</code> chime for the &ldquo;you have arrived&rdquo; prompt.</li>
+                <li>For each <em>action verb</em> prompt above, upload <code>instruction.wav</code>; upload a tiny silent clip for the distance / ordinal / connector prompts.</li>
+                <li>Use <code>arrival.wav</code> for &ldquo;you have arrived&rdquo;.</li>
             </ol>
 
             <h3>Installing a pack from a single Waze link</h3>

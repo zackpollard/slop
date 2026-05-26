@@ -24,13 +24,17 @@ either individually or as a single `waze-beeps.zip` pack.
 
 ## Using with Waze
 
-Waze lets you build a **custom voice pack** by supplying one MP3 per prompt. A pack
-covers both navigation *and* the hazard warnings, so every sound here maps to a real
-Waze prompt:
+Waze lets you build a **custom voice pack** by supplying one MP3 per prompt, and
+plays an announcement by concatenating several of them (e.g. *"in 800 meters,
+take the third exit"* = `800meters` + `Third` + `ExitRight`). To avoid three
+beeps for one instruction, only the **action verbs** beep — the distance,
+ordinal and connector files are shipped as a tiny silent MP3 (present so Waze
+doesn't fall back to its default voice). The result is **one beep per
+maneuver**, plus the loud distinct alerts for hazards.
 
 | Source beep | Waze prompt(s) |
 |-------------|----------------|
-| `instruction.wav` | all turns, exits, distances, ordinals, `StartDrive1`–`9`, `TickerPoints` |
+| `instruction.wav` | `TurnLeft`, `TurnRight`, `KeepLeft`, `KeepRight`, `ExitLeft`, `ExitRight`, `Straight`, `uturn` |
 | `arrival.wav` | `Arrive` |
 | `speed-camera.wav` | `ApproachSpeedCam` |
 | `red-light-camera.wav` | `ApproachRedLightCam` |
@@ -38,6 +42,7 @@ Waze prompt:
 | `accident.wav` | `ApproachAccident` |
 | `hazard.wav` | `ApproachHazard` |
 | `traffic.wav` | `ApproachTraffic` |
+| _silent_ | distances (`200`, `200meters`, `400`, …, `1500meters`), `AndThen`, `Roundabout`, ordinals (`First`–`Seventh`), `StartDrive1`–`9`, `TickerPoints` |
 
 ### Installing a pack from a Waze link
 
