@@ -1,5 +1,7 @@
-# Builds the beeps-only Waze voice pack, uploads it to Waze, and publishes the
-# resulting install link (https://waze.com/ul?acvp=<UUID>) into the deployed
+# Builds the beeps-only Waze voice pack and uploads it to Waze. On a touching
+# pull request it mints a fresh acvp link on every push and posts/updates a PR
+# comment so you can install and try the preview pack before merging. On
+# workflow_dispatch (intended on main) it publishes the link into the deployed
 # site by committing install-link.json to main and triggering the deploy
 # workflow.
 #
@@ -11,8 +13,8 @@
 #     Waze account: the uploader uses an anonymous session.
 #   * The uploader is GPLv3, so it is cloned and run at build time rather than
 #     vendored into this repo (which would impose GPL on the repo).
-#   * Dispatch from main for the cleanest result (the rendered beeps and the
-#     install link then come from the same revision the site will serve).
+#   * PR runs mint a fresh pack on Waze's servers on every push that touches
+#     the project — every iteration leaves an anonymous pack behind.
 name: Waze Pack
 
 on:
@@ -22,18 +24,23 @@ on:
         description: "Folder name used for the uploaded pack"
         default: "slop-beeps"
         required: false
+  pull_request:
+    paths:
+      - "projects/waze-beep-sound-pack/**"
+      - ".github/workflows/waze-pack.yml"
 
 permissions:
   contents: write
   actions: write
+  pull-requests: write
 
 concurrency:
-  group: waze-pack
+  group: waze-pack-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 env:
   TOOL: ${{ github.workspace }}/_tool
-  PACK_NAME: ${{ inputs.pack_name }}
+  PACK_NAME: ${{ inputs.pack_name || 'slop-beeps' }}
 
 jobs:
   build-upload-publish:
@@ -87,8 +94,48 @@ jobs:
           link=$(grep -oE 'https://waze\.com/ul\?acvp=[0-9a-fA-F-]+' "$GITHUB_WORKSPACE/upload.log" | head -1 || true)
           echo "link=$link" >> "$GITHUB_OUTPUT"
 
+      - name: Comment install link on PR
+        if: github.event_name == 'pull_request' && steps.upload.outputs.link != ''
+        uses: actions/github-script@v7
+        env:
+          LINK: ${{ steps.upload.outputs.link }}
+        with:
+          script: |
+            const link = process.env.LINK;
+            const marker = '<!-- waze-pack-link -->';
+            const body = [
+              marker,
+              '### Waze Beeps preview pack',
+              '',
+              `**Install link:** ${link}`,
+              '',
+              'Tap on a phone with Waze installed to add this preview pack.',
+              'A fresh `acvp` UUID is minted on every push to this PR — old ones stay live.',
+            ].join('\n');
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
       - name: Publish install link to main
-        if: steps.upload.outputs.link != ''
+        if: github.event_name == 'workflow_dispatch' && steps.upload.outputs.link != ''
         env:
           LINK: ${{ steps.upload.outputs.link }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -126,7 +173,11 @@ jobs:
               echo ""
               echo "**Install link:** ${{ steps.upload.outputs.link }}"
               echo ""
-              echo "Published to \`projects/waze-beep-sound-pack/install-link.json\` on main; deploy workflow nudged."
+              if [ "${{ github.event_name }}" = "pull_request" ]; then
+                echo "Posted as a comment on this PR for testing. The deployed site is not updated until you dispatch this workflow on \`main\`."
+              else
+                echo "Published to \`projects/waze-beep-sound-pack/install-link.json\` on main; deploy workflow nudged."
+              fi
             else
               echo ""
               echo "No \`acvp\` link was captured — check the **upload-log** artifact."

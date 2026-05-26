@@ -55,19 +55,27 @@ recorder (mic, lower quality) or the file-upload route described below.
 
 ### Automated build + upload (CI)
 
-The `.github/workflows/waze-pack.yml` workflow is **manual** (`workflow_dispatch`)
-— dispatch it from the Actions tab on `main` and it:
+The `.github/workflows/waze-pack.yml` workflow:
 
 1. Renders the beeps to WAV by loading `index.html` in headless Chromium
    (`scripts/render-wavs.mjs`) — the page is the single source of truth for the sounds.
-2. Encodes them to MP3 and copies each onto its Waze prompt filename, keeping the
-   pack under the **0.8 MB** aggregate limit (`scripts/build-pack.mjs`).
+2. Encodes them to MP3 and maps each onto its Waze prompt filename (silent MP3
+   for non-action prompts), keeping the pack under the **0.8 MB** aggregate limit
+   (`scripts/build-pack.mjs`).
 3. Clones the GPLv3 [waze-voicepack-links](https://github.com/pipeeeeees/waze-voicepack-links)
    uploader and runs it to mint a `https://waze.com/ul?acvp=<UUID>` install link.
-4. Commits the link to `projects/waze-beep-sound-pack/install-link.json` on `main`
-   and explicitly triggers `deploy.yml` (pushes from `GITHUB_TOKEN` don't auto-trigger
-   other workflows). The deployed site picks it up and renders the **Install on Waze**
-   hero (link + QR code) at the top of the page.
+
+What happens with the link depends on the trigger:
+
+- **On a touching pull request** (`projects/waze-beep-sound-pack/**` or the workflow
+  itself), it posts/updates a comment on the PR with the install link so you can
+  install the preview pack on your phone and try it before merging. A fresh UUID is
+  minted on every push.
+- **On `workflow_dispatch`** (intended on `main` after merge), it commits the link
+  to `projects/waze-beep-sound-pack/install-link.json` on `main` and explicitly
+  triggers `deploy.yml` (pushes from `GITHUB_TOKEN` don't auto-trigger other
+  workflows). The deployed site picks it up and renders the **Install on Waze**
+  hero (link + QR code) at the top of the page.
 
 It needs **no Waze account** (the uploader uses an anonymous session) and **no
 secrets**. Caveats: it impersonates the Waze app via a reverse-engineered protobuf
