@@ -50,27 +50,33 @@ recorder (mic, lower quality) or the file-upload route described below.
 
 ### Automated build + upload (CI)
 
-The `.github/workflows/waze-pack.yml` workflow mints a link end-to-end:
+The `.github/workflows/waze-pack.yml` workflow is **manual** (`workflow_dispatch`)
+— dispatch it from the Actions tab on `main` and it:
 
 1. Renders the beeps to WAV by loading `index.html` in headless Chromium
    (`scripts/render-wavs.mjs`) — the page is the single source of truth for the sounds.
 2. Encodes them to MP3 and copies each onto its Waze prompt filename, keeping the
    pack under the **0.8 MB** aggregate limit (`scripts/build-pack.mjs`).
 3. Clones the GPLv3 [waze-voicepack-links](https://github.com/pipeeeeees/waze-voicepack-links)
-   uploader and runs it, printing the `https://waze.com/ul?acvp=<UUID>` install link
-   in the run summary.
+   uploader and runs it to mint a `https://waze.com/ul?acvp=<UUID>` install link.
+4. Commits the link to `projects/waze-beep-sound-pack/install-link.json` on `main`
+   and explicitly triggers `deploy.yml` (pushes from `GITHUB_TOKEN` don't auto-trigger
+   other workflows). The deployed site picks it up and renders the **Install on Waze**
+   hero (link + QR code) at the top of the page.
 
 It needs **no Waze account** (the uploader uses an anonymous session) and **no
 secrets**. Caveats: it impersonates the Waze app via a reverse-engineered protobuf
 protocol, so it likely breaks Waze's ToS and is fragile (pinned to a Waze app
 version). The tool is GPLv3, so it is cloned and run at build time, never vendored
-into this repo. Currently triggered on push for iteration; intended to become
-`workflow_dispatch`-only once stable. You only need to run it once per pack.
+into this repo.
 
 ## Tech
 
-Single self-contained `index.html`, no build step. [JSZip](https://stuk.github.io/jszip/)
-is loaded from a CDN for the zip export. Everything runs client-side; nothing is uploaded.
+Single self-contained `index.html`, no build step.
+[JSZip](https://stuk.github.io/jszip/) (zip export) and
+[qrcode](https://github.com/soldair/node-qrcode) (install QR) are loaded from CDN.
+Everything runs client-side; the only network request beyond CDNs is a same-origin
+fetch of `install-link.json` to render the install hero (gracefully hidden if absent).
 The `scripts/` folder and the CI workflow are **not** part of the served site — they
 exist only to build/upload the Waze pack and use Node (Playwright), ffmpeg and Python.
 

@@ -287,6 +287,60 @@
         }
         .toast.show { transform: translateX(-50%) translateY(0); }
 
+        /* ── Install hero ── */
+        .install-hero {
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+            background: linear-gradient(135deg, rgba(196,162,78,0.18), rgba(196,162,78,0.05));
+            border: 1px solid var(--color-accent);
+            border-radius: 12px;
+            padding: 1.25rem 1.5rem;
+            margin-bottom: 1.75rem;
+        }
+        .install-hero[hidden] { display: none; }
+        .install-hero-text { flex: 1; min-width: 0; }
+        .install-hero h2 {
+            font-size: 1.05rem;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 0.15rem;
+        }
+        .install-hero .install-sub {
+            color: var(--color-text-muted);
+            font-size: 0.88rem;
+            margin-bottom: 0.85rem;
+        }
+        .install-hero .install-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            background: var(--color-accent);
+            color: #0f0f0c;
+            padding: 0.6rem 1.1rem;
+            border-radius: 8px;
+            font-weight: 700;
+            font-size: 0.9rem;
+            text-decoration: none;
+            transition: background 0.15s;
+        }
+        .install-hero .install-btn:hover { background: #d4b25e; text-decoration: none; }
+        .install-hero .install-meta {
+            font-size: 0.75rem;
+            color: var(--color-text-muted);
+            margin-top: 0.55rem;
+            font-family: var(--font-mono);
+            word-break: break-all;
+        }
+        .install-hero .install-qr {
+            width: 128px;
+            height: 128px;
+            background: #e8e4d4;
+            border-radius: 8px;
+            padding: 6px;
+            flex-shrink: 0;
+        }
+
         @media (max-width: 560px) {
             .card {
                 grid-template-columns: 1fr;
@@ -295,6 +349,8 @@
             .card-actions { flex-direction: row; }
             .card-actions .btn { flex: 1; min-width: 0; }
             header h1 { font-size: 1.7rem; }
+            .install-hero { flex-direction: column; align-items: stretch; }
+            .install-hero .install-qr { align-self: center; }
         }
     </style>
 </head>
@@ -304,6 +360,19 @@
             <h1>waze <span class="accent">beeps</span></h1>
             <p>A beeps-only sound pack. One short beep for every turn &mdash; loud, obvious alerts for the things that matter.</p>
         </header>
+
+        <section class="install-hero" id="installHero" hidden>
+            <div class="install-hero-text">
+                <h2>Install on Waze</h2>
+                <p class="install-sub">A pre-built pack is ready &mdash; one tap on a phone with Waze installed.</p>
+                <a class="install-btn" id="installLink" href="#" target="_blank" rel="noopener">
+                    <span aria-hidden="true">&#x2197;</span>
+                    <span>Install pack</span>
+                </a>
+                <p class="install-meta" id="installMeta"></p>
+            </div>
+            <canvas class="install-qr" id="installQr" width="128" height="128" aria-label="QR code to install the pack on a phone with Waze"></canvas>
+        </section>
 
         <div class="toolbar">
             <div class="volume">
@@ -399,6 +468,7 @@
     <div class="toast" id="toast"></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode/1.5.3/qrcode.min.js"></script>
     <script>
     (function () {
         "use strict";
@@ -868,9 +938,43 @@
             btn.disabled = false;
         }
 
+        // Publish flow: CI mints a Waze acvp link and commits install-link.json
+        // here. If it exists, surface the install hero with the tappable link
+        // and a QR code for desktop users to scan from their phone.
+        async function loadInstallLink() {
+            try {
+                const r = await fetch("install-link.json", { cache: "no-cache" });
+                if (!r.ok) return;
+                const data = await r.json();
+                if (!data || !data.link) return;
+                document.getElementById("installLink").href = data.link;
+                if (data.uploaded_at) {
+                    const d = new Date(data.uploaded_at);
+                    if (!isNaN(d)) {
+                        document.getElementById("installMeta").textContent =
+                            "Updated " + d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+                    }
+                }
+                const qr = document.getElementById("installQr");
+                if (typeof QRCode !== "undefined" && QRCode.toCanvas) {
+                    QRCode.toCanvas(qr, data.link, {
+                        width: 128,
+                        margin: 1,
+                        color: { dark: "#0f0f0c", light: "#e8e4d4" }
+                    }, function () {});
+                } else {
+                    qr.hidden = true;
+                }
+                document.getElementById("installHero").hidden = false;
+            } catch (e) {
+                // No published link yet — leave the hero hidden.
+            }
+        }
+
         function init() {
             buildUI();
             renderAllWaves();
+            loadInstallLink();
 
             document.getElementById("vol").addEventListener("input", function (e) {
                 masterVol = e.target.value / 100;
