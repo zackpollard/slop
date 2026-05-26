@@ -1,9 +1,10 @@
-# Builds the beeps-only Waze voice pack and uploads it to Waze. On a touching
-# pull request it mints a fresh acvp link on every push and posts/updates a PR
-# comment so you can install and try the preview pack before merging. On
-# workflow_dispatch (intended on main) it publishes the link into the deployed
-# site by committing install-link.json to main and triggering the deploy
-# workflow.
+# Builds the beeps-only Waze voice pack and uploads it to Waze.
+#   * On a touching pull request: mints a fresh acvp link on every push and
+#     posts/updates a PR comment so you can install and try the preview pack
+#     before merging.
+#   * On push to main (post-merge) or workflow_dispatch on main: publishes the
+#     link into the deployed site by committing install-link.json to main and
+#     triggering the deploy workflow.
 #
 # Heads up:
 #   * This impersonates the Waze app against its private endpoints via a
@@ -25,6 +26,11 @@ on:
         default: "slop-beeps"
         required: false
   pull_request:
+    paths:
+      - "projects/waze-beep-sound-pack/**"
+      - ".github/workflows/waze-pack.yml"
+  push:
+    branches: [main]
     paths:
       - "projects/waze-beep-sound-pack/**"
       - ".github/workflows/waze-pack.yml"
@@ -135,7 +141,7 @@ jobs:
             }
 
       - name: Publish install link to main
-        if: github.event_name == 'workflow_dispatch' && steps.upload.outputs.link != ''
+        if: (github.event_name == 'workflow_dispatch' || github.event_name == 'push') && steps.upload.outputs.link != ''
         env:
           LINK: ${{ steps.upload.outputs.link }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -71,11 +71,13 @@ What happens with the link depends on the trigger:
   itself), it posts/updates a comment on the PR with the install link so you can
   install the preview pack on your phone and try it before merging. A fresh UUID is
   minted on every push.
-- **On `workflow_dispatch`** (intended on `main` after merge), it commits the link
-  to `projects/waze-beep-sound-pack/install-link.json` on `main` and explicitly
+- **On push to `main`** (i.e. after merging a touching PR) **or on
+  `workflow_dispatch`** (for a manual re-mint), it commits the link to
+  `projects/waze-beep-sound-pack/install-link.json` on `main` and explicitly
   triggers `deploy.yml` (pushes from `GITHUB_TOKEN` don't auto-trigger other
-  workflows). The deployed site picks it up and renders the **Install on Waze**
-  hero (link + QR code) at the top of the page.
+  workflows, which also conveniently stops this workflow from re-triggering itself
+  on its own commit). The deployed site picks it up and renders the **Install on
+  Waze** hero (link + QR code) at the top of the page.
 
 It needs **no Waze account** (the uploader uses an anonymous session) and **no
 secrets**. Caveats: it impersonates the Waze app via a reverse-engineered protobuf
