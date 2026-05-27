@@ -30,6 +30,10 @@ const MAP = {
   "instruction.wav": [
     "TurnLeft", "TurnRight", "KeepLeft", "KeepRight",
     "ExitLeft", "ExitRight", "Straight", "uturn",
+    // Trip-start prompts: a single beep when navigation begins. Waze rotates
+    // through these slots for variety, so they all map to the same beep.
+    "StartDrive1", "StartDrive2", "StartDrive3", "StartDrive4", "StartDrive5",
+    "StartDrive6", "StartDrive7", "StartDrive8", "StartDrive9",
   ],
   "arrival.wav": ["Arrive"],
   "speed-camera.wav": ["ApproachSpeedCam"],
@@ -38,16 +42,16 @@ const MAP = {
   "hazard.wav": ["ApproachHazard"],
   "traffic.wav": ["ApproachTraffic"],
   "police.wav": ["Police"],
-  // Silent files: distances, roundabout/ordinal connectors, drive-start chimes,
-  // points ticker. Present so Waze doesn't speak them, inaudible so a
-  // multi-file announcement only beeps once on the action verb.
+  // Silent files: distances (the bare-number files double as imperial — 200 =
+  // "0.1 miles", 400 = "quarter mile", 800 = "half mile", 1500 = "one mile"),
+  // roundabout/ordinal connectors, and the points ticker. Present so Waze
+  // doesn't speak them, inaudible so a multi-file announcement only beeps
+  // once on the action verb.
   [SILENT]: [
     "200", "200meters", "400", "400meters", "800", "800meters",
     "1000meters", "1500", "1500meters",
     "AndThen", "Roundabout",
     "First", "Second", "Third", "Fourth", "Fifth", "Sixth", "Seventh",
-    "StartDrive1", "StartDrive2", "StartDrive3", "StartDrive4", "StartDrive5",
-    "StartDrive6", "StartDrive7", "StartDrive8", "StartDrive9",
     "TickerPoints",
   ],
 };

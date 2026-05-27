@@ -34,7 +34,7 @@ maneuver**, plus the loud distinct alerts for hazards.
 
 | Source beep | Waze prompt(s) |
 |-------------|----------------|
-| `instruction.wav` | `TurnLeft`, `TurnRight`, `KeepLeft`, `KeepRight`, `ExitLeft`, `ExitRight`, `Straight`, `uturn` |
+| `instruction.wav` | action verbs (`TurnLeft`, `TurnRight`, `KeepLeft`, `KeepRight`, `ExitLeft`, `ExitRight`, `Straight`, `uturn`) and trip-start (`StartDrive1`–`9`) |
 | `arrival.wav` | `Arrive` |
 | `speed-camera.wav` | `ApproachSpeedCam` |
 | `red-light-camera.wav` | `ApproachRedLightCam` |
@@ -42,7 +42,7 @@ maneuver**, plus the loud distinct alerts for hazards.
 | `accident.wav` | `ApproachAccident` |
 | `hazard.wav` | `ApproachHazard` |
 | `traffic.wav` | `ApproachTraffic` |
-| _silent_ | distances (`200`, `200meters`, `400`, …, `1500meters`), `AndThen`, `Roundabout`, ordinals (`First`–`Seventh`), `StartDrive1`–`9`, `TickerPoints` |
+| _silent_ | distance prompts (`200`/`200meters`/`400`/…/`1500meters` — note `200`/`400`/`800`/`1500` double as imperial "0.1 mile" / "quarter mile" / "half mile" / "1 mile"), `AndThen`, `Roundabout`, ordinals (`First`–`Seventh`), `TickerPoints` |
 
 ### Installing a pack from a Waze link
 
