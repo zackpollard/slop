@@ -41,9 +41,12 @@ const MAP = {
     "StartDrive6", "StartDrive7", "StartDrive8", "StartDrive9",
   ],
   "arrival.wav": ["Arrive"],
-  // reroute.wav has no Waze slot — Waze's custom voice pack doesn't expose a
-  // rerouting prompt — so it's rendered/downloadable from the page but not
-  // included in the uploaded pack.
+  // Rerouting prompt. Waze's in-app voice recorder labels this slot
+  // "rerouting", but on disk it still uses the legacy `TickerPoints` filename
+  // (from when this slot was the points-ticker chime, before Waze repurposed
+  // it). Confirmed by inspecting a pack with only the rerouting prompt
+  // recorded — the resulting tar.gz contained only TickerPoints.mp3.
+  "reroute.wav": ["TickerPoints"],
   "speed-camera.wav": ["ApproachSpeedCam"],
   "red-light-camera.wav": ["ApproachRedLightCam"],
   "accident.wav": ["ApproachAccident"],
@@ -60,7 +63,6 @@ const MAP = {
     "1000meters", "1500", "1500meters",
     "AndThen",
     "First", "Second", "Third", "Fourth", "Fifth", "Sixth", "Seventh",
-    "TickerPoints",
   ],
 };
 
