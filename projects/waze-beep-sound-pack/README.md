@@ -15,12 +15,20 @@ either individually or as a single `waze-beeps.zip` pack.
 |------|---------|
 | `instruction.wav` | Generic short beep for every navigation prompt |
 | `arrival.wav` | "You have arrived" chime |
+| `start-drive.wav` | Playful chiptune climb when navigation begins |
+| `reroute.wav` | A "hmm…oh!" drop-then-rise — see note below |
 | `speed-camera.wav` | Three-click camera shutter + two bright blips |
 | `red-light-camera.wav` | Shutter + descending three-note fall |
 | `police.wav` | Two rising siren whoops |
 | `accident.wav` | Urgent alternating klaxon |
 | `hazard.wav` | Two firm caution beeps |
 | `traffic.wav` | Descending three-note "slowing down" motif |
+
+> **Note on `reroute.wav`:** Waze's custom voice pack format doesn't include a
+> rerouting/recalculating prompt slot (verified against the 42-file list and
+> against community packs), so this sound is rendered and downloadable from
+> the page but not bundled into the uploaded Waze pack. It's there to use as
+> a phone notification/alert tone if you want.
 
 ## Using with Waze
 
@@ -34,7 +42,8 @@ maneuver**, plus the loud distinct alerts for hazards.
 
 | Source beep | Waze prompt(s) |
 |-------------|----------------|
-| `instruction.wav` | action verbs (`TurnLeft`, `TurnRight`, `KeepLeft`, `KeepRight`, `ExitLeft`, `ExitRight`, `Straight`, `uturn`) and trip-start (`StartDrive1`–`9`) |
+| `instruction.wav` | action verbs (`TurnLeft`, `TurnRight`, `KeepLeft`, `KeepRight`, `ExitLeft`, `ExitRight`, `Straight`, `uturn`, `Roundabout`) |
+| `start-drive.wav` | trip-start prompts (`StartDrive1`–`9`) |
 | `arrival.wav` | `Arrive` |
 | `speed-camera.wav` | `ApproachSpeedCam` |
 | `red-light-camera.wav` | `ApproachRedLightCam` |
@@ -42,7 +51,7 @@ maneuver**, plus the loud distinct alerts for hazards.
 | `accident.wav` | `ApproachAccident` |
 | `hazard.wav` | `ApproachHazard` |
 | `traffic.wav` | `ApproachTraffic` |
-| _silent_ | distance prompts (`200`/`200meters`/`400`/…/`1500meters` — note `200`/`400`/`800`/`1500` double as imperial "0.1 mile" / "quarter mile" / "half mile" / "1 mile"), `AndThen`, `Roundabout`, ordinals (`First`–`Seventh`), `TickerPoints` |
+| _silent_ | distance prompts (`200`/`200meters`/`400`/…/`1500meters` — note `200`/`400`/`800`/`1500` double as imperial "0.1 mile" / "quarter mile" / "half mile" / "1 mile"), `AndThen`, ordinals (`First`–`Seventh`), `TickerPoints` |
 
 ### Installing a pack from a Waze link
 

@@ -583,6 +583,53 @@
                 }
             },
             {
+                id: "start_drive",
+                name: "Start drive",
+                file: "start-drive.wav",
+                group: "Navigation",
+                desc: "Playful chiptune climb — beeps when navigation begins.",
+                dur: 0.65,
+                build: function (ctx, dest, t0) {
+                    // Rapid square-wave G-major arpeggio (chiptune-style) followed by
+                    // a longer triangle resolution on B5 — deliberately different
+                    // from the arrival arpeggio (different key, different timbre).
+                    const steps = [392.00, 493.88, 587.33, 783.99]; // G4 B4 D5 G5
+                    steps.forEach(function (f, i) {
+                        tone(ctx, dest, {
+                            type: "square", freq: f,
+                            start: t0 + i * 0.065,
+                            dur: 0.055, peak: 0.26, release: 0.022
+                        });
+                    });
+                    tone(ctx, dest, {
+                        type: "triangle", freq: 987.77,         // B5
+                        start: t0 + 0.30, dur: 0.30,
+                        peak: 0.45, release: 0.22
+                    });
+                }
+            },
+            {
+                id: "reroute",
+                name: "Rerouting",
+                file: "reroute.wav",
+                group: "Navigation",
+                desc: "A quick “hmm…oh!” drop-then-rise. Note: Waze custom voice packs don’t expose a reroute slot, so this is for use as a phone alert tone — Waze itself can’t play it.",
+                dur: 0.55,
+                build: function (ctx, dest, t0) {
+                    // Descending glide (“rethinking”) → ascending glide (“ok, got it!”).
+                    tone(ctx, dest, {
+                        type: "triangle", freq: 659.25, freqEnd: 440.00,  // E5 → A4
+                        start: t0, dur: 0.18,
+                        peak: 0.35, release: 0.04
+                    });
+                    tone(ctx, dest, {
+                        type: "triangle", freq: 523.25, freqEnd: 880.00,  // C5 → A5
+                        start: t0 + 0.22, dur: 0.28,
+                        peak: 0.45, release: 0.16
+                    });
+                }
+            },
+            {
                 id: "speed_camera",
                 name: "Speed camera",
                 file: "speed-camera.wav",

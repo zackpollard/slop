@@ -26,16 +26,24 @@ const outDir = resolve(process.argv[3] || "./_pack");
 const SILENT = "__silent__";
 
 const MAP = {
-  // Action verbs — these beep, exactly once per maneuver.
+  // Action verbs — these beep, exactly once per maneuver. `Roundabout` is the
+  // "at the roundabout" prompt; beeping there (with the numbered-exit ordinals
+  // left silent) gives one beep per roundabout, same shape as a turn.
   "instruction.wav": [
     "TurnLeft", "TurnRight", "KeepLeft", "KeepRight",
     "ExitLeft", "ExitRight", "Straight", "uturn",
-    // Trip-start prompts: a single beep when navigation begins. Waze rotates
-    // through these slots for variety, so they all map to the same beep.
+    "Roundabout",
+  ],
+  // Trip-start chime: a distinct, fun "off you go" sound. Waze rotates through
+  // the nine StartDrive slots for variety, so they all play the same chime.
+  "start-drive.wav": [
     "StartDrive1", "StartDrive2", "StartDrive3", "StartDrive4", "StartDrive5",
     "StartDrive6", "StartDrive7", "StartDrive8", "StartDrive9",
   ],
   "arrival.wav": ["Arrive"],
+  // reroute.wav has no Waze slot — Waze's custom voice pack doesn't expose a
+  // rerouting prompt — so it's rendered/downloadable from the page but not
+  // included in the uploaded pack.
   "speed-camera.wav": ["ApproachSpeedCam"],
   "red-light-camera.wav": ["ApproachRedLightCam"],
   "accident.wav": ["ApproachAccident"],
@@ -50,7 +58,7 @@ const MAP = {
   [SILENT]: [
     "200", "200meters", "400", "400meters", "800", "800meters",
     "1000meters", "1500", "1500meters",
-    "AndThen", "Roundabout",
+    "AndThen",
     "First", "Second", "Third", "Fourth", "Fifth", "Sixth", "Seventh",
     "TickerPoints",
   ],
