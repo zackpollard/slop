@@ -57,5 +57,8 @@ variable "projects" {
     cards-against-humanity = {
       subdomain = "cards-against-humanity.slop"
     }
+    waze-beep-sound-pack = {
+      subdomain = "waze-beep-sound-pack.slop"
+    }
   }
 }

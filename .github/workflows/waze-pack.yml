@@ -1,0 +1,201 @@
+# Builds the beeps-only Waze voice pack and uploads it to Waze.
+#   * On a touching pull request: mints a fresh acvp link on every push and
+#     posts/updates a PR comment so you can install and try the preview pack
+#     before merging.
+#   * On push to main (post-merge) or workflow_dispatch on main: publishes the
+#     link into the deployed site by committing install-link.json to main and
+#     triggering the deploy workflow.
+#
+# Heads up:
+#   * This impersonates the Waze app against its private endpoints via a
+#     reverse-engineered protobuf protocol (the cloned GPLv3 tool below). It
+#     likely violates Waze's ToS and is inherently fragile — pinned to a Waze
+#     app version, it will break when Waze changes the protocol. It needs no
+#     Waze account: the uploader uses an anonymous session.
+#   * The uploader is GPLv3, so it is cloned and run at build time rather than
+#     vendored into this repo (which would impose GPL on the repo).
+#   * PR runs mint a fresh pack on Waze's servers on every push that touches
+#     the project — every iteration leaves an anonymous pack behind.
+name: Waze Pack
+
+on:
+  workflow_dispatch:
+    inputs:
+      pack_name:
+        description: "Folder name used for the uploaded pack"
+        default: "slop-beeps"
+        required: false
+  pull_request:
+    paths:
+      - "projects/waze-beep-sound-pack/**"
+      - ".github/workflows/waze-pack.yml"
+  push:
+    branches: [main]
+    paths:
+      - "projects/waze-beep-sound-pack/**"
+      - ".github/workflows/waze-pack.yml"
+
+permissions:
+  contents: write
+  actions: write
+  pull-requests: write
+
+concurrency:
+  group: waze-pack-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  TOOL: ${{ github.workspace }}/_tool
+  PACK_NAME: ${{ inputs.pack_name || 'slop-beeps' }}
+
+jobs:
+  build-upload-publish:
+    name: Build, upload, and publish install link
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          # 3.8 has prebuilt wheels for the uploader's pinned protobuf==3.10.0
+          python-version: "3.8"
+
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Clone Waze voicepack uploader (GPLv3)
+        run: |
+          git clone --depth 1 https://github.com/pipeeeeees/waze-voicepack-links "$TOOL"
+          echo "Cloned uploader at: $(git -C "$TOOL" rev-parse HEAD)"
+
+      - name: Install uploader dependencies
+        run: pip install -r "$TOOL/requirements.txt"
+
+      - name: Render beeps to WAV (headless Chromium)
+        working-directory: projects/waze-beep-sound-pack/scripts
+        run: |
+          npm install
+          npx playwright install --with-deps chromium
+          node render-wavs.mjs "$GITHUB_WORKSPACE/_wavs"
+
+      - name: Build MP3 pack
+        run: |
+          node projects/waze-beep-sound-pack/scripts/build-pack.mjs \
+            "$GITHUB_WORKSPACE/_wavs" \
+            "$TOOL/mp3_upload/input_packs/$PACK_NAME"
+
+      - name: Upload to Waze
+        id: upload
+        run: |
+          set -o pipefail
+          cd "$TOOL"
+          python mp3_upload/main.py | tee "$GITHUB_WORKSPACE/upload.log"
+          link=$(grep -oE 'https://waze\.com/ul\?acvp=[0-9a-fA-F-]+' "$GITHUB_WORKSPACE/upload.log" | head -1 || true)
+          echo "link=$link" >> "$GITHUB_OUTPUT"
+
+      - name: Comment install link on PR
+        if: github.event_name == 'pull_request' && steps.upload.outputs.link != ''
+        uses: actions/github-script@v7
+        env:
+          LINK: ${{ steps.upload.outputs.link }}
+        with:
+          script: |
+            const link = process.env.LINK;
+            const marker = '<!-- waze-pack-link -->';
+            const body = [
+              marker,
+              '### Waze Beeps preview pack',
+              '',
+              `**Install link:** ${link}`,
+              '',
+              'Tap on a phone with Waze installed to add this preview pack.',
+              'A fresh `acvp` UUID is minted on every push to this PR — old ones stay live.',
+            ].join('\n');
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+      - name: Publish install link to main
+        if: (github.event_name == 'workflow_dispatch' || github.event_name == 'push') && steps.upload.outputs.link != ''
+        env:
+          LINK: ${{ steps.upload.outputs.link }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git checkout main
+          cat > projects/waze-beep-sound-pack/install-link.json <<EOF
+          {
+            "link": "$LINK",
+            "uploaded_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "run_id": "${{ github.run_id }}",
+            "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          EOF
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add projects/waze-beep-sound-pack/install-link.json
+          if git diff --staged --quiet; then
+            echo "Install link unchanged; skipping commit."
+          else
+            git commit -m "chore(waze-beep-sound-pack): update install link"
+            git push origin main
+            # Pushes made with the default GITHUB_TOKEN do not trigger other
+            # workflows, so nudge the deploy workflow explicitly.
+            gh workflow run deploy.yml --ref main
+          fi
+
+      - name: Write summary
+        if: always()
+        run: |
+          {
+            echo "## Waze beeps pack"
+            if [ -n "${{ steps.upload.outputs.link }}" ]; then
+              echo ""
+              echo "**Install link:** ${{ steps.upload.outputs.link }}"
+              echo ""
+              if [ "${{ github.event_name }}" = "pull_request" ]; then
+                echo "Posted as a comment on this PR for testing. The deployed site is not updated until you dispatch this workflow on \`main\`."
+              else
+                echo "Published to \`projects/waze-beep-sound-pack/install-link.json\` on main; deploy workflow nudged."
+              fi
+            else
+              echo ""
+              echo "No \`acvp\` link was captured — check the **upload-log** artifact."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: waze-pack
+          path: |
+            _tool/mp3_upload/input_packs/${{ env.PACK_NAME }}/
+            upload.log
+          if-no-files-found: warn
