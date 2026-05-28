@@ -1,10 +1,12 @@
 # Builds the beeps-only Waze voice pack and uploads it to Waze.
-#   * On a touching pull request: mints a fresh acvp link on every push and
-#     posts/updates a PR comment so you can install and try the preview pack
-#     before merging.
-#   * On push to main (post-merge) or workflow_dispatch on main: publishes the
-#     link into the deployed site by committing install-link.json to main and
-#     triggering the deploy workflow.
+#   * On a touching pull request: mints a fresh acvp link on every push, posts/
+#     updates a PR comment with the install link, and commits the matching
+#     install-link.json to the PR head branch so it lands on main as part of
+#     the squashed merge (no second mint needed). The existing deploy.yml then
+#     picks up the change and pushes the site.
+#   * On workflow_dispatch (intended on main): mints a link, commits it to
+#     install-link.json on main, and explicitly triggers deploy.yml. Useful
+#     for manual re-mints when no PR change is involved.
 #
 # Heads up:
 #   * This impersonates the Waze app against its private endpoints via a
@@ -14,8 +16,8 @@
 #     Waze account: the uploader uses an anonymous session.
 #   * The uploader is GPLv3, so it is cloned and run at build time rather than
 #     vendored into this repo (which would impose GPL on the repo).
-#   * PR runs mint a fresh pack on Waze's servers on every push that touches
-#     the project — every iteration leaves an anonymous pack behind.
+#   * Every PR push mints a fresh pack on Waze's servers — iterations leave
+#     anonymous packs behind.
 name: Waze Pack
 
 on:
@@ -26,11 +28,6 @@ on:
         default: "slop-beeps"
         required: false
   pull_request:
-    paths:
-      - "projects/waze-beep-sound-pack/**"
-      - ".github/workflows/waze-pack.yml"
-  push:
-    branches: [main]
     paths:
       - "projects/waze-beep-sound-pack/**"
       - ".github/workflows/waze-pack.yml"
@@ -140,8 +137,41 @@ jobs:
               });
             }
 
+      - name: Publish install link to PR branch
+        # Same-repo PRs only — fork PRs don't have a write-capable token. The
+        # commit rides along with the PR so it lands on main via the squash
+        # merge, and the regular deploy.yml push-trigger then refreshes the
+        # site. No second mint needed.
+        if: github.event_name == 'pull_request' && steps.upload.outputs.link != '' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          LINK: ${{ steps.upload.outputs.link }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          git fetch origin "$HEAD_REF"
+          git checkout "$HEAD_REF"
+          cat > projects/waze-beep-sound-pack/install-link.json <<EOF
+          {
+            "link": "$LINK",
+            "uploaded_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "run_id": "${{ github.run_id }}",
+            "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          EOF
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add projects/waze-beep-sound-pack/install-link.json
+          if git diff --staged --quiet; then
+            echo "Install link unchanged; skipping commit."
+          else
+            git commit -m "chore(waze-beep-sound-pack): update install link"
+            # GITHUB_TOKEN pushes don't fan out to other workflows, so this
+            # does not re-trigger waze-pack.yml or deploy.yml on its own.
+            git push origin "HEAD:$HEAD_REF"
+          fi
+
       - name: Publish install link to main
-        if: (github.event_name == 'workflow_dispatch' || github.event_name == 'push') && steps.upload.outputs.link != ''
+        if: github.event_name == 'workflow_dispatch' && steps.upload.outputs.link != ''
         env:
           LINK: ${{ steps.upload.outputs.link }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -180,7 +210,7 @@ jobs:
               echo "**Install link:** ${{ steps.upload.outputs.link }}"
               echo ""
               if [ "${{ github.event_name }}" = "pull_request" ]; then
-                echo "Posted as a comment on this PR for testing. The deployed site is not updated until you dispatch this workflow on \`main\`."
+                echo "Posted as a comment on this PR and committed to \`projects/waze-beep-sound-pack/install-link.json\` on the PR branch — it'll land on main with the squashed merge and \`deploy.yml\` will refresh the site."
               else
                 echo "Published to \`projects/waze-beep-sound-pack/install-link.json\` on main; deploy workflow nudged."
               fi
