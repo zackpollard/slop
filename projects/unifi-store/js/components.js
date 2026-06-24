@@ -1,6 +1,6 @@
 // components.js — chrome (header/footer/topbar), cart drawer, toasts, confetti, modal, cards
 
-import { Catalog, formatPrice, statusInfo, searchProducts } from './data.js';
+import { Catalog, formatPrice, statusInfo, searchProducts, saleInfo, rating } from './data.js';
 import * as Store from './state.js';
 
 export const ICONS = {
@@ -30,6 +30,7 @@ export function renderChrome() {
   renderIntroBanner();
   wireHeader();
   updateCartBadge();
+  renderCompareTray();
 }
 
 function renderTopbar() {
@@ -40,6 +41,8 @@ function renderTopbar() {
     <a href="https://ui.com/download" target="_blank" rel="noopener" class="hide-sm">Download</a>
     <span class="spacer"></span>
     <div class="tb-right">
+      <a href="#/deals">🔥 Deals</a>
+      <a href="#/rack" class="hide-sm">🛠️ Rack Builder</a>
       <a href="#/account" class="hide-sm">💙 Dopamine Dashboard</a>
       <a href="#/account">Account</a>
     </div>
@@ -291,18 +294,64 @@ export function statusBadge(p) {
   return info ? `<span class="badge ${info.cls}">${info.text}</span>` : '';
 }
 
+export function priceHTML(p, cls = 'price') {
+  const s = saleInfo(p);
+  if (s) return `<span class="${cls} on-sale"><span class="now">${formatPrice(s.salePrice)}</span><span class="was">${formatPrice(s.originalPrice)}</span></span>`;
+  return `<span class="${cls}">${formatPrice(p.price)}</span>`;
+}
+
+export function stars(value, count) {
+  const pct = (value / 5) * 100;
+  return `<span class="stars" title="${value} out of 5">
+    <span class="s-base">★★★★★</span><span class="s-fill" style="width:${pct}%">★★★★★</span>
+    ${count != null ? `<span class="s-count">${count}</span>` : ''}</span>`;
+}
+
 export function productCard(p) {
   const sold = p.status === 'SoldOut';
+  const s = saleInfo(p);
+  const r = rating(p);
+  const cmp = Store.inCompare(p.id);
+  const badge = s ? `<span class="badge sale">−${s.pct}%</span>` : statusBadge(p);
   return `<div class="card">
-    ${statusBadge(p)}
+    ${badge}
+    <button class="cmp-btn ${cmp ? 'on' : ''}" data-compare="${p.id}" title="Compare" aria-label="Compare ${escapeHtml(p.title)}">⇄</button>
     <a class="imgwrap" href="#/product/${p.slug}"><img src="${p.image}" alt="${escapeHtml(p.title)}" loading="lazy" decoding="async"></a>
     <a class="ttl" href="#/product/${p.slug}">${escapeHtml(p.title)}</a>
+    ${stars(r.stars, r.count)}
     <p class="desc">${escapeHtml(p.description || '')}</p>
     <div class="foot">
-      <span class="price">${formatPrice(p.price)}</span>
+      ${priceHTML(p)}
       <button class="add" data-add="${p.id}" ${sold ? 'disabled title="Sold out"' : 'title="Add to cart"'} aria-label="Add ${escapeHtml(p.title)} to cart">${ICONS.plus}</button>
     </div>
   </div>`;
+}
+
+// ---------------- compare tray (floating bottom bar) ----------------
+export function renderCompareTray() {
+  let tray = document.getElementById('compare-tray');
+  if (!tray) {
+    tray = document.createElement('div');
+    tray.id = 'compare-tray';
+    tray.className = 'cmp-tray';
+    document.body.appendChild(tray);
+  }
+  const ids = Store.getCompare();
+  if (!ids.length) { tray.hidden = true; tray.innerHTML = ''; return; }
+  const items = ids.map(id => Catalog.byId.get(id)).filter(Boolean);
+  tray.hidden = false;
+  tray.innerHTML = `<div class="wrap">
+    <div class="cmp-items">
+      ${items.map(p => `<div class="cmp-chip"><img src="${p.image}" alt=""><span>${escapeHtml(p.title)}</span>
+        <button data-compare="${p.id}" aria-label="Remove">${ICONS.close}</button></div>`).join('')}
+      <span class="cmp-hint">${items.length}/${Store.COMPARE_MAX} selected</span>
+    </div>
+    <div class="cmp-actions">
+      <button class="btn btn-ghost" id="cmp-clear">Clear</button>
+      <a class="btn btn-primary ${items.length < 2 ? 'is-disabled' : ''}" href="#/compare">Compare ${items.length}</a>
+    </div>
+  </div>`;
+  tray.querySelector('#cmp-clear').onclick = Store.clearCompare;
 }
 
 // ---------------- confetti ----------------
