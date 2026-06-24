@@ -169,6 +169,9 @@ jobs:
           - name: waze-beep-sound-pack
             pages-project: slop-waze-beep-sound-pack
             directory: projects/waze-beep-sound-pack
+          - name: unifi-store
+            pages-project: slop-unifi-store
+            directory: projects/unifi-store
     steps:
       - name: Checkout
         uses: actions/checkout@v4

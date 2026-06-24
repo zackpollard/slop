@@ -29,6 +29,7 @@ projects/
 | [texas-holdem](projects/texas-holdem) | [texas-holdem.slop.zackpollard.pro](https://texas-holdem.slop.zackpollard.pro) | Multiplayer Texas Hold'em poker with PeerJS networking |
 | [cards-against-humanity](projects/cards-against-humanity) | [cards-against-humanity.slop.zackpollard.pro](https://cards-against-humanity.slop.zackpollard.pro) | Peer-to-peer Cards Against Humanity party game |
 | [waze-beep-sound-pack](projects/waze-beep-sound-pack) | [waze-beep-sound-pack.slop.zackpollard.pro](https://waze-beep-sound-pack.slop.zackpollard.pro) | Beeps-only Waze sound pack generator with WAV export |
+| [unifi-store](projects/unifi-store) | [unifi-store.slop.zackpollard.pro](https://unifi-store.slop.zackpollard.pro) | Parody UniFi Store with a fake checkout and dopamine dashboard |
 
 ## Adding a new project
 

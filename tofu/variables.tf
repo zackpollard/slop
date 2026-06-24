@@ -60,5 +60,8 @@ variable "projects" {
     waze-beep-sound-pack = {
       subdomain = "waze-beep-sound-pack.slop"
     }
+    unifi-store = {
+      subdomain = "unifi-store.slop"
+    }
   }
 }

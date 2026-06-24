@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UniFi Store</title>
+  <meta name="description" content="The UniFi Store — but the checkout is fake. Fill your cart, place the order, get the dopamine, spend nothing.">
+  <link rel="icon" href="https://assets.ecomm.ui.com/static/favicon-32x32.png" sizes="32x32">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preconnect" href="https://cdn.ecomm.ui.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <!-- slim global bar -->
+  <div id="topbar"></div>
+
+  <!-- store header (rendered by JS) -->
+  <header id="site-header"></header>
+
+  <!-- routed view mounts here -->
+  <main id="app" aria-live="polite"></main>
+
+  <!-- footer (rendered by JS) -->
+  <footer id="site-footer"></footer>
+
+  <!-- overlays -->
+  <div id="cart-drawer" class="drawer" aria-hidden="true"></div>
+  <div id="drawer-scrim" class="scrim" hidden></div>
+  <div id="modal-root"></div>
+  <div id="toast-root" class="toast-root" aria-live="assertive"></div>
+  <canvas id="confetti" aria-hidden="true"></canvas>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
