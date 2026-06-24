@@ -148,3 +148,113 @@ export const STATUS = {
   ComingSoon: { cls: 'soon', label: 'Coming soon', badge: { cls: 'coming', text: 'Coming Soon' } },
 };
 export function statusInfo(s) { return STATUS[s] || STATUS.Available; }
+
+// ============================================================
+//  v2: deterministic helpers, deals, ratings, promos, specs
+// ============================================================
+
+function hashStr(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+export function todayKey(d = new Date()) { return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); }
+
+// ---- deterministic ratings ----
+export function rating(p) {
+  const r = mulberry32(hashStr(p.id + ':rating'));
+  const stars = Math.round((3.7 + r() * 1.3) * 10) / 10; // 3.7–5.0
+  const count = 18 + Math.floor(r() * 880);
+  return { stars, count };
+}
+
+const REVIEW_SNIPPETS = [
+  ['Rock solid', 'Dropped it into my rack and forgot it existed. Exactly what you want.'],
+  ['My wife does not understand', 'But the controller dashboard is beautiful and that is what matters.'],
+  ['One does not simply buy one', 'Now I need the matching switch. And the AP. Send help.'],
+  ['Overkill for my apartment', 'Absolutely worth it. The blinkenlights alone justify the price.'],
+  ['Bye bye money', 'Bought it, regret nothing, eyeing the next one already.'],
+  ['Just works', 'Adopted in seconds, zero drama. UniFi tax is real but earned.'],
+  ['Homelab approved', 'Quiet, cool, and the build quality is unreasonably good.'],
+  ['Instant upgrade', 'Coverage and throughput jumped immediately. No notes.'],
+];
+export function reviews(p) {
+  const r = mulberry32(hashStr(p.id + ':reviews'));
+  const { stars, count } = rating(p);
+  const n = 3;
+  const used = new Set();
+  const out = [];
+  const names = ['rack_enthusiast', 'homelab_dan', 'PoE_Paul', 'subnet_sally', 'cmd_line_chris', 'fiber_fiona', 'unifi_uncle', 'vlan_vera'];
+  for (let i = 0; i < n; i++) {
+    let idx = Math.floor(r() * REVIEW_SNIPPETS.length);
+    while (used.has(idx)) idx = (idx + 1) % REVIEW_SNIPPETS.length;
+    used.add(idx);
+    const s = Math.max(4, Math.min(5, Math.round(stars + (r() - 0.4))));
+    out.push({ name: names[Math.floor(r() * names.length)], stars: s, title: REVIEW_SNIPPETS[idx][0], body: REVIEW_SNIPPETS[idx][1] });
+  }
+  return { stars, count, list: out };
+}
+
+// ---- daily deals / flash sale (date-seeded, stable per day) ----
+const DEAL_COUNT = 8;
+let _dealCache = null, _dealDay = null;
+function dealMap() {
+  const k = todayKey();
+  if (_dealDay === k && _dealCache) return _dealCache;
+  const rnd = mulberry32(hashStr('deals:' + k));
+  const pool = Catalog.products.filter(p => p.status === 'Available' && p.price >= 5000);
+  const shuffled = pool.map(p => [rnd(), p]).sort((a, b) => a[0] - b[0]).map(x => x[1]);
+  const map = new Map();
+  for (const p of shuffled.slice(0, DEAL_COUNT)) {
+    const pct = [10, 15, 20, 25, 30][Math.floor(mulberry32(hashStr(p.id + k))() * 5)];
+    map.set(p.id, pct);
+  }
+  _dealCache = map; _dealDay = k;
+  return map;
+}
+export function saleInfo(p) {
+  const pct = dealMap().get(p.id);
+  if (!pct) return null;
+  const salePrice = Math.round(p.price * (100 - pct) / 100 / 100) * 100; // round to whole dollars
+  return { pct, originalPrice: p.price, salePrice };
+}
+export function effectivePrice(p) { const s = saleInfo(p); return s ? s.salePrice : p.price; }
+export function dealProducts() { return [...dealMap().keys()].map(id => Catalog.byId.get(id)).filter(Boolean); }
+export function msUntilMidnight() { const n = new Date(); const m = new Date(n); m.setHours(24, 0, 0, 0); return m - n; }
+
+// ---- promo codes (applied at checkout) ----
+export const PROMO_CODES = {
+  DOPAMINE10: { type: 'pct', value: 10, label: '10% off your order' },
+  HOMELAB: { type: 'pct', value: 15, label: '15% off everything' },
+  FREESHIP: { type: 'freeship', label: 'Free express shipping' },
+  WHALE: { type: 'fixed', value: 10000, min: 100000, label: '$100 off orders over $1,000' },
+  BEAST: { type: 'pct', value: 25, min: 150000, label: '25% off orders over $1,500' },
+};
+export function validatePromo(code) {
+  const key = (code || '').trim().toUpperCase();
+  const c = PROMO_CODES[key];
+  return c ? { code: key, ...c } : null;
+}
+
+// ---- specs (lazy-loaded, ~2MB) ----
+export const Specs = { map: null };
+export async function loadSpecs() {
+  if (Specs.map) return Specs.map;
+  try { const r = await fetch('specs.json'); Specs.map = await r.json(); }
+  catch { Specs.map = {}; }
+  return Specs.map;
+}
+export function getSpecs(id) { return Specs.map ? Specs.map[id] : null; }
+export function hasSpecs(id) { return !!(Specs.map && Specs.map[id]); }
+
+// rows of a spec section worth displaying (items that actually carry a value)
+export function specRows(section) {
+  return section.items.filter(it => it.value != null && it.value !== '');
+}
+// a compact set of headline spec rows for compare (isUsedInCompare, capped)
+export function compareRows(spec, limit = 14) {
+  const rows = [];
+  for (const sec of spec.sections) {
+    for (const it of sec.items) {
+      if (it.compare && it.value) rows.push({ section: sec.label, label: it.label, value: it.value });
+    }
+  }
+  return rows.slice(0, limit);
+}
