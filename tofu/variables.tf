@@ -30,6 +30,9 @@ variable "projects" {
     dnd-encounter-generator = {
       subdomain = "dnd-encounter-generator.slop"
     }
+    dnd-banners = {
+      subdomain = "dnd-banners.slop"
+    }
     cron = {
       subdomain = "cron.slop"
     }

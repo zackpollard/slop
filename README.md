@@ -19,6 +19,7 @@ projects/
 | [homepage](projects/homepage) | [slop.zackpollard.pro](https://slop.zackpollard.pro) | Main landing page and project index |
 | [roof-calculator](projects/roof-calculator) | [roof-calculator.slop.zackpollard.pro](https://roof-calculator.slop.zackpollard.pro) | Satellite map-based roof measurement tool |
 | [dnd-encounter-generator](projects/dnd-encounter-generator) | [dnd-encounter-generator.slop.zackpollard.pro](https://dnd-encounter-generator.slop.zackpollard.pro) | D&D 2024 combat encounter generator |
+| [dnd-banners](projects/dnd-banners) | [dnd-banners.slop.zackpollard.pro](https://dnd-banners.slop.zackpollard.pro) | D&D initiative banner tokens for a DM screen, exported as printable STL/3MF |
 | [cron](projects/cron) | [cron.slop.zackpollard.pro](https://cron.slop.zackpollard.pro) | Cron expression translator with timeline visualization |
 | [subnet](projects/subnet) | [subnet.slop.zackpollard.pro](https://subnet.slop.zackpollard.pro) | IPv4 subnet calculator with binary breakdown |
 | [json](projects/json) | [json.slop.zackpollard.pro](https://json.slop.zackpollard.pro) | JSON formatter, tree viewer, and diff tool |

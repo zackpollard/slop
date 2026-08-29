@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>D&amp;D Banner Tokens — slop</title>
+    <meta name="description" content="Design D&amp;D initiative banner tokens that hook over a DM screen, and export them as printable STL or 3MF files.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+    <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.1/examples/jsm/"
+      }
+    }
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/clipper-lib@6.4.2/clipper.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/poly2tri@1.5.0/dist/poly2tri.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+</head>
+<body>
+<div class="app">
+    <header class="topbar">
+        <div class="brand">
+            <h1>Banner <span class="accent">Tokens</span></h1>
+            <p>Initiative banners that hook over your DM screen. Design them here, print them at home.</p>
+        </div>
+        <div class="topbar-actions">
+            <button class="btn" id="btn-import">Import</button>
+            <button class="btn" id="btn-export-json">Save JSON</button>
+            <a class="btn btn-ghost" href="https://slop.zackpollard.pro/">slop</a>
+        </div>
+    </header>
+
+    <div class="party">
+        <div class="party-tabs" id="party-tabs"></div>
+        <div class="party-actions">
+            <button class="btn btn-small" id="btn-add">+ Banner</button>
+            <button class="btn btn-small" id="btn-duplicate">Duplicate</button>
+            <button class="btn btn-small btn-danger" id="btn-delete">Delete</button>
+        </div>
+    </div>
+
+    <div class="workspace">
+        <aside class="controls" id="controls">
+
+            <section class="card">
+                <h2>Start from a reference token</h2>
+                <div class="preset-row" id="preset-row"></div>
+                <p class="hint">These four are recreations of the tokens in the reference photos — pick one and edit it, or start from scratch.</p>
+            </section>
+
+            <section class="card">
+                <h2>Character</h2>
+                <label class="field stack">
+                    <span class="field-label">Name</span>
+                    <input type="text" data-path="text.name" maxlength="24" placeholder="Ivan">
+                </label>
+                <div class="field stack">
+                    <span class="field-label">Subtitle lines</span>
+                    <div id="sub-lines" class="sub-lines"></div>
+                    <button class="btn btn-small" id="btn-add-line">+ Add line</button>
+                </div>
+            </section>
+
+            <section class="card">
+                <h2>Icon</h2>
+                <div class="icon-toolbar">
+                    <input type="search" id="icon-search" placeholder="Search icons…" autocomplete="off">
+                    <select id="icon-category"></select>
+                </div>
+                <div class="icon-grid" id="icon-grid"></div>
+                <div class="row">
+                    <label class="check"><input type="checkbox" data-path="icon.show"> Show icon</label>
+                    <label class="check"><input type="checkbox" data-path="icon.flipX"> Mirror</label>
+                </div>
+                <label class="field stack">
+                    <span class="field-label">Or upload your own SVG</span>
+                    <input type="file" id="icon-upload" accept=".svg,image/svg+xml">
+                </label>
+                <p class="hint">Uploaded SVGs must be filled shapes — strokes and images are ignored. Anything thinner than the minimum feature size will be flagged below.</p>
+            </section>
+
+            <section class="card">
+                <h2>Lettering</h2>
+                <label class="field">
+                    <span class="field-label">Font</span>
+                    <select data-path="font.key" id="font-select"></select>
+                </label>
+                <label class="field">
+                    <span class="field-label">Name style</span>
+                    <select data-path="font.nameCase">
+                        <option value="upper">ALL CAPS</option>
+                        <option value="smallcaps">Small Caps</option>
+                        <option value="as-typed">As typed</option>
+                    </select>
+                </label>
+                <label class="field">
+                    <span class="field-label">Subtitle style</span>
+                    <select data-path="font.subCase">
+                        <option value="smallcaps">Small Caps</option>
+                        <option value="upper">ALL CAPS</option>
+                        <option value="as-typed">As typed</option>
+                    </select>
+                </label>
+                <div class="field">
+                    <span class="field-label">Letter spacing</span>
+                    <span class="field-input">
+                        <input type="range" data-path="font.letterSpacing" min="-0.02" max="0.16" step="0.005">
+                        <input type="number" data-path="font.letterSpacing" min="-0.02" max="0.4" step="0.005">
+                    </span>
+                </div>
+                <div class="field">
+                    <span class="field-label">Name size <em>% of height</em></span>
+                    <span class="field-input">
+                        <input type="range" data-path="layout.nameSize" min="0.03" max="0.16" step="0.002">
+                        <input type="number" data-path="layout.nameSize" min="0.02" max="0.3" step="0.002">
+                    </span>
+                </div>
+                <div class="field">
+                    <span class="field-label">Subtitle size <em>% of height</em></span>
+                    <span class="field-input">
+                        <input type="range" data-path="layout.subSize" min="0.02" max="0.12" step="0.002">
+                        <input type="number" data-path="layout.subSize" min="0.015" max="0.25" step="0.002">
+                    </span>
+                </div>
+                <label class="field stack">
+                    <span class="field-label">Or upload a font (TTF / OTF / WOFF)</span>
+                    <input type="file" id="font-upload" accept=".ttf,.otf,.woff,font/ttf,font/otf">
+                </label>
+            </section>
+
+            <section class="card">
+                <h2>Banner shape</h2>
+                <div class="field">
+                    <span class="field-label">Width <em>mm</em></span>
+                    <span class="field-input">
+                        <input type="range" data-path="size.width" min="16" max="60" step="0.5">
+                        <input type="number" data-path="size.width" min="10" max="120" step="0.5">
+                    </span>
+                </div>
+                <div class="field">
+                    <span class="field-label">Height <em>mm</em></span>
+                    <span class="field-input">
+                        <input type="range" data-path="size.height" min="30" max="120" step="0.5">
+                        <input type="number" data-path="size.height" min="20" max="200" step="0.5">
+                    </span>
+                </div>
+                <label class="field">
+                    <span class="field-label">Bottom edge</span>
+                    <select data-path="size.tailStyle">
+                        <option value="swallowtail">Swallowtail</option>
+                        <option value="point">Single point</option>
+                        <option value="none">Straight</option>
+                    </select>
+                </label>
+                <div class="field">
+                    <span class="field-label">Tail depth <em>mm</em></span>
+                    <span class="field-input">
+                        <input type="range" data-path="size.tailDepth" min="0" max="24" step="0.5">
+                        <input type="number" data-path="size.tailDepth" min="0" max="40" step="0.5">
+                    </span>
+                </div>
+                <div class="field">
+                    <span class="field-label">Corner radius <em>mm</em></span>
+                    <span class="field-input">
+                        <input type="range" data-path="size.cornerRadius" min="0" max="5" step="0.1">
+                        <input type="number" data-path="size.cornerRadius" min="0" max="10" step="0.1">
+                    </span>
+                </div>
+                <div class="field">
+                    <span class="field-label">Plate thickness <em>mm</em></span>
+                    <span class="field-input">
+                        <input type="range" data-path="size.plateThickness" min="1.2" max="6" step="0.2">
+                        <input type="number" data-path="size.plateThickness" min="1" max="10" step="0.2">
+                    </span>
+                </div>
+            </section>
+
+            <section class="card">
+                <h2>Hanger</h2>
+                <label class="field">
+                    <span class="field-label">Style</span>
+                    <select data-path="hanger.mode">
+                        <option value="attached">Attached bar (one piece)</option>
+                        <option value="separate">Separate glue-on bracket</option>
+                        <option value="none">None — flat banner only</option>
+                    </select>
+                </label>
+                <div class="field">
+                    <span class="field-label">DM screen thickness <em>mm</em></span>
+                    <span class="field-input">
+                        <input type="range" data-path="hanger.screenThickness" min="0.5" max="12" step="0.1">
+                        <input type="number" data-path="hanger.screenThickness" min="0.5" max="30" step="0.1">
+                    </span>
+                </div>
+                <div class="field">
+                    <span class="field-label">Fit clearance <em>mm</em></span>
+                    <span class="field-input">
+                        <input type="range" data-path="hanger.clearance" min="0" max="5" step="0.1">
+                        <input type="number" data-path="hanger.clearance" min="0" max="10" step="0.1">
+                    </span>
+                </div>
+                <div class="field">
+                    <span class="field-label">Bar thickness <em>mm</em></span>
+                    <span class="field-input">
+                        <input type="range" data-path="hanger.thickness" min="1" max="6" step="0.1">
+                        <input type="number" data-path="hanger.thickness" min="0.8" max="12" step="0.1">
+                    </span>
+                </div>
+                <div class="field">
+                    <span class="field-label">Bar overhang each side <em>mm</em></span>
+                    <span class="field-input">
+                        <input type="range" data-path="hanger.overhang" min="0" max="30" step="0.5">
+                        <input type="number" data-path="hanger.overhang" min="0" max="60" step="0.5">
+                    </span>
+                </div>
+                <div class="field">
+                    <span class="field-label">Back lip drop <em>mm</em></span>
+                    <span class="field-input">
+                        <input type="range" data-path="hanger.lip" min="0" max="12" step="0.5">
+                        <input type="number" data-path="hanger.lip" min="0" max="25" step="0.5">
+                    </span>
+                </div>
+                <label class="check"><input type="checkbox" data-path="hanger.roundEnds"> Rounded bar ends</label>
+                <p class="hint">The bar rests on top of the screen and the banner hangs down the front. Measure your screen and add about 1&ndash;1.5&nbsp;mm of clearance so it slides on easily.</p>
+            </section>
+
+            <section class="card">
+                <h2>Relief &amp; colours</h2>
+                <label class="field">
+                    <span class="field-label">Detail style</span>
+                    <select data-path="detail.style">
+                        <option value="inlay">Inlay — flush, prints face down</option>
+                        <option value="raised">Raised — stands proud</option>
+                        <option value="engraved">Engraved — recessed, one colour</option>
+                    </select>
+                </label>
+                <div class="field">
+                    <span class="field-label">Detail depth <em>mm</em></span>
+                    <span class="field-input">
+                        <input type="range" data-path="detail.depth" min="0.2" max="2" step="0.1">
+                        <input type="number" data-path="detail.depth" min="0.1" max="5" step="0.1">
+                    </span>
+                </div>
+                <div class="field">
+                    <span class="field-label">Part clearance <em>mm</em></span>
+                    <span class="field-input">
+                        <input type="range" data-path="detail.gap" min="0" max="0.4" step="0.02">
+                        <input type="number" data-path="detail.gap" min="0" max="1" step="0.02">
+                    </span>
+                </div>
+                <div class="row colors">
+                    <label class="color"><input type="color" data-path="colors.plate"> Plate</label>
+                    <label class="color"><input type="color" data-path="colors.a"> Colour 1</label>
+                    <label class="color"><input type="color" data-path="colors.b"> Colour 2</label>
+                </div>
+                <div class="field">
+                    <span class="field-label">Icon colour</span>
+                    <select data-path="parts.icon"><option value="a">Colour 1</option><option value="b">Colour 2</option></select>
+                </div>
+                <div class="field">
+                    <span class="field-label">Name colour</span>
+                    <select data-path="parts.name"><option value="a">Colour 1</option><option value="b">Colour 2</option></select>
+                </div>
+                <div class="field">
+                    <span class="field-label">Subtitle colour</span>
+                    <select data-path="parts.sub"><option value="a">Colour 1</option><option value="b">Colour 2</option></select>
+                </div>
+                <label class="check"><input type="checkbox" data-path="detail.outline.enabled"> Outline colour&nbsp;2 elements in colour&nbsp;1</label>
+                <div class="field">
+                    <span class="field-label">Outline width <em>mm</em></span>
+                    <span class="field-input">
+                        <input type="range" data-path="detail.outline.width" min="0.2" max="2" step="0.05">
+                        <input type="number" data-path="detail.outline.width" min="0.1" max="4" step="0.05">
+                    </span>
+                </div>
+            </section>
+
+            <section class="card collapsible collapsed" id="card-layout">
+                <h2 class="toggle">Fine layout <span class="chev">▾</span></h2>
+                <div class="card-body">
+                    <div class="field">
+                        <span class="field-label">Side margin <em>% of width</em></span>
+                        <span class="field-input">
+                            <input type="range" data-path="layout.sideMargin" min="0.02" max="0.3" step="0.005">
+                            <input type="number" data-path="layout.sideMargin" min="0.01" max="0.4" step="0.005">
+                        </span>
+                    </div>
+                    <div class="field">
+                        <span class="field-label">Icon top <em>% of height</em></span>
+                        <span class="field-input">
+                            <input type="range" data-path="layout.iconTop" min="0" max="0.4" step="0.005">
+                            <input type="number" data-path="layout.iconTop" min="0" max="0.6" step="0.005">
+                        </span>
+                    </div>
+                    <div class="field">
+                        <span class="field-label">Icon height <em>% of height</em></span>
+                        <span class="field-input">
+                            <input type="range" data-path="layout.iconHeight" min="0.05" max="0.7" step="0.005">
+                            <input type="number" data-path="layout.iconHeight" min="0.02" max="0.9" step="0.005">
+                        </span>
+                    </div>
+                    <div class="field">
+                        <span class="field-label">Icon max width <em>× content</em></span>
+                        <span class="field-input">
+                            <input type="range" data-path="layout.iconWidthScale" min="0.3" max="1.2" step="0.02">
+                            <input type="number" data-path="layout.iconWidthScale" min="0.1" max="1.5" step="0.02">
+                        </span>
+                    </div>
+                    <div class="field">
+                        <span class="field-label">Gap under icon <em>% of height</em></span>
+                        <span class="field-input">
+                            <input type="range" data-path="layout.iconGap" min="0" max="0.2" step="0.005">
+                            <input type="number" data-path="layout.iconGap" min="0" max="0.4" step="0.005">
+                        </span>
+                    </div>
+                    <div class="field">
+                        <span class="field-label">Gap under name <em>% of height</em></span>
+                        <span class="field-input">
+                            <input type="range" data-path="layout.nameGap" min="0" max="0.12" step="0.002">
+                            <input type="number" data-path="layout.nameGap" min="0" max="0.3" step="0.002">
+                        </span>
+                    </div>
+                    <div class="field">
+                        <span class="field-label">Gap between subtitles <em>% of height</em></span>
+                        <span class="field-input">
+                            <input type="range" data-path="layout.lineGap" min="0" max="0.1" step="0.002">
+                            <input type="number" data-path="layout.lineGap" min="0" max="0.3" step="0.002">
+                        </span>
+                    </div>
+                    <div class="field">
+                        <span class="field-label">Bottom padding <em>% of height</em></span>
+                        <span class="field-input">
+                            <input type="range" data-path="layout.bottomPad" min="0" max="0.2" step="0.005">
+                            <input type="number" data-path="layout.bottomPad" min="0" max="0.4" step="0.005">
+                        </span>
+                    </div>
+                    <label class="field">
+                        <span class="field-label">Text block</span>
+                        <select data-path="layout.textAnchor">
+                            <option value="center">Centre in remaining space</option>
+                            <option value="top">Hug the icon</option>
+                        </select>
+                    </label>
+                    <div class="field">
+                        <span class="field-label">Plate edge chamfer <em>mm</em></span>
+                        <span class="field-input">
+                            <input type="range" data-path="detail.plateChamfer" min="0" max="1.2" step="0.05">
+                            <input type="number" data-path="detail.plateChamfer" min="0" max="3" step="0.05">
+                        </span>
+                    </div>
+                    <div class="field">
+                        <span class="field-label">Raised detail chamfer <em>mm</em></span>
+                        <span class="field-input">
+                            <input type="range" data-path="detail.chamfer" min="0" max="0.8" step="0.05">
+                            <input type="number" data-path="detail.chamfer" min="0" max="2" step="0.05">
+                        </span>
+                    </div>
+                    <div class="field">
+                        <span class="field-label">Minimum feature check <em>mm</em></span>
+                        <span class="field-input">
+                            <input type="range" data-path="print.minFeature" min="0.2" max="2" step="0.05">
+                            <input type="number" data-path="print.minFeature" min="0.1" max="4" step="0.05">
+                        </span>
+                    </div>
+                </div>
+            </section>
+
+            <section class="card collapsible collapsed" id="card-help">
+                <h2 class="toggle">How to print these <span class="chev">▾</span></h2>
+                <div class="card-body help">
+                    <ol>
+                        <li><strong>Inlay</strong> (the default) matches the reference tokens. Print the banner <em>face down</em> on a textured plate: the plate texture becomes the banner surface and the icon and lettering sit flush.</li>
+                        <li>With an AMS/MMU, download the <strong>3MF</strong> — every part is already aligned and coloured. With a single extruder, download the STLs and insert a filament change at the detail depth (0.6&nbsp;mm by default).</li>
+                        <li>The hanger bar prints as a wall standing up off the plate. No supports needed.</li>
+                        <li><strong>Raised</strong> detail has to print face up, so pair it with the separate glue-on bracket.</li>
+                        <li>Measure your DM screen and set the screen thickness, then add roughly 1&ndash;1.5&nbsp;mm of clearance.</li>
+                    </ol>
+                </div>
+            </section>
+        </aside>
+
+        <main class="stage">
+            <div class="viewport">
+                <canvas id="view"></canvas>
+                <div class="viewport-tools">
+                    <button class="btn btn-small" id="btn-reset-view">Reset view</button>
+                    <label class="check"><input type="checkbox" id="chk-screen" checked> Show screen</label>
+                </div>
+                <div class="viewport-status" id="status"></div>
+            </div>
+
+            <div class="stage-panel">
+                <div id="warnings" class="warnings"></div>
+                <div class="metrics" id="metrics"></div>
+                <h3>Download</h3>
+                <div class="download-grid" id="download-grid"></div>
+                <div class="download-row">
+                    <button class="btn btn-primary" id="btn-3mf">3MF (all parts, coloured)</button>
+                    <button class="btn" id="btn-zip">STL bundle (.zip)</button>
+                    <button class="btn" id="btn-stl-all">Single combined STL</button>
+                </div>
+                <div class="download-row">
+                    <button class="btn" id="btn-party-zip">Whole party (.zip)</button>
+                    <button class="btn" id="btn-party-3mf">Whole party 3MF plate</button>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <footer class="footer">
+        <p>Fonts from Google Fonts. Geometry generated in your browser — nothing is uploaded. <a href="https://github.com/zackpollard/slop">Source</a></p>
+    </footer>
+</div>
+
+<input type="file" id="json-import" accept="application/json,.json" hidden>
+<div class="toast" id="toast" hidden></div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
