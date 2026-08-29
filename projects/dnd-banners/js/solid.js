@@ -171,7 +171,7 @@ function triangulatePolygon(outer, holes) {
                 return ctx.getTriangles().map(t => t.getPoints().map(
                     pt => (pt._x0 === undefined ? { x: pt.x, y: pt.y } : { x: pt._x0, y: pt._y0 })));
             } catch (err) {
-                if (spread) console.warn('poly2tri rejected a face: ' + (err && err.message) + ' — falling back to ear clipping');
+                if (spread) console.warn('poly2tri rejected a face (' + (err && err.message) + ') — falling back to ear clipping');
             }
         }
     }

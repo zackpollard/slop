@@ -321,16 +321,73 @@ export function buildBanner(cfg, { font, icon }) {
  * rather than two stacked prisms so slicers never see ambiguous overlapping shells.
  */
 function buildPlateWithPockets(plate, pockets, thickness, depth, chamfer) {
-    // Outer body: side walls plus the back cap. The front face is supplied separately
-    // because it needs the pocket mouths punched out of it.
+    // The front face and the pocket walls are both derived from the SAME boolean result.
+    // Deriving them separately is what cracks the mesh: two pockets that touch get merged
+    // into one mouth by the difference but stay two rings in the pocket set, so the face
+    // and the walls disagree about where the boundary runs.
+    const front = clip.difference(plate, pockets);
     const pos = extrudeRegions(plate, { z0: -thickness, z1: 0, chamferBottom: chamfer, caps: { top: false } });
-    appendPositions(pos, triangulateCap(frontFaceWithPockets(plate, pockets), 0, false));
-    // Each pocket is an inverted prism: inward-facing walls and a floor that looks up.
-    if (pockets.length) {
-        const cavity = extrudeRegions(pockets, { z0: -depth, z1: 0, caps: { top: false } });
-        appendPositions(pos, invertWinding(cavity));
+    appendPositions(pos, triangulateCap(front, 0, false));
+    const cavities = cavitiesFromFront(front);
+    if (cavities.length) {
+        // An inverted prism gives inward-facing walls and a floor that looks up.
+        appendPositions(pos, invertWinding(extrudeRegions(cavities, { z0: -depth, z1: 0, caps: { top: false } })));
     }
     return pos;
+}
+
+/**
+ * Read the pockets back out of the holed front face.
+ *
+ * Every hole of a front-face region is a pocket mouth, at any nesting depth. Every front
+ * region that sits inside one of those mouths is an island of plate left standing in the
+ * pocket — the counter of an "O" — and becomes a hole of that cavity.
+ */
+function cavitiesFromFront(front) {
+    const cavities = [];
+    for (const region of front) {
+        for (const hole of region.holes) {
+            const outer = clip.orient(hole, true);
+            cavities.push({ outer, holes: [], area: Math.abs(clip.signedArea(outer)) });
+        }
+    }
+    if (!cavities.length) return [];
+    for (const region of front) {
+        const probe = interiorPoint(region.outer);
+        let host = null;
+        for (const cavity of cavities) {
+            if (pointInRing(probe, cavity.outer) && (!host || cavity.area < host.area)) host = cavity;
+        }
+        if (host) host.holes.push(clip.orient(region.outer, false));
+    }
+    return cavities.map(({ outer, holes }) => ({ outer, holes }));
+}
+
+/**
+ * A point strictly inside a simple ring.
+ *
+ * Ring vertices themselves are useless for containment tests: where two shapes touch, a
+ * vertex of one lies exactly on the boundary of the other and ray casting there is a coin
+ * flip. The lowest-then-leftmost vertex of a CCW ring is always convex, so stepping a
+ * hair along its bisector lands inside no matter how the shape is arranged.
+ */
+function interiorPoint(ring) {
+    const n = ring.length;
+    let k = 0;
+    for (let i = 1; i < n; i++) {
+        if (ring[i].y < ring[k].y || (ring[i].y === ring[k].y && ring[i].x < ring[k].x)) k = i;
+    }
+    const c = ring[k], p = ring[(k - 1 + n) % n], q = ring[(k + 1) % n];
+    const norm = (a, b) => {
+        const dx = a.x - b.x, dy = a.y - b.y, len = Math.hypot(dx, dy) || 1;
+        return { x: dx / len, y: dy / len, len };
+    };
+    const u = norm(p, c), v = norm(q, c);
+    const bx = u.x + v.x, by = u.y + v.y;
+    const blen = Math.hypot(bx, by);
+    if (blen < 1e-9) return c; // degenerate spike; nothing better to offer
+    const step = Math.min(u.len, v.len) * 1e-3;
+    return { x: c.x + (bx / blen) * step, y: c.y + (by / blen) * step };
 }
 
 function pointInRing(pt, ring) {
@@ -341,34 +398,6 @@ function pointInRing(pt, ring) {
             pt.x < (b.x - a.x) * (pt.y - a.y) / (b.y - a.y) + a.x) inside = !inside;
     }
     return inside;
-}
-
-/**
- * The front face of a pocketed plate, nested by hand rather than via a boolean.
- *
- * A Clipper difference would return the pocket mouths with re-derived vertices, which
- * no longer line up with the pocket walls extruded from the original rings — the mesh
- * ends up with unmatched edges along every pocket rim. Reusing the exact same rings
- * keeps the solid watertight. Detail is always clipped inside the plate margin, so a
- * pocket can never straddle the plate boundary.
- */
-function frontFaceWithPockets(plate, pockets) {
-    const faces = plate.map(r => ({ outer: r.outer, holes: [...r.holes], area: Math.abs(clip.signedArea(r.outer)) }));
-    // An island — the counter of an "O", say — is plate material standing inside a pocket,
-    // so it becomes its own face region that later pockets may in turn sit inside.
-    for (const pocket of pockets) {
-        for (const hole of pocket.holes) {
-            faces.push({ outer: clip.orient(hole, true), holes: [], area: Math.abs(clip.signedArea(hole)) });
-        }
-    }
-    for (const pocket of pockets) {
-        let host = null;
-        for (const face of faces) {
-            if (pointInRing(pocket.outer[0], face.outer) && (!host || face.area < host.area)) host = face;
-        }
-        (host || faces[0]).holes.push(clip.orient(pocket.outer, false));
-    }
-    return faces.map(({ outer, holes }) => ({ outer, holes }));
 }
 
 /** Fraction of the filled area that survives neither erosion nor re-dilation by w/2. */

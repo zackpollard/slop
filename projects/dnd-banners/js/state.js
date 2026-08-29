@@ -87,7 +87,10 @@ export function presetBanner(id) {
 
 export function deepMerge(base, patch) {
     if (patch === null || patch === undefined) return clone(base);
-    if (Array.isArray(base) || Array.isArray(patch) || typeof patch !== 'object' || typeof base !== 'object') {
+    // typeof null is "object", so a null default (icon.custom, say) has to be excluded
+    // explicitly or the merge tries to write properties onto it.
+    if (base === null || typeof base !== 'object' || typeof patch !== 'object'
+        || Array.isArray(base) || Array.isArray(patch)) {
         return clone(patch);
     }
     const out = clone(base);
@@ -139,7 +142,10 @@ export function loadParty() {
 export function saveParty(party) {
     try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(party));
-    } catch (err) { /* private browsing, quota — not worth interrupting the user */ }
+        return true;
+    } catch (err) {
+        return false; // private browsing or quota — the caller decides whether to say so
+    }
 }
 
 export function startingParty() {

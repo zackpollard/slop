@@ -151,8 +151,19 @@ export function cleanRegions(regions, epsMm = 0.01) {
     }
     // Dropping vertices can make a tight curve cross itself. Re-resolving the whole set
     // repairs that, and is cheap next to the work it saves downstream.
-    return unionContours(regionsToContours(out), 'nonzero');
+    const repaired = unionContours(regionsToContours(out), 'nonzero');
+    // Then grow everything by a hair. Clipper will happily hand back two shapes that meet
+    // at a single point — an icon whose horn grazes its skull — and a constrained
+    // triangulator cannot take a coordinate that appears in two constraints: it reports
+    // "collinear not supported", the ear-clipping fallback takes over, and its hole
+    // bridges leave cracks along the pocket rims. Two microns of growth overlaps such
+    // shapes just enough for Clipper to fuse them into one ring, and is three orders of
+    // magnitude below what a printer resolves.
+    const welded = offsetRegions(repaired, WELD, 'miter');
+    return welded.length ? welded : repaired;
 }
+
+const WELD = 0.002;
 
 /** Total filled area in mm². Cheap way to detect "this shrank to nothing". */
 export function regionsArea(regions) {

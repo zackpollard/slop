@@ -27,10 +27,13 @@ const iconCache = new Map();
 /* ── icon resolution ── */
 
 function resolveIcon(cfg) {
-    if (cfg.icon.custom && cfg.icon.custom.contours) {
+    // Custom icons are stored as the original SVG text, not as flattened contours: the
+    // contours run to tens of thousands of numbers, which overflows localStorage and makes
+    // an exported party file unreadable. Parsing is cached, so this costs nothing per frame.
+    if (cfg.icon.custom && cfg.icon.custom.svg) {
         const key = `custom:${cfg.icon.custom.key}`;
         if (!iconCache.has(key)) {
-            const g = cfg.icon.custom.contours;
+            const g = svgDocumentToContours(cfg.icon.custom.svg);
             const a = clip.unionContours(g.evenodd || [], 'evenodd');
             const b = clip.unionContours(g.nonzero || [], 'nonzero');
             iconCache.set(key, a.length && b.length ? clip.union(a, b) : (a.length ? a : b));
@@ -46,7 +49,10 @@ function resolveIcon(cfg) {
 /* ── build ── */
 
 function scheduleRebuild() {
-    saveParty(party);
+    if (!saveParty(party) && !scheduleRebuild.warned) {
+        scheduleRebuild.warned = true;
+        toast('Could not save to this browser — export the JSON if you want to keep this party.', true);
+    }
     clearTimeout(rebuildTimer);
     rebuildTimer = setTimeout(rebuild, 70);
 }
@@ -112,9 +118,11 @@ function renderMetrics(built) {
 }
 
 function renderDownloads(built) {
+    const cfg = current();
     const grid = el('download-grid');
     grid.innerHTML = '';
-    const parts = orientForPrint(built.parts, current());
+    const parts = orientForPrint(built.parts, cfg);
+    el('print-hint').textContent = printHint(cfg, parts);
     for (const part of parts) {
         const b = document.createElement('button');
         b.className = 'btn part-btn';
@@ -125,6 +133,20 @@ function renderDownloads(built) {
         };
         grid.appendChild(b);
     }
+}
+
+/** One line under the download buttons saying how this configuration wants to be printed. */
+function printHint(cfg, parts) {
+    const bits = [];
+    bits.push(cfg.detail.style === 'raised'
+        ? 'Prints face up, detail last'
+        : 'Prints face down on a textured plate');
+    bits.push(`${parts.length} part${parts.length === 1 ? '' : 's'}, sharing one origin`);
+    if (cfg.detail.style !== 'engraved' && parts.length > 1) {
+        bits.push(`single extruder: filament change at ${Math.min(cfg.detail.depth, cfg.size.plateThickness - 0.4).toFixed(2)} mm`);
+    }
+    if (cfg.hanger.mode === 'separate') bits.push('bracket sits beside the banner, glue it on afterwards');
+    return bits.join(' · ');
 }
 
 function renderPartyTabs() {
@@ -238,7 +260,27 @@ function iconSvg(icon, size = 40) {
     return `<svg viewBox="${icon.viewBox || '0 0 512 512'}" width="${size}" height="${size}" fill-rule="${icon.fillRule || 'evenodd'}">${paths}</svg>`;
 }
 
+function renderCustomIcon() {
+    const row = el('custom-icon');
+    const custom = current().icon.custom;
+    row.hidden = !custom;
+    if (!custom) return;
+    row.innerHTML = '';
+    const label = document.createElement('span');
+    label.textContent = `Using ${custom.name}`;
+    const clear = document.createElement('button');
+    clear.className = 'btn btn-small';
+    clear.textContent = 'Use a library icon';
+    clear.onclick = () => {
+        party.banners[party.active] = setPath(current(), 'icon.custom', null);
+        renderIconGrid();
+        scheduleRebuild();
+    };
+    row.append(label, clear);
+}
+
 function renderIconGrid() {
+    renderCustomIcon();
     const grid = el('icon-grid');
     const q = el('icon-search').value.trim().toLowerCase();
     const cat = el('icon-category').value;
@@ -467,7 +509,7 @@ function init() {
             const { name, data } = await readFile(e.target, 'text');
             const contours = svgDocumentToContours(data);
             if (!contours.evenodd.length && !contours.nonzero.length) throw new Error('No filled shapes found in that SVG');
-            party.banners[party.active] = setPath(current(), 'icon.custom', { key: `${name}:${data.length}`, name, contours });
+            party.banners[party.active] = setPath(current(), 'icon.custom', { key: `${name}:${data.length}`, name, svg: data });
             renderIconGrid();
             scheduleRebuild();
             toast(`Using ${name}`);

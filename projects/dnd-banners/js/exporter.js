@@ -31,13 +31,25 @@ export function orientForPrint(parts, cfg) {
         }
     }
 
-    // The banner parts must keep their alignment, so they share one translation.
+    // The banner parts must keep their alignment, so they share one translation. The
+    // glue-on bracket is a different print orientation entirely, so it is normalised on
+    // its own and then parked beside the banner — otherwise a 3MF drops it inside the
+    // banner, where no slicer can separate them.
     normaliseGroup(banner);
-    for (const part of loose) normaliseGroup([part]);
+    const bannerBox = groupBounds(banner);
+    let cursor = bannerBox ? bannerBox.maxX + 6 : 0;
+    for (const part of loose) {
+        normaliseGroup([part]);
+        const box = boundsOf(part.positions);
+        if (!box) continue;
+        const dx = cursor + box.x / 2;
+        part.positions = mapPositions(part.positions, (x, y, z) => [x + dx, y, z]);
+        cursor += box.x + 6;
+    }
     return [...banner, ...loose];
 }
 
-function normaliseGroup(parts) {
+function groupBounds(parts) {
     let box = null;
     for (const p of parts) {
         const b = boundsOf(p.positions);
@@ -47,6 +59,11 @@ function normaliseGroup(parts) {
             maxX: Math.max(box.maxX, b.maxX), maxY: Math.max(box.maxY, b.maxY), maxZ: Math.max(box.maxZ, b.maxZ),
         } : b;
     }
+    return box;
+}
+
+function normaliseGroup(parts) {
+    const box = groupBounds(parts);
     if (!box) return;
     const dx = -(box.minX + box.maxX) / 2, dy = -(box.minY + box.maxY) / 2, dz = -box.minZ;
     for (const p of parts) p.positions = mapPositions(p.positions, (x, y, z) => [x + dx, y + dy, z + dz]);

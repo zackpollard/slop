@@ -83,6 +83,16 @@ body {
     .stage { position: static; order: -1; }
 }
 
+@media (max-width: 620px) {
+    .app { padding: 1rem .75rem 2rem; }
+    .party { flex-direction: column; align-items: stretch; }
+    .party-tabs { flex-wrap: nowrap; overflow-x: auto; padding-bottom: .2rem; }
+    .party-tab { flex: none; }
+    .party-actions { justify-content: flex-end; }
+    .field { grid-template-columns: 1fr; gap: .25rem; }
+    .viewport { height: 58vh; }
+}
+
 /* ── cards ── */
 .card {
     background: var(--color-surface); border: 1px solid var(--color-border);
@@ -174,6 +184,12 @@ input[type="color"] {
 .icon-cell.active { border-color: var(--color-accent); background: var(--color-accent-dim); }
 .icon-cell svg { width: 100%; height: 100%; fill: var(--color-text); display: block; }
 .icon-cell.active svg { fill: var(--color-accent); }
+.custom-icon {
+    display: flex; align-items: center; justify-content: space-between; gap: .5rem;
+    margin-top: .5rem; padding: .4rem .55rem; border-radius: 7px;
+    background: var(--color-accent-dim); border: 1px solid rgba(196,162,78,.4);
+    font-size: .8rem;
+}
 .icon-empty { grid-column: 1 / -1; text-align: center; color: var(--color-text-muted); font-size: .8rem; padding: 1rem; }
 
 /* ── viewport ── */
@@ -202,6 +218,7 @@ input[type="color"] {
     font-size: .78rem; line-height: 1.45; padding: .5rem .65rem; border-radius: 7px;
     background: rgba(210,160,60,.1); border: 1px solid rgba(210,160,60,.35); color: #e6c887;
 }
+.print-hint { font-size: .76rem; color: var(--color-text-muted); margin-bottom: .55rem; }
 .download-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: .45rem; margin-bottom: .5rem; }
 .download-row { display: flex; gap: .45rem; flex-wrap: wrap; margin-top: .45rem; }
 .part-btn { justify-content: flex-start; gap: .5rem; }
