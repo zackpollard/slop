@@ -23,7 +23,10 @@ export function orientForPrint(parts, cfg) {
     const loose = [];
     for (const part of parts) {
         if (part.key === 'hanger') {
-            loose.push({ ...part, positions: mapPositions(part.positions, (x, y, z) => [x, y, -(z + t)], true) });
+            // 180 degrees about X, not a mirror in Z: the bracket happens to be
+            // left-right symmetric today, so a reflection would survive, but a rotation
+            // cannot ever hand back a mirrored part if that symmetry is lost.
+            loose.push({ ...part, positions: mapPositions(part.positions, (x, y, z) => [x, -y, -(z + t)]) });
         } else if (faceDown) {
             banner.push({ ...part, positions: mapPositions(part.positions, (x, y, z) => [x, -y, -z]) });
         } else {
