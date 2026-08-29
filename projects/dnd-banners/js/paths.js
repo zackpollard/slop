@@ -123,6 +123,10 @@ export function svgDocumentToContours(svgText) {
     }
     const groups = { evenodd: [], nonzero: [] };
     for (const shapePath of parsed.paths) {
+        // Stroke-only geometry has no area to extrude, and taking its outline as a filled
+        // region would silently contradict what the upload control promises.
+        const fill = shapePath.userData?.style?.fill;
+        if (fill === 'none' || fill === 'transparent') continue;
         const rule = shapePath.userData?.style?.fillRule === 'nonzero' ? 'nonzero' : 'evenodd';
         for (const sub of shapePath.subPaths) {
             let pts;

@@ -73,7 +73,7 @@
                     <input type="search" id="icon-search" placeholder="Search icons…" autocomplete="off">
                     <select id="icon-category"></select>
                 </div>
-                <div class="icon-grid" id="icon-grid"></div>
+                <div class="icon-grid" id="icon-grid" role="group" aria-label="Icon library"></div>
                 <div class="row">
                     <label class="check"><input type="checkbox" data-path="icon.show"> Show icon</label>
                     <label class="check"><input type="checkbox" data-path="icon.flipX"> Mirror</label>
@@ -283,7 +283,7 @@
             </section>
 
             <section class="card collapsible collapsed" id="card-layout">
-                <h2 class="toggle">Fine layout <span class="chev">▾</span></h2>
+                <h2><button type="button" class="toggle" aria-expanded="false">Fine layout <span class="chev">▾</span></button></h2>
                 <div class="card-body">
                     <div class="field">
                         <span class="field-label">Side margin <em>% of width</em></span>
@@ -373,7 +373,7 @@
             </section>
 
             <section class="card collapsible collapsed" id="card-help">
-                <h2 class="toggle">How to print these <span class="chev">▾</span></h2>
+                <h2><button type="button" class="toggle" aria-expanded="false">How to print these <span class="chev">▾</span></button></h2>
                 <div class="card-body help">
                     <ol>
                         <li><strong>Inlay</strong> (the default) matches the reference tokens. Print the banner <em>face down</em> on a textured plate: the plate texture becomes the banner surface and the icon and lettering sit flush.</li>
@@ -397,7 +397,7 @@
             </div>
 
             <div class="stage-panel">
-                <div id="warnings" class="warnings"></div>
+                <div id="warnings" class="warnings" role="status" aria-live="polite"></div>
                 <div class="metrics" id="metrics"></div>
                 <h3>Download</h3>
                 <p class="print-hint" id="print-hint"></p>
@@ -421,7 +421,7 @@
 </div>
 
 <input type="file" id="json-import" accept="application/json,.json" hidden>
-<div class="toast" id="toast" hidden></div>
+<div class="toast" id="toast" role="status" aria-live="assertive" hidden></div>
 
 <script type="module" src="js/app.js"></script>
 </body>

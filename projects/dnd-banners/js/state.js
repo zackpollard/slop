@@ -125,15 +125,110 @@ export function getPath(obj, path) {
     return path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
 }
 
+/* ── sanitising ── */
+
+export const safeColor = (c) => (/^#[0-9a-f]{6}$/i.test(String(c ?? '').trim())
+    ? String(c).trim().toLowerCase() : '#cccccc');
+
+/** Coerce a value to the shape of the corresponding default. */
+function coerce(value, template) {
+    if (typeof template === 'number') {
+        const n = Number(value);
+        return Number.isFinite(n) ? n : template;
+    }
+    if (typeof template === 'boolean') return value === true || value === 'true';
+    if (typeof template === 'string') return typeof value === 'string' ? value : template;
+    if (Array.isArray(template)) return Array.isArray(value) ? value : template;
+    if (template && typeof template === 'object') {
+        const out = {};
+        for (const [k, v] of Object.entries(template)) out[k] = coerce(value ? value[k] : undefined, v);
+        return out;
+    }
+    return value;
+}
+
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+/**
+ * Turn arbitrary JSON into a banner this app can actually build.
+ *
+ * Saved parties and imported files are just text: a field can be the wrong type, absurd,
+ * or hostile. Everything is coerced to the shape of the defaults and clamped to a range
+ * that still produces geometry, so a bad file degrades to an odd-looking banner rather
+ * than a broken app or a persisted crash.
+ */
+export function sanitiseBanner(raw) {
+    const merged = defaultBanner(raw && typeof raw === 'object' ? raw : {});
+    const b = coerce(merged, defaultBanner());
+
+    b.name = String(b.name || 'Banner').slice(0, 60);
+    b.text.name = String(merged.text?.name ?? '').slice(0, 40);
+    b.text.lines = (Array.isArray(merged.text?.lines) ? merged.text.lines : [])
+        .slice(0, 4).map(l => String(l ?? '').slice(0, 60));
+
+    const custom = merged.icon?.custom;
+    b.icon.custom = (custom && typeof custom === 'object' && typeof custom.svg === 'string')
+        ? { key: String(custom.key ?? ''), name: String(custom.name ?? 'icon.svg'), svg: custom.svg }
+        : null;
+
+    b.size.width = clamp(b.size.width, 8, 200);
+    b.size.height = clamp(b.size.height, 15, 400);
+    b.size.plateThickness = clamp(b.size.plateThickness, 0.6, 20);
+    b.size.cornerRadius = clamp(b.size.cornerRadius, 0, b.size.width / 4);
+    b.size.tailDepth = clamp(b.size.tailDepth, 0, b.size.height * 0.6);
+    if (!['swallowtail', 'point', 'none'].includes(b.size.tailStyle)) b.size.tailStyle = 'swallowtail';
+
+    if (!['inlay', 'raised', 'engraved'].includes(b.detail.style)) b.detail.style = 'inlay';
+    b.detail.depth = clamp(b.detail.depth, 0.05, 10);
+    b.detail.gap = clamp(b.detail.gap, 0, 2);
+    b.detail.chamfer = clamp(b.detail.chamfer, 0, 4);
+    b.detail.plateChamfer = clamp(b.detail.plateChamfer, 0, 4);
+    b.detail.outline.width = clamp(b.detail.outline.width, 0.05, 6);
+
+    if (!['attached', 'separate', 'none'].includes(b.hanger.mode)) b.hanger.mode = 'attached';
+    b.hanger.screenThickness = clamp(b.hanger.screenThickness, 0, 60);
+    b.hanger.clearance = clamp(b.hanger.clearance, 0, 20);
+    b.hanger.thickness = clamp(b.hanger.thickness, 0.4, 20);
+    b.hanger.overhang = clamp(b.hanger.overhang, 0, 120);
+    b.hanger.lip = clamp(b.hanger.lip, 0, 40);
+    b.hanger.flangeThickness = clamp(b.hanger.flangeThickness, 0.4, 10);
+    b.hanger.flangeHeight = clamp(b.hanger.flangeHeight, 2, 100);
+
+    for (const key of ['sideMargin', 'iconTop', 'iconHeight', 'iconGap', 'nameSize', 'subSize',
+        'nameGap', 'lineGap', 'bottomPad']) {
+        b.layout[key] = clamp(b.layout[key], 0, 0.9);
+    }
+    b.layout.iconWidthScale = clamp(b.layout.iconWidthScale, 0.05, 2);
+    b.layout.iconOffsetX = clamp(b.layout.iconOffsetX, -0.5, 0.5);
+    if (!['center', 'top'].includes(b.layout.textAnchor)) b.layout.textAnchor = 'center';
+    b.print.minFeature = clamp(b.print.minFeature, 0.05, 10);
+
+    for (const key of ['plate', 'a', 'b']) b.colors[key] = safeColor(b.colors[key]);
+    for (const key of ['icon', 'name', 'sub']) if (b.parts[key] !== 'b') b.parts[key] = 'a';
+    for (const key of ['nameCase', 'subCase']) {
+        if (!['upper', 'smallcaps', 'as-typed'].includes(b.font[key])) b.font[key] = 'upper';
+    }
+    b.font.letterSpacing = clamp(b.font.letterSpacing, -0.1, 0.6);
+    b.font.smallCapRatio = clamp(b.font.smallCapRatio, 0.4, 1);
+    return b;
+}
+
+/** Sanitise a whole party, returning null when there is nothing usable in it. */
+export function sanitiseParty(data) {
+    const list = Array.isArray(data) ? data : (data && data.banners);
+    if (!Array.isArray(list) || !list.length) return null;
+    const banners = list.slice(0, 60).map(sanitiseBanner);
+    const active = Number.isInteger(data?.active) ? clamp(data.active, 0, banners.length - 1) : 0;
+    return { banners, active };
+}
+
 /* ── persistence ── */
 
 function loadParty() {
     try {
         const raw = localStorage.getItem(STORAGE_KEY);
         if (!raw) return null;
-        const data = JSON.parse(raw);
-        if (!data || !Array.isArray(data.banners) || !data.banners.length) return null;
-        return { banners: data.banners.map(b => defaultBanner(b)), active: data.active || 0 };
+        return sanitiseParty(JSON.parse(raw));
     } catch (err) {
         return null;
     }

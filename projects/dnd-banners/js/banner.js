@@ -64,22 +64,35 @@ function buildAttachedHanger(cfg) {
     let pos = extrudeRegions(plan, { z0: 0, z1: h.thickness });
     pos = mapPositions(pos, armFrame(0));
 
-    if (h.lip > 0) {
-        // A tab at the far edge that drops down behind the screen, chamfered underneath
-        // at 45 degrees so it still prints without support.
-        const lipT = Math.min(2.0, h.thickness);
-        const drop = h.lip;
-        const barW = cfg.size.width + 2 * Math.max(0, h.overhang);
-        const profile = [
-            { x: -h.thickness, y: backZ },
-            { x: -h.thickness, y: backZ + lipT },
-            { x: -h.thickness - drop + lipT, y: backZ + lipT },
-            { x: -h.thickness - drop, y: backZ },
-        ];
-        const lip = extrudeRegions([{ outer: clip.orient(profile, true), holes: [] }], { z0: -barW / 2, z1: barW / 2 });
-        appendPositions(pos, mapPositions(lip, (u, v, w) => [w, u, v]));
-    }
+    appendPositions(pos, buildHangerLip(cfg, backZ));
     return pos;
+}
+
+/**
+ * The tab at the far edge of the bar that drops down behind the screen.
+ *
+ * Drawn as a side profile in the y/z plane and extruded along x. Its underside is
+ * chamfered at 45 degrees so it prints without support, and the chamfer is clamped to the
+ * drop: a tab shallower than its own thickness becomes a triangular ridge rather than a
+ * profile folded through itself. Clipper resolves the result either way, so the wedge and
+ * trapezoid cases both come out as clean rings.
+ */
+function buildHangerLip(cfg, backZ) {
+    const h = cfg.hanger;
+    if (!(h.lip > 0)) return [];
+    const drop = h.lip;
+    const lipT = Math.min(2.0, h.thickness, drop);
+    const barW = cfg.size.width + 2 * Math.max(0, h.overhang);
+    const profile = [
+        { x: -h.thickness, y: backZ },
+        { x: -h.thickness, y: backZ + lipT },
+        { x: -h.thickness - drop + lipT, y: backZ + lipT },
+        { x: -h.thickness - drop, y: backZ },
+    ];
+    const regions = clip.unionContours([profile], 'nonzero');
+    if (!regions.length) return [];
+    const lip = extrudeRegions(regions, { z0: -barW / 2, z1: barW / 2 });
+    return mapPositions(lip, (u, v, w) => [w, u, v]);
 }
 
 function buildSeparateHanger(cfg) {
@@ -98,15 +111,15 @@ function buildSeparateHanger(cfg) {
     const plan = hangerBarPlan(cfg, backZ, -t);
     const bar = extrudeRegions(plan, { z0: 0, z1: h.thickness });
     appendPositions(pos, mapPositions(bar, armFrame(0)));
+    appendPositions(pos, buildHangerLip(cfg, backZ));
     return pos;
 }
 
 /* ── text block ── */
 
-function buildTextLines(cfg, font) {
-    const { width, height } = cfg.size;
+function buildTextLines(cfg, font, contentW) {
+    const { height } = cfg.size;
     const L = cfg.layout;
-    const contentW = width * (1 - 2 * L.sideMargin);
     const lines = [];
 
     const push = (text, capHeight, textCase, part, role) => {
@@ -135,7 +148,9 @@ export function buildBanner(cfg, { font, icon }) {
     const { width, height, plateThickness: t } = cfg.size;
     const L = cfg.layout;
     const notchY = -(height - (cfg.size.tailStyle === 'none' ? 0 : cfg.size.tailDepth));
-    const contentW = width * (1 - 2 * L.sideMargin);
+    // The artwork is hard-clipped to the plate eroded by EDGE_MARGIN later on, so fitting
+    // text to a wider column than that would silently shave the ends off long lines.
+    const contentW = Math.max(2, Math.min(width * (1 - 2 * L.sideMargin), width - 2 * EDGE_MARGIN - 0.2));
 
     /* plate outline, with convex corners rounded by an open (erode then dilate) */
     let plate = clip.unionContours([bannerOutline({
@@ -175,7 +190,7 @@ export function buildBanner(cfg, { font, icon }) {
     }
 
     /* text block, centred in whatever room is left between the icon and the notch */
-    const lines = font ? buildTextLines(cfg, font) : [];
+    const lines = font ? buildTextLines(cfg, font, contentW) : [];
     if (lines.length) {
         const gapAfterName = height * L.nameGap;
         const gapBetweenSubs = height * L.lineGap;
@@ -261,7 +276,14 @@ export function buildBanner(cfg, { font, icon }) {
     if (style === 'raised' || !detailAll.length) {
         platePos = extrudeRegions(plate, { z0: -t, z1: 0, chamferTop: cfg.detail.plateChamfer, chamferBottom: cfg.detail.plateChamfer });
     } else {
-        const pocket = cfg.detail.gap > 0 ? clip.offsetRegions(detailAll, cfg.detail.gap) : detailAll;
+        // Growing by the part clearance can push a pocket past the plate edge, and
+        // buildPlateWithPockets assumes every pocket is strictly interior.
+        let pocket = detailAll;
+        if (cfg.detail.gap > 0) {
+            pocket = clip.offsetRegions(detailAll, cfg.detail.gap);
+            const keepInside = clip.offsetRegions(plate, -0.3);
+            if (keepInside.length) pocket = clip.intersection(pocket, keepInside);
+        }
         platePos = buildPlateWithPockets(plate, pocket, t, depth, cfg.detail.plateChamfer);
     }
 

@@ -64,16 +64,28 @@ export function addCustomFont(name, arrayBuffer) {
     return key;
 }
 
-/** Cap height in font units, measured from the actual 'H' so it is never a guess. */
+/**
+ * Cap height in font units, measured from the actual 'H' so it is never a guess.
+ * Only the ink above the baseline counts — an ornate face whose H carries a descending
+ * flourish would otherwise be sized as if the flourish were part of the capital, and
+ * every line set in it would come out noticeably small.
+ */
 function capUnits(font) {
     try {
         const bb = font.charToGlyph('H').getBoundingBox();
-        if (bb && isFinite(bb.y2) && bb.y2 > 1) return bb.y2 - Math.min(0, bb.y1);
+        if (bb && isFinite(bb.y2) && bb.y2 > 1) return bb.y2;
     } catch (err) { /* fall through */ }
     return font.ascender * 0.7;
 }
 
 const isLower = ch => ch !== ch.toUpperCase() && ch === ch.toLowerCase();
+
+/** Uppercasing can lengthen a character (German sharp s becomes SS); glyph lookup takes
+ *  one character, so leave those as typed rather than silently dropping half of them. */
+const upper = ch => {
+    const up = ch.toUpperCase();
+    return [...up].length === 1 ? up : ch;
+};
 
 /**
  * Build the glyph run for a line. Small caps are synthesised by scaling the uppercase
@@ -84,9 +96,9 @@ function buildRun(font, text, textCase, smallCapRatio) {
     const run = [];
     for (const ch of text) {
         if (textCase === 'smallcaps') {
-            run.push({ ch: ch.toUpperCase(), scale: isLower(ch) ? smallCapRatio : 1 });
+            run.push({ ch: upper(ch), scale: isLower(ch) ? smallCapRatio : 1 });
         } else if (textCase === 'upper') {
-            run.push({ ch: ch.toUpperCase(), scale: 1 });
+            run.push({ ch: upper(ch), scale: 1 });
         } else {
             run.push({ ch, scale: 1 });
         }
@@ -131,7 +143,8 @@ export function layoutLine(font, text, {
             const path = glyph.getPath(cursor, 0, upm * scale);
             commands = commands.concat(path.commands);
         }
-        cursor += (glyph.advanceWidth || upm * 0.5) * scale;
+        // A zero advance is legitimate (combining marks); only a missing one needs a default.
+        cursor += (glyph.advanceWidth ?? upm * 0.5) * scale;
         prevGlyph = glyph;
     }
 

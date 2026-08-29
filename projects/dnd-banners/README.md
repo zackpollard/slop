@@ -10,9 +10,9 @@ Nothing is uploaded anywhere.
 
 ## What it makes
 
-A banner is a flat plate with a swallowtail bottom, an icon and up to four lines of
-lettering, and a bar across the top that rests on the DM screen while the banner hangs
-down the front.
+A banner is a flat plate with a swallowtail bottom, an icon, a name and up to four
+subtitle lines, and a bar across the top that rests on the DM screen while the banner
+hangs down the front.
 
 Four presets reproduce the hand-made tokens the tool was built from — Ivan the Goliath
 Barbarian, Juniper the Elf Druid, Quin the Human Crossbow Fighter, and the DM's own
@@ -52,10 +52,11 @@ No build step; the page loads ES modules directly.
 | `js/fonts.js` | Font catalogue, cap-height sizing, synthesised small caps |
 | `js/shapes.js` | Banner silhouette, rounded rectangles, the hanger bar profile |
 | `js/banner.js` | Layout and assembly — config in, printable parts out |
-| `js/exporter.js` | Print orientation, binary STL, 3MF, zip bundles |
+| `js/exporter.js` | Print orientation, binary STL, 3MF packaging |
 | `js/preview.js` | three.js viewport |
+| `js/state.js` | Defaults, the four presets, sanitising and persistence |
 | `js/icons.js` | Generated icon library |
-| `js/app.js` | Controls, party management, downloads |
+| `js/app.js` | Controls, party management, zip bundles, downloads |
 
 ### Geometry notes
 
@@ -65,20 +66,30 @@ The parts have to survive a slicer, so a few things are deliberate:
   clipping. Ear clipping bridges each hole out to the outer ring, and a line of lettering
   hands it a dozen holes whose vertices sit on a shared baseline — those bridges overlap
   and leave cracks along the pocket rims.
-- **Pocket mouths reuse the pocket's own vertices.** Deriving the front face from a boolean
-  difference would return re-computed vertices that no longer line up with the pocket walls.
-- **Outlines are simplified once**, before anything is extruded, so pocket walls, pocket
-  mouths and the inlay parts all share identical vertices. The tolerance scales with the
-  smallest lettering, because a tolerance that is free on a 5 mm capital will fold a 1.5 mm
-  one through itself.
+- **The front face and the pocket walls come from the same boolean.** Deriving them
+  separately is what cracks the mesh: two pockets that touch get merged into one mouth by
+  the difference but stay two rings in the pocket set, so the face and the walls end up
+  disagreeing about where the boundary runs.
+- **Outlines are simplified once**, before anything is extruded. The tolerance scales with
+  the smallest lettering, because a tolerance that is free on a 5 mm capital will fold a
+  1.5 mm one through itself.
+- **Artwork is then grown by two microns.** Clipper will happily return two shapes meeting
+  at a single point — an icon whose horn grazes its skull — and a constrained triangulator
+  cannot accept a coordinate that appears in two constraints. The growth fuses such
+  contacts into one ring, three orders of magnitude below what a printer resolves.
 - **Chamfers are rejected where they would not fit.** A miter offset on a letter stem
   thinner than twice the chamfer folds the ring inside out, so the result is checked
   against Clipper and the edge is left square when it fails.
 
 `projects/dnd-banners` has no tests in-repo; the geometry was validated with a headless
-harness that asserts every exported part is closed and consistently wound (every directed
-edge appearing exactly once alongside its reverse) across the full matrix of detail
-styles, hanger modes, tail shapes and extreme sizes.
+harness that asserts every exported part is closed and consistently wound — every directed
+edge appearing exactly once alongside its reverse — across the full matrix of detail
+styles, hanger modes, tail shapes, lip depths, part clearances, extreme sizes and every
+icon in the library.
+
+Saved and imported parties are coerced to the shape of the defaults and clamped to ranges
+that still produce geometry, so a hand-edited or truncated file degrades to an odd-looking
+banner rather than a broken app.
 
 ## Icon library
 

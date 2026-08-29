@@ -102,11 +102,17 @@ body {
     font-size: .74rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em;
     color: var(--color-text-muted); margin-bottom: .85rem;
 }
-.card.collapsible h2.toggle { cursor: pointer; display: flex; justify-content: space-between; align-items: center; margin-bottom: .85rem; }
+.card.collapsible h2 { margin-bottom: .85rem; }
+.card.collapsible button.toggle {
+    all: unset; box-sizing: border-box; cursor: pointer; width: 100%;
+    display: flex; justify-content: space-between; align-items: center;
+    font: inherit; color: inherit; letter-spacing: inherit; text-transform: inherit;
+}
+.card.collapsible button.toggle:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 3px; border-radius: 4px; }
 .card.collapsible .chev { transition: transform .18s; }
 .card.collapsed .chev { transform: rotate(-90deg); }
 .card.collapsed .card-body { display: none; }
-.card.collapsed h2.toggle { margin-bottom: 0; }
+.card.collapsed h2 { margin-bottom: 0; }
 
 /* ── fields ── */
 .field { display: grid; grid-template-columns: 1fr 1.15fr; gap: .5rem; align-items: center; margin-bottom: .6rem; }
@@ -122,7 +128,11 @@ input[type="text"], input[type="number"], input[type="search"], select {
     font-family: var(--font-body); font-size: .85rem;
 }
 input[type="number"] { font-family: var(--font-mono); font-size: .78rem; padding: .42rem .35rem; text-align: right; }
-input:focus, select:focus { outline: none; border-color: var(--color-accent); }
+input:focus, select:focus { border-color: var(--color-accent); }
+input:focus:not(:focus-visible), select:focus:not(:focus-visible) { outline: none; }
+input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible {
+    outline: 2px solid var(--color-accent); outline-offset: 2px;
+}
 input[type="file"] { font-size: .78rem; color: var(--color-text-muted); }
 input[type="file"]::file-selector-button {
     background: var(--color-surface-hover); color: var(--color-text); border: 1px solid var(--color-border);
@@ -184,6 +194,7 @@ input[type="color"] {
 .icon-cell.active { border-color: var(--color-accent); background: var(--color-accent-dim); }
 .icon-cell svg { width: 100%; height: 100%; fill: var(--color-text); display: block; }
 .icon-cell.active svg { fill: var(--color-accent); }
+.custom-icon[hidden] { display: none; }
 .custom-icon {
     display: flex; align-items: center; justify-content: space-between; gap: .5rem;
     margin-top: .5rem; padding: .4rem .55rem; border-radius: 7px;
@@ -201,6 +212,10 @@ input[type="color"] {
 .viewport canvas { width: 100%; height: 100%; display: block; touch-action: none; }
 .viewport-tools { position: absolute; top: .6rem; right: .6rem; display: flex; gap: .5rem; align-items: center; }
 .viewport-tools .check { background: rgba(15,15,12,.75); padding: .25rem .5rem; border-radius: 6px; }
+.viewport-fallback {
+    position: absolute; inset: 0; display: grid; place-content: center; text-align: center;
+    padding: 2rem; color: var(--color-text-muted); font-size: .86rem; line-height: 1.6;
+}
 .viewport-status {
     position: absolute; left: .6rem; bottom: .6rem; font-family: var(--font-mono);
     font-size: .72rem; color: var(--color-text-muted); background: rgba(15,15,12,.7);
