@@ -2,7 +2,7 @@
  * state.js — banner defaults, the four reference presets, and party persistence.
  */
 
-export const STORAGE_KEY = 'slop.dnd-banners.v1';
+const STORAGE_KEY = 'slop.dnd-banners.v1';
 
 export function defaultBanner(overrides = {}) {
     return deepMerge({
@@ -85,7 +85,7 @@ export function presetBanner(id) {
     return preset ? defaultBanner(preset.banner) : defaultBanner();
 }
 
-export function deepMerge(base, patch) {
+function deepMerge(base, patch) {
     if (patch === null || patch === undefined) return clone(base);
     // typeof null is "object", so a null default (icon.custom, say) has to be excluded
     // explicitly or the merge tries to write properties onto it.
@@ -127,7 +127,7 @@ export function getPath(obj, path) {
 
 /* ── persistence ── */
 
-export function loadParty() {
+function loadParty() {
     try {
         const raw = localStorage.getItem(STORAGE_KEY);
         if (!raw) return null;

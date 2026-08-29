@@ -41,10 +41,6 @@ export function customFonts() {
     return [...custom.keys()].map(key => ({ key, label: key.replace(/^custom:/, ''), note: 'uploaded', custom: true }));
 }
 
-export function fontEntry(key) {
-    return FONTS.find(f => f.key === key) || customFonts().find(f => f.key === key) || null;
-}
-
 export async function loadFont(key) {
     if (custom.has(key)) return custom.get(key);
     if (cache.has(key)) return cache.get(key);

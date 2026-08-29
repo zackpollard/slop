@@ -10,15 +10,15 @@
 
 const C = () => window.ClipperLib;
 
-export const SCALE = 1000; // 1 clipper unit = 1 micron
+const SCALE = 1000; // 1 clipper unit = 1 micron
 
 /** Contour: Array<{x, y}> in mm. Path: Array<{X, Y}> in clipper units. */
 
-export function toClipper(contours) {
+function toClipper(contours) {
     return contours.map(c => c.map(p => ({ X: Math.round(p.x * SCALE), Y: Math.round(p.y * SCALE) })));
 }
 
-export function fromClipper(paths) {
+function fromClipper(paths) {
     return paths.map(p => p.map(pt => ({ x: pt.X / SCALE, y: pt.Y / SCALE })));
 }
 

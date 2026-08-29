@@ -297,6 +297,7 @@ function renderIconGrid() {
         const cell = document.createElement('button');
         cell.className = 'icon-cell' + (!cfg.icon.custom && cfg.icon.id === icon.id ? ' active' : '');
         cell.title = icon.name;
+        cell.setAttribute('aria-label', icon.name);
         cell.innerHTML = iconSvg(icon);
         cell.onclick = () => {
             party.banners[party.active] = setPath(setPath(current(), 'icon.id', icon.id), 'icon.custom', null);
@@ -463,7 +464,17 @@ function populateCategories() {
     }
 }
 
+/** An imported or older saved party may name an icon this build no longer ships. */
+function normaliseIcons() {
+    const fallback = ICONS.length ? ICONS[0].id : null;
+    for (const banner of party.banners) {
+        if (banner.icon.custom || ICONS.some(i => i.id === banner.icon.id)) continue;
+        banner.icon.id = fallback;
+    }
+}
+
 function init() {
+    normaliseIcons();
     preview = new Preview(el('view'));
     populateFontSelect();
     populateCategories();
@@ -562,6 +573,7 @@ function init() {
             if (!Array.isArray(banners) || !banners.length) throw new Error('No banners in that file');
             party.banners = banners.map(b => defaultBanner(b));
             party.active = 0;
+            normaliseIcons();
             refreshControls();
             scheduleRebuild();
             toast(`Imported ${banners.length} banner${banners.length === 1 ? '' : 's'}`);

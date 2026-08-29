@@ -10,9 +10,9 @@
  */
 
 import * as clip from './clip.js';
-import { extrudeRegions, triangulateCap, invertWinding, mapPositions, appendPositions, boundsOf } from './solid.js';
+import { extrudeRegions, triangulateCap, invertWinding, mapPositions, appendPositions } from './solid.js';
 import { bannerOutline, roundedRect, stadium } from './shapes.js';
-import { svgPathsToContours, contoursBounds, transformContours } from './paths.js';
+import { svgPathsToContours, transformContours } from './paths.js';
 import { layoutLine } from './fonts.js';
 
 const EDGE_MARGIN = 0.9;   // mm of plate that detail may never encroach on
@@ -401,11 +401,9 @@ function pointInRing(pt, ring) {
 }
 
 /** Fraction of the filled area that survives neither erosion nor re-dilation by w/2. */
-export function thinFeatureRatio(regions, w) {
+function thinFeatureRatio(regions, w) {
     const total = clip.regionsArea(regions);
     if (total <= 0) return 0;
     const opened = clip.offsetRegions(clip.offsetRegions(regions, -w / 2), w / 2);
     return Math.max(0, (total - clip.regionsArea(opened)) / total);
 }
-
-export { boundsOf };
