@@ -93,10 +93,14 @@ banner rather than a broken app.
 
 ## Icon library
 
-Icons live in `js/icons.js` as filled SVG subpaths on a 512×512 canvas with `evenodd` fill.
-They are drawn chunky on purpose — nothing thinner than about 16 units survives being
-printed at 12–16 mm. You can also upload your own SVG; strokes are ignored, so outline it
-to a filled path first.
+Icons live in `js/icons.js` as filled SVG paths on a 512×512 canvas. Each path is filled
+independently with the icon's fill rule and the results are unioned, exactly as a browser
+paints them — subpaths interact *within* a path, separate paths only ever add. They are
+drawn chunky on purpose: nothing thinner than about 16 units survives being printed at
+12–16 mm.
+
+You can also upload your own SVG. Transforms and the primitive shapes are resolved, but
+strokes have no area to extrude and are skipped, so outline them to filled paths first.
 
 ## Libraries (all from CDN, no install)
 
