@@ -33,10 +33,12 @@ function resolveIcon(cfg) {
     if (cfg.icon.custom && cfg.icon.custom.svg) {
         const key = `custom:${cfg.icon.custom.key}`;
         if (!iconCache.has(key)) {
-            const g = svgDocumentToContours(cfg.icon.custom.svg);
-            const a = clip.unionContours(g.evenodd || [], 'evenodd');
-            const b = clip.unionContours(g.nonzero || [], 'nonzero');
-            iconCache.set(key, a.length && b.length ? clip.union(a, b) : (a.length ? a : b));
+            let acc = [];
+            for (const shape of svgDocumentToContours(cfg.icon.custom.svg)) {
+                const regions = clip.unionContours(shape.contours, shape.fillRule);
+                if (regions.length) acc = acc.length ? clip.union(acc, regions) : regions;
+            }
+            iconCache.set(key, acc);
         }
         return { regions: iconCache.get(key) };
     }
@@ -638,8 +640,7 @@ function init() {
     el('icon-upload').addEventListener('change', async e => {
         try {
             const { name, data } = await readFile(e.target, 'text');
-            const contours = svgDocumentToContours(data);
-            if (!contours.evenodd.length && !contours.nonzero.length) throw new Error('No filled shapes found in that SVG');
+            if (!svgDocumentToContours(data).length) throw new Error('No filled shapes found in that SVG');
             party.banners[party.active] = setPath(current(), 'icon.custom', { key: hashText(data), name, svg: data });
             renderIconGrid();
             scheduleRebuild();

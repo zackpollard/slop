@@ -112,29 +112,34 @@ export function commandsToContours(commands, unitsPerMm = 100) {
 /**
  * Flatten a whole user-supplied SVG document. SVGLoader resolves transforms and the
  * primitive shapes (rect/circle/polygon/...), so an exported icon from any editor works.
- * Contours are grouped by fill rule because the two cannot be unioned together.
+ *
+ * Returns ONE ENTRY PER FILLED ELEMENT, each with its own fill rule, because that is the
+ * unit a browser fills: subpaths interact within an element, elements only ever union.
+ * Flattening them together would turn every overlap between two shapes into a hole.
  */
 export function svgDocumentToContours(svgText) {
     let parsed;
     try {
         parsed = svgLoader.parse(svgText);
     } catch (err) {
-        return { evenodd: [], nonzero: [] };
+        return [];
     }
-    const groups = { evenodd: [], nonzero: [] };
+    const shapes = [];
     for (const shapePath of parsed.paths) {
         // Stroke-only geometry has no area to extrude, and taking its outline as a filled
         // region would silently contradict what the upload control promises.
         const fill = shapePath.userData?.style?.fill;
         if (fill === 'none' || fill === 'transparent') continue;
-        const rule = shapePath.userData?.style?.fillRule === 'nonzero' ? 'nonzero' : 'evenodd';
+        const fillRule = shapePath.userData?.style?.fillRule === 'nonzero' ? 'nonzero' : 'evenodd';
+        const contours = [];
         for (const sub of shapePath.subPaths) {
             let pts;
             try { pts = sub.getPoints(16); } catch (err) { continue; }
-            if (pts && pts.length >= 3) groups[rule].push(pts.map(p => ({ x: p.x, y: -p.y })));
+            if (pts && pts.length >= 3) contours.push(pts.map(p => ({ x: p.x, y: -p.y })));
         }
+        if (contours.length) shapes.push({ fillRule, contours });
     }
-    return groups;
+    return shapes;
 }
 
 export function contoursBounds(contours) {

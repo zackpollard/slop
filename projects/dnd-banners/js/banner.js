@@ -24,11 +24,25 @@ const cleanEpsFor = cfg => Math.max(0.002, Math.min(0.012,
 
 /* ── icon outlines ── */
 
+/**
+ * Fill each <path> independently, then union the results — the way a browser paints them.
+ *
+ * Evaluating every subpath from every path together under one even-odd rule instead turns
+ * any overlap BETWEEN two paths into a hole. An icon drawn as overlapping pieces then
+ * prints with gaps that were never in the artwork, and nothing on screen shows it, because
+ * the SVG preview in the picker paints the paths separately and gets the union.
+ */
 export function iconRegions(icon) {
     if (!icon || !icon.paths || !icon.paths.length) return [];
-    const contours = svgPathsToContours(icon.paths);
-    if (!contours.length) return [];
-    return clip.unionContours(contours, icon.fillRule || 'evenodd');
+    const rule = icon.fillRule || 'evenodd';
+    let acc = [];
+    for (const d of icon.paths) {
+        const contours = svgPathsToContours([d]);
+        if (!contours.length) continue;
+        const regions = clip.unionContours(contours, rule);
+        if (regions.length) acc = acc.length ? clip.union(acc, regions) : regions;
+    }
+    return acc;
 }
 
 /** Scale/translate regions so they fit a box, preserving aspect ratio. */
