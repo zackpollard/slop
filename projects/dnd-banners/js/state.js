@@ -8,7 +8,7 @@ export function defaultBanner(overrides = {}) {
     return deepMerge({
         name: 'New banner',
         text: { name: 'ARYN', lines: ['Elf', 'Ranger'] },
-        font: { key: 'metamorphous', nameCase: 'upper', subCase: 'smallcaps', letterSpacing: 0.03, smallCapRatio: 0.78 },
+        font: { key: 'germania-one', nameCase: 'upper', subCase: 'smallcaps', letterSpacing: 0.03, smallCapRatio: 0.78 },
         icon: { id: 'longbow', flipX: false, show: true, custom: null },
         size: {
             width: 30, height: 62, tailDepth: 9, tailStyle: 'swallowtail',

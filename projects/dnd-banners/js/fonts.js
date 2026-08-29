@@ -12,16 +12,16 @@ import { commandsToContours, contoursBounds, transformContours } from './paths.j
 const GF = 'https://cdn.jsdelivr.net/gh/google/fonts@main/';
 
 export const FONTS = [
-    { key: 'metamorphous', label: 'Metamorphous', note: 'closest to the reference tokens', url: GF + 'ofl/metamorphous/Metamorphous-Regular.ttf' },
+    { key: 'germania-one', label: 'Germania One', note: 'closest to the reference tokens', url: GF + 'ofl/germaniaone/GermaniaOne-Regular.ttf' },
+    { key: 'almendra', label: 'Almendra Bold', note: 'heavy storybook serif', url: GF + 'ofl/almendra/Almendra-Bold.ttf' },
+    { key: 'metamorphous', label: 'Metamorphous', note: 'lighter fantasy serif', url: GF + 'ofl/metamorphous/Metamorphous-Regular.ttf' },
     { key: 'cinzel', label: 'Cinzel', note: 'roman inscriptional caps', url: GF + 'ofl/cinzel/Cinzel%5Bwght%5D.ttf' },
     { key: 'cinzel-decorative', label: 'Cinzel Decorative', note: 'ornate caps', url: GF + 'ofl/cinzeldecorative/CinzelDecorative-Bold.ttf' },
     { key: 'marcellus-sc', label: 'Marcellus SC', note: 'elegant small caps', url: GF + 'ofl/marcellussc/MarcellusSC-Regular.ttf' },
     { key: 'grenze-gotisch', label: 'Grenze Gotisch', note: 'condensed gothic', url: GF + 'ofl/grenzegotisch/GrenzeGotisch%5Bwght%5D.ttf' },
     { key: 'pirata-one', label: 'Pirata One', note: 'blackletter', url: GF + 'ofl/pirataone/PirataOne-Regular.ttf' },
     { key: 'uncial-antiqua', label: 'Uncial Antiqua', note: 'celtic uncial', url: GF + 'ofl/uncialantiqua/UncialAntiqua-Regular.ttf' },
-    { key: 'almendra', label: 'Almendra Bold', note: 'storybook serif', url: GF + 'ofl/almendra/Almendra-Bold.ttf' },
     { key: 'eagle-lake', label: 'Eagle Lake', note: 'calligraphic', url: GF + 'ofl/eaglelake/EagleLake-Regular.ttf' },
-    { key: 'germania-one', label: 'Germania One', note: 'heavy condensed', url: GF + 'ofl/germaniaone/GermaniaOne-Regular.ttf' },
     { key: 'rye', label: 'Rye', note: 'western slab', url: GF + 'ofl/rye/Rye-Regular.ttf' },
     { key: 'caudex', label: 'Caudex Bold', note: 'sturdy serif', url: GF + 'ofl/caudex/Caudex-Bold.ttf' },
     { key: 'cormorant-unicase', label: 'Cormorant Unicase', note: 'unicase serif', url: GF + 'ofl/cormorantunicase/CormorantUnicase-Bold.ttf' },
@@ -32,7 +32,7 @@ export const FONTS = [
     { key: 'noto-sans', label: 'Noto Sans', note: 'plain sans', url: GF + 'ofl/notosans/NotoSans%5Bwdth,wght%5D.ttf' },
 ];
 
-export const DEFAULT_FONT = 'metamorphous';
+export const DEFAULT_FONT = 'germania-one';
 
 const cache = new Map();      // key -> Promise<Font>
 const custom = new Map();     // key -> Font (user uploaded)

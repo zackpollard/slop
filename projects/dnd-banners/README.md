@@ -16,7 +16,10 @@ hangs down the front.
 
 Four presets reproduce the hand-made tokens the tool was built from — Ivan the Goliath
 Barbarian, Juniper the Elf Druid, Quin the Human Crossbow Fighter, and the DM's own
-Elite banner with its red-on-cream daemon skull.
+Elite banner with its red-on-cream daemon skull. Their icons were recreated from the
+photographs, and the default face, Germania One, is the closest match on Google Fonts to
+the lettering on the originals: heavy condensed caps with wedge serifs and a flat-topped
+A. Sixteen other faces are available, or upload your own.
 
 ## Detail styles
 
@@ -93,7 +96,8 @@ banner rather than a broken app.
 
 ## Icon library
 
-Icons live in `js/icons.js` as filled SVG paths on a 512×512 canvas. Each path is filled
+96 icons ship in `js/icons.js` — the four replicas plus classes, races, weapons, magic,
+monsters, gear and dice — as filled SVG paths on a 512×512 canvas. Each path is filled
 independently with the icon's fill rule and the results are unioned, exactly as a browser
 paints them — subpaths interact *within* a path, separate paths only ever add. They are
 drawn chunky on purpose: nothing thinner than about 16 units survives being printed at
