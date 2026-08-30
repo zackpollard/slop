@@ -475,6 +475,10 @@ function closeOverlay() {
 async function runQuestion({ speakIt = true } = {}) {
     const token = ++seq;
     stopTimer();
+    // Whatever the previous question was playing has to stop with it: bumping
+    // the token above abandons the old flow, but the audio carries on by itself.
+    engines.clips.stop();
+    engines.audio.stopMelody();
     timer.mode = null;
     timer.remaining = settings().timerEnabled ? settings().timerSeconds : 0;
     timer.total = settings().timerSeconds;
@@ -495,7 +499,9 @@ async function runQuestion({ speakIt = true } = {}) {
         await say(script.question(question, game().questionIndex), { enabled: settings().readQuestions });
         if (token !== seq) return;
 
-        if (settings().repeatQuestion && settings().readQuestions) {
+        // Reading a music question twice is just a delay before the thing that
+        // actually is the question. The clip gets played twice instead.
+        if (settings().repeatQuestion && settings().readQuestions && !isAudioQuestion) {
             await sleep(500);
             if (token !== seq) return;
             await say(question.spokenQuestion || question.question, { enabled: true });
@@ -528,7 +534,11 @@ async function onTimeUp(token) {
 
     if (settings().autoAdvance) {
         await sleep(1200);
-        if (token === seq) actions.reveal();
+        if (token !== seq) return;
+        // With answers held to the end of the round there is nothing to reveal,
+        // so hands-free means going on to the next question.
+        if (settings().answersAtEndOfRound) actions.next();
+        else actions.reveal();
     }
 }
 

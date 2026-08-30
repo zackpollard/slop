@@ -204,6 +204,17 @@ domain.
   labels do real work rather than just colouring a chip.
 - Every question is **read aloud**. Avoid symbols, brackets, "which of the
   following", and anything that only works written down.
+- **Mind the era spread.** A pub crowd is a mixed age group, and a quiz written
+  from general knowledge drifts old without anyone noticing — the first pack in
+  this repo ended up with only eight of its ninety questions referring to
+  anything from 2000 onwards, which quietly favours the older half of the room.
+  Aim for roughly a third of your dated questions to come from the last twenty
+  years, and check it before you ship: count the years your questions actually
+  turn on, rather than trusting your sense of it.
+- The **kids' round especially** should be current. A child of eight has no
+  memory of the nineties; their television, films, games and books are the ones
+  showing now. A "children's round" full of the author's own childhood is a
+  round for the parents.
 - Avoid answers that go stale — current champions, record holders, "the newest".
   If you must, anchor the question with a date: "As of 2025, …".
 - Check your facts against a real source and put the URL in `source`. The app
