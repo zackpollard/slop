@@ -9,7 +9,7 @@
  * Nothing here touches the DOM.
  */
 
-import { storage, uid, clamp } from './dom.js';
+import { storage, uid, clamp, fmtPoints } from './dom.js';
 
 const SETTINGS_KEY = 'pubquiz.settings.v2';
 const GAME_KEY = 'pubquiz.game.v2';
@@ -58,7 +58,9 @@ export const DEFAULT_SETTINGS = {
     confetti: true,
 
     // Scoring
-    pointsPerCorrect: 1,
+    pointsPerCorrect: 1,        // used only when questions are not weighted
+    weightByDifficulty: true,   // a hard question should be worth more
+    difficultyPoints: { easy: 1, medium: 1.5, hard: 2 },
     jokersEnabled: true,        // each team may double one round's score
 };
 
@@ -74,6 +76,13 @@ export function updateSettings(patch) {
     settings.autoAdvanceSeconds = clamp(Math.round(settings.autoAdvanceSeconds) || 8, 2, 60);
     settings.intervalMinutes = clamp(Math.round(settings.intervalMinutes) || 10, 1, 60);
     settings.pointsPerCorrect = clamp(Math.round(settings.pointsPerCorrect) || 1, 1, 10);
+    const weights = { ...DEFAULT_SETTINGS.difficultyPoints, ...(settings.difficultyPoints || {}) };
+    for (const key of ['easy', 'medium', 'hard']) {
+        const value = Number(weights[key]);
+        // Half-point steps: anything finer is unmarkable in a pub.
+        weights[key] = Number.isFinite(value) ? clamp(Math.round(value * 2) / 2, 0, 20) : 1;
+    }
+    settings.difficultyPoints = weights;
     storage.set(SETTINGS_KEY, settings);
     emit();
     return settings;
@@ -107,6 +116,10 @@ function emptyGame() {
         teams: [],
         marks: {},          // marks[roundId][teamId] = [null | 0 | 1, ...]
         bonus: {},          // bonus[roundId][teamId] = number
+        // difficulties[roundId] = ['easy', 'medium', ...] — captured at kick-off
+        // so scoring never needs the pack, and a pack edited later cannot
+        // silently rewrite a finished quiz's totals.
+        difficulties: {},
         jokers: {},         // jokers[teamId] = roundId — that round scores double
         history: [],        // [{ roundId, standings: [{teamId, total}] }]
         phase: 'setup',
@@ -127,6 +140,7 @@ let game = storage.get(GAME_KEY, null) || emptyGame();
 if (!game.marks || typeof game.marks !== 'object') game = emptyGame();
 if (!game.jokers || typeof game.jokers !== 'object') game.jokers = {};
 if (typeof game.answerIndex !== 'number') game.answerIndex = 0;
+if (!game.difficulties || typeof game.difficulties !== 'object') game.difficulties = {};
 if (!game.tiebreakPoints || typeof game.tiebreakPoints !== 'object') game.tiebreakPoints = {};
 
 const listeners = new Set();
@@ -194,6 +208,7 @@ export function startGame({ pack, roundIds, teams }) {
         const round = pack.rounds.find((r) => r.id === roundId);
         game.marks[roundId] = {};
         game.bonus[roundId] = {};
+        game.difficulties[roundId] = round ? round.questions.map((q) => q.difficulty) : [];
         for (const team of game.teams) {
             game.marks[roundId][team.id] = new Array(round ? round.questions.length : 0).fill(null);
             game.bonus[roundId][team.id] = 0;
@@ -221,6 +236,9 @@ export function addTeamMidGame(name, pack) {
             g.bonus[roundId] = g.bonus[roundId] || {};
             g.marks[roundId][team.id] = new Array(round ? round.questions.length : 0).fill(null);
             g.bonus[roundId][team.id] = 0;
+            if (!g.difficulties[roundId]) {
+                g.difficulties[roundId] = round ? round.questions.map((q) => q.difficulty) : [];
+            }
         }
     });
 }
@@ -294,12 +312,46 @@ export function reconcileMarks(pack) {
 
 // ---- scoring ----
 
+/** Guard against the pennies a weight like 1.3 would otherwise leave behind. */
+const round2 = (n) => Math.round(n * 100) / 100;
+
+/**
+ * What one question is worth. Weighted scoring reads the difficulty captured at
+ * kick-off; an unknown difficulty is worth the easy rate rather than nothing,
+ * so a malformed pack cannot silently zero a team's round.
+ */
+export function questionValue(roundId, index) {
+    if (!settings.weightByDifficulty) return settings.pointsPerCorrect;
+    const difficulty = game.difficulties?.[roundId]?.[index];
+    const points = settings.difficultyPoints || {};
+    const value = points[difficulty];
+    return Number.isFinite(value) ? value : (points.easy ?? 1);
+}
+
 export function roundScore(roundId, teamId) {
     const row = game.marks?.[roundId]?.[teamId] || [];
-    const correct = row.filter((v) => v === 1).length;
     const bonus = game.bonus?.[roundId]?.[teamId] || 0;
-    const base = correct * settings.pointsPerCorrect + bonus;
-    return hasJoker(roundId, teamId) ? base * 2 : base;
+
+    let base;
+    if (settings.weightByDifficulty && game.difficulties?.[roundId]?.length) {
+        base = row.reduce((sum, mark, i) => (mark === 1 ? sum + questionValue(roundId, i) : sum), 0);
+    } else {
+        // Flat scoring, and the fallback for a game saved before weighting
+        // existed — its difficulties were never recorded.
+        base = row.filter((v) => v === 1).length * settings.pointsPerCorrect;
+    }
+    base += bonus;
+    return round2(hasJoker(roundId, teamId) ? base * 2 : base);
+}
+
+/** What the whole round is worth if a team gets everything right. */
+export function roundMaximum(roundId) {
+    const difficulties = game.difficulties?.[roundId] || [];
+    if (!settings.weightByDifficulty || !difficulties.length) {
+        const row = Object.values(game.marks?.[roundId] || {})[0] || [];
+        return round2(row.length * settings.pointsPerCorrect);
+    }
+    return round2(difficulties.reduce((sum, _, i) => sum + questionValue(roundId, i), 0));
 }
 
 // ---- jokers ----
@@ -432,8 +484,8 @@ export function scoresAsCsv(pack) {
     for (const row of standings()) {
         const cells = [
             row.team.name,
-            ...rounds.map((r) => `${roundScore(r.id, row.team.id)}${hasJoker(r.id, row.team.id) ? ' (joker)' : ''}`),
-            row.total,
+            ...rounds.map((r) => `${fmtPoints(roundScore(r.id, row.team.id))}${hasJoker(r.id, row.team.id) ? ' (joker)' : ''}`),
+            fmtPoints(row.total),
         ];
         lines.push(cells.map(csvCell).join(','));
     }

@@ -181,6 +181,29 @@ export function listSentence(items) {
     return `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`;
 }
 
+/** A score on screen: 13, or 13.5 — never 13.0 and never 13.500000000000002. */
+export function fmtPoints(value) {
+    const n = Math.round((Number(value) || 0) * 100) / 100;
+    return Number.isInteger(n) ? String(n) : String(n);
+}
+
+/**
+ * A score read aloud. A synthesiser saying "thirteen point five points" is
+ * nobody's idea of a quizmaster, so halves are spoken as halves.
+ */
+export function spokenPoints(value) {
+    const n = Math.round((Number(value) || 0) * 100) / 100;
+    if (n === 0) return 'no points';
+    if (n === 0.5) return 'half a point';
+    if (n === 1) return 'one point';
+
+    const whole = Math.floor(n);
+    const fraction = Math.round((n - whole) * 100) / 100;
+    if (fraction === 0) return `${whole} points`;
+    if (fraction === 0.5) return `${whole} and a half points`;
+    return `${n} points`;
+}
+
 export const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

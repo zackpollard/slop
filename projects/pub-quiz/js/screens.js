@@ -9,10 +9,11 @@
 
 import {
     el, svgEl, icon, ordinal, plural, fmtTime, listSentence, numberWord,
+    fmtPoints, spokenPoints,
 } from './dom.js';
 import {
     standings, roundScore, cycleMark, fillRow, setBonus, getGame, updateGame,
-    hasJoker, jokerRound, toggleJoker,
+    hasJoker, jokerRound, toggleJoker, questionValue,
 } from './state.js';
 import { MELODIES } from './audio.js';
 import { clipCredit, imageCredit, creditSpoils } from './media.js';
@@ -40,13 +41,14 @@ function progressDots(ctx) {
     return dots;
 }
 
-function difficultyChip(difficulty) {
+function difficultyChip(difficulty, worth) {
     return el('span', { class: `chip chip-${difficulty}` },
         el('span', { class: 'pips' },
             ...[1, 2, 3].map((n) => el('span', {
                 class: ['pip', n <= ({ easy: 1, medium: 2, hard: 3 }[difficulty] || 2) && 'is-on'],
             }))),
-        DIFFICULTY_LABELS[difficulty] || difficulty);
+        DIFFICULTY_LABELS[difficulty] || difficulty,
+        worth ? el('span', { class: 'chip-worth', text: worth }) : null);
 }
 
 function sourceLink(source) {
@@ -105,7 +107,12 @@ export function renderQuestion(ctx) {
             el('div', { class: 'question-tags' },
                 settings.showTopic && question.topic
                     ? el('span', { class: 'chip chip-topic', text: question.topic }) : null,
-                settings.showDifficulty ? difficultyChip(question.difficulty) : null)),
+                settings.showDifficulty
+                    ? difficultyChip(question.difficulty,
+                        settings.weightByDifficulty
+                            ? `${fmtPoints(questionValue(round.id, game.questionIndex))} pt`
+                            : '')
+                    : null)),
 
         el('h1', { class: 'question-text', text: question.question }),
 
@@ -514,10 +521,10 @@ export function renderMarking(ctx) {
 
     const body = el('tbody');
     for (const team of game.teams) {
-        const totalCell = el('td', { class: 'total-col', text: String(roundScore(roundId, team.id)) });
+        const totalCell = el('td', { class: 'total-col', text: fmtPoints(roundScore(roundId, team.id)) });
 
         const refresh = () => {
-            totalCell.textContent = String(roundScore(roundId, team.id));
+            totalCell.textContent = fmtPoints(roundScore(roundId, team.id));
             ctx.refs.markSummary?.();
         };
 
@@ -658,10 +665,10 @@ export function renderLeaderboard(ctx) {
                 movementBadge(row.movement)),
             el('div', { class: 'board-track' }, bar)),
         el('div', { class: 'board-score' },
-            el('span', { class: 'board-total', text: String(row.total) }),
+            el('span', { class: 'board-total', text: fmtPoints(row.total) }),
             el('span', {
                 class: ['board-round', hasJoker(game.roundIds[game.roundIndex], row.team.id) && 'is-joker'],
-                text: `+${row.roundTotal}${hasJoker(game.roundIds[game.roundIndex], row.team.id) ? ' ★' : ''}`,
+                text: `+${fmtPoints(row.roundTotal)}${hasJoker(game.roundIds[game.roundIndex], row.team.id) ? ' ★' : ''}`,
             }))));
     });
 
@@ -693,13 +700,13 @@ function leaderboardSubtitle(rows, game) {
     const remaining = game.roundIds.length - game.roundIndex - 1;
     const tail = remaining > 0 ? ` ${plural(remaining, 'round')} still to play.` : ' That is the last of the questions.';
     if (leaders.length > 1) {
-        return `${listSentence(leaders.map((l) => l.team.name))} are tied at the top on ${plural(leaders[0].total, 'point')}.${tail}`;
+        return `${listSentence(leaders.map((l) => l.team.name))} are tied at the top on ${fmtPoints(leaders[0].total)}.${tail}`;
     }
     const gap = leaders[0].total - (rows[1]?.total ?? leaders[0].total);
-    if (rows.length === 1) return `${leaders[0].team.name} on ${plural(leaders[0].total, 'point')}.${tail}`;
+    if (rows.length === 1) return `${leaders[0].team.name} on ${fmtPoints(leaders[0].total)}.${tail}`;
     return gap === 0
-        ? `${leaders[0].team.name} lead on ${plural(leaders[0].total, 'point')}.${tail}`
-        : `${leaders[0].team.name} lead on ${plural(leaders[0].total, 'point')}, ${plural(gap, 'point')} clear.${tail}`;
+        ? `${leaders[0].team.name} lead on ${fmtPoints(leaders[0].total)}.${tail}`
+        : `${leaders[0].team.name} lead on ${fmtPoints(leaders[0].total)}, ${fmtPoints(gap)} clear.${tail}`;
 }
 
 // ---- interval ----
@@ -838,7 +845,7 @@ export function renderResults(ctx) {
                     style: { background: `linear-gradient(180deg, ${row.team.colour}, ${row.team.colour}66)` },
                 },
                 el('span', { class: 'podium-pos', text: ordinal(row.position) }),
-                el('span', { class: 'podium-score', text: String(row.total) })))))
+                el('span', { class: 'podium-score', text: fmtPoints(row.total) })))))
             : null,
 
         rows.length ? fullTable(ctx, rows) : el('p', { class: 'empty', text: 'No teams were playing — hope the questions were good.' }),
@@ -874,9 +881,9 @@ function fullTable(ctx, rows) {
             ...rounds.map((r) => el('td', {
                 class: hasJoker(r.id, row.team.id) ? 'is-joker' : '',
                 title: hasJoker(r.id, row.team.id) ? 'Joker played — doubled' : '',
-                text: `${roundScore(r.id, row.team.id)}${hasJoker(r.id, row.team.id) ? '★' : ''}`,
+                text: `${fmtPoints(roundScore(r.id, row.team.id))}${hasJoker(r.id, row.team.id) ? '★' : ''}`,
             })),
-            el('td', { class: 'total', text: String(row.total) })));
+            el('td', { class: 'total', text: fmtPoints(row.total) })));
     }
     table.appendChild(body);
 
@@ -922,11 +929,11 @@ export const script = {
         if (leaders.length > 1) {
             parts.push(`It is all square at the top. ${listSentence(leaders.map((l) => l.team.name))} are tied on ${plural(leaders[0].total, 'point')}.`);
         } else {
-            parts.push(`In the lead, with ${plural(leaders[0].total, 'point')}, ${leaders[0].team.name}.`);
+            parts.push(`In the lead, with ${spokenPoints(leaders[0].total)}, ${leaders[0].team.name}.`);
             const second = rows.find((r) => r.position !== 1);
             if (second) {
                 const gap = leaders[0].total - second.total;
-                parts.push(`${second.team.name} are ${gap === 1 ? 'a point' : `${gap} points`} behind.`);
+                parts.push(`${second.team.name} are ${gap === 1 ? 'a point' : spokenPoints(gap)} behind.`);
             }
         }
         if (roundsRemaining > 0) {
@@ -939,15 +946,15 @@ export const script = {
         if (!rows.length) return 'That is the end of the quiz. Thank you all for playing.';
         const winners = rows.filter((r) => r.position === 1);
         if (winners.length > 1) {
-            return `We have a dead heat. ${listSentence(winners.map((w) => w.team.name))} finish level on ${plural(winners[0].total, 'point')}.`;
+            return `We have a dead heat. ${listSentence(winners.map((w) => w.team.name))} finish level on ${spokenPoints(winners[0].total)}.`;
         }
         const parts = [
             'Ladies and gentlemen, your winners tonight,',
-            `with ${plural(winners[0].total, 'point')},`,
+            `with ${spokenPoints(winners[0].total)},`,
             `${winners[0].team.name}!`,
         ];
         const runnerUp = rows.find((r) => r.position !== 1);
-        if (runnerUp) parts.push(`In second place, ${runnerUp.team.name} on ${runnerUp.total}.`);
+        if (runnerUp) parts.push(`In second place, ${runnerUp.team.name} on ${spokenPoints(runnerUp.total)}.`);
         parts.push('Thank you all for playing, and mind how you go.');
         return parts.join(' ');
     },

@@ -40,6 +40,12 @@ Live at **[pub-quiz.slop.zackpollard.pro](https://pub-quiz.slop.zackpollard.pro)
   the music clips a picture round works with no internet at all. Every image is
   credited on screen, and the validator refuses to let a filename or alt text
   give the answer away.
+- **Harder questions are worth more.** Every question carries a difficulty, and
+  by default an easy one scores 1, a medium 1.5 and a hard 2 — so the team that
+  gets the last question of a round is properly rewarded for it. The weights are
+  editable in settings, and a switch turns the whole thing off for a flat point
+  each. What a question is worth is shown as you ask it, on the marking grid, and
+  on the printed answer key.
 - **Jokers.** The pub-quiz classic: each team may play one joker across the
   night to double a round. Played from the marking grid, marked on the
   leaderboard, and there is a box for it on the printed answer sheets.

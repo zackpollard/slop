@@ -557,7 +557,15 @@ export function renderSettingsPanel(ctx, rerender = () => {}, { inline = false }
             toggle('Show the topic on each question', s.showTopic, (v) => set({ showTopic: v })),
             toggle('Show how hard each question is', s.showDifficulty, (v) => set({ showDifficulty: v })),
             toggle('Confetti on the big moments', s.confetti, (v) => set({ confetti: v })),
-            numberField('Points per correct answer', s.pointsPerCorrect, 1, 10, (v) => set({ pointsPerCorrect: v })),
+            toggle('Harder questions are worth more', s.weightByDifficulty,
+                (v) => set({ weightByDifficulty: v }, true),
+                'Score each question by how hard it is, rather than a flat point each.'),
+            s.weightByDifficulty
+                ? el('div', { class: 'weight-row' },
+                    weightField('Easy', s.difficultyPoints.easy, (v) => set({ difficultyPoints: { ...s.difficultyPoints, easy: v } })),
+                    weightField('Medium', s.difficultyPoints.medium, (v) => set({ difficultyPoints: { ...s.difficultyPoints, medium: v } })),
+                    weightField('Hard', s.difficultyPoints.hard, (v) => set({ difficultyPoints: { ...s.difficultyPoints, hard: v } })))
+                : numberField('Points per correct answer', s.pointsPerCorrect, 1, 10, (v) => set({ pointsPerCorrect: v })),
             toggle('Jokers', s.jokersEnabled, (v) => set({ jokersEnabled: v }),
                 'Each team may play one joker across the night to double that round.'),
             el('button', {
@@ -611,6 +619,17 @@ function slider(label, value, min, max, step, onChange, format = String) {
             },
         }),
         out);
+}
+
+/** A half-point-step weight for one difficulty band. */
+function weightField(label, value, onChange) {
+    return el('label', { class: 'weight-field' },
+        el('span', { class: 'weight-label', text: label }),
+        el('input', {
+            type: 'number', class: 'input input-number', min: '0', max: '20', step: '0.5',
+            value: String(value),
+            onChange: (e) => onChange(clamp(Number(e.target.value) || 0, 0, 20)),
+        }));
 }
 
 function numberField(label, value, min, max, onChange, hint) {

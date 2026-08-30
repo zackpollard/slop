@@ -4,8 +4,8 @@
  * into #print-root and letting the print stylesheet hide the rest of the app.
  */
 
-import { el, ordinal, plural } from './dom.js';
-import { standings, roundScore } from './state.js';
+import { el, ordinal, fmtPoints } from './dom.js';
+import { standings, roundScore, questionValue } from './state.js';
 
 function sheetHeader(title, subtitle) {
     return el('header', { class: 'sheet-head' },
@@ -48,14 +48,15 @@ export function buildAnswerKey(pack, roundIds) {
     const rounds = roundIds.map((id) => pack.rounds.find((r) => r.id === id)).filter(Boolean);
 
     const roundBlocks = rounds.map((round, roundIndex) => {
-        const lines = round.questions.map((q) => el('li', { class: q.image ? 'has-picture' : '' },
+        const lines = round.questions.map((q, qi) => el('li', { class: q.image ? 'has-picture' : '' },
             // A thumbnail on the host's key so they can tell at a glance which
             // picture is on the screen behind them.
             q.image ? el('img', { class: 'key-thumb', src: q.image.src, alt: '' }) : null,
             el('span', { class: 'key-question', text: q.question }),
             el('strong', { class: 'key-answer', text: q.answer }),
             q.acceptable.length ? el('span', { class: 'key-alt', text: ` (or ${q.acceptable.join(', ')})` }) : null,
-            q.source?.url ? el('span', { class: 'key-source', text: ` — ${q.source.name}` }) : null));
+            q.source?.url ? el('span', { class: 'key-source', text: ` — ${q.source.name}` }) : null,
+            el('span', { class: 'key-worth', text: ` [${fmtPoints(questionValue(round.id, qi))}]` })));
 
         return el('section', { class: 'sheet-round' },
             el('h2', {}, `Round ${roundIndex + 1}: ${round.name}`),
@@ -92,8 +93,8 @@ export function buildResultsSheet(pack, game) {
         el('tbody', {}, ...rows.map((row) => el('tr', {},
             el('td', { text: ordinal(row.position) }),
             el('td', { class: 'left', text: row.team.name }),
-            ...rounds.map((r) => el('td', { text: String(roundScore(r.id, row.team.id)) })),
-            el('td', { text: String(row.total) })))));
+            ...rounds.map((r) => el('td', { text: fmtPoints(roundScore(r.id, row.team.id)) })),
+            el('td', { text: fmtPoints(row.total) })))));
 
     const date = game.startedAt ? new Date(game.startedAt).toLocaleDateString('en-GB', {
         weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
@@ -106,7 +107,7 @@ export function buildResultsSheet(pack, game) {
             rows.length
                 ? el('p', { class: 'sheet-winner' },
                     `Winner: ${rows.filter((r) => r.position === 1).map((r) => r.team.name).join(' & ')} `
-                    + `with ${plural(rows[0].total, 'point')}.`)
+                    + `with ${fmtPoints(rows[0].total)} points.`)
                 : null));
 }
 

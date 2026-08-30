@@ -277,6 +277,15 @@ select.input { cursor: pointer; }
 .chip-medium { color: var(--gold); border-color: rgba(196, 162, 78, 0.4); }
 .chip-hard { color: var(--red); border-color: rgba(196, 94, 78, 0.4); }
 
+.chip-worth {
+    margin-left: 0.35rem;
+    padding-left: 0.35rem;
+    border-left: 1px solid currentColor;
+    opacity: 0.75;
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+}
+
 .pips { display: inline-flex; gap: 2px; }
 .pip { width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: 0.22; }
 .pip.is-on { opacity: 1; }
@@ -485,6 +494,11 @@ input[type="checkbox"] {
 .slider-value { min-width: 3.2rem; text-align: right; font-family: var(--font-mono); font-size: 0.82rem; color: var(--gold); }
 .field select { flex: 1; }
 .sound-test { margin-top: 0.4rem; gap: 0.4rem; }
+
+.weight-row { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+.weight-field { display: flex; align-items: center; gap: 0.4rem; }
+.weight-label { font-size: 0.85rem; color: var(--text-muted); min-width: 3.6rem; }
+.weight-field .input-number { width: 4.4rem; }
 
 .start-bar {
     position: sticky; bottom: 0;
@@ -1392,6 +1406,7 @@ body.big-screen .btn-large { padding: 1rem 2rem; font-size: 1.15rem; }
     .key-question { display: block; }
     .key-answer { font-size: 11pt; }
     .key-alt, .key-source { color: #555; font-size: 9pt; }
+    .key-worth { color: #000; font-size: 9pt; font-weight: bold; }
     .sheet-table { width: 100%; border-collapse: collapse; font-size: 11pt; }
     .sheet-table th, .sheet-table td { border: 1px solid #666; padding: 0.15cm 0.25cm; text-align: center; }
     .sheet-table .left { text-align: left; }
