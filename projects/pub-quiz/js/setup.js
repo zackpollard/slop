@@ -18,6 +18,16 @@ import {
 
 const DRAFT_KEY = 'pubquiz.draft.v2';
 
+/**
+ * Pasted JSON and the last import message. The setup screen is rebuilt from
+ * scratch on almost every click and neither of these is backed by the draft.
+ */
+let pasteDraft = '';
+let importNotice = null;
+
+/** Where a round sat in the running order when it was unticked. */
+const lastRoundPosition = new Map();
+
 /** The setup screen's own working state, kept across re-renders and reloads. */
 export const draft = {
     packId: '',
@@ -79,7 +89,7 @@ export function renderSetup(ctx) {
             teamEditor(rerender)),
 
         section('4', 'Voice, sound and timing', icon('settings'),
-            renderSettingsPanel(ctx, rerender)),
+            renderSettingsPanel(ctx, rerender, { inline: true })),
 
         startBar(ctx, pack),
     );
@@ -96,7 +106,7 @@ function heroHeader(pack) {
             text: 'A full quiz night in a browser tab — read aloud, timed, scored and celebrated. '
                 + 'Plug it into the telly, turn the speakers up, and host.',
         }),
-        el('p', { class: 'hero-pack', html: `Loaded: <strong>${pack.name}</strong>` }));
+        el('p', { class: 'hero-pack' }, 'Loaded: ', el('strong', { text: pack.name })));
 }
 
 function resumeBanner(ctx) {
@@ -158,12 +168,25 @@ function packPicker(ctx, current, rerender) {
 }
 
 function packImportControls(ctx) {
-    const status = el('p', { class: 'import-status' });
+    const status = el('p', {
+        class: ['import-status', importNotice && `is-${importNotice.tone}`],
+        text: importNotice ? importNotice.text : '',
+    });
 
+    function notice(tone, text) {
+        importNotice = text ? { tone, text } : null;
+        status.className = ['import-status', text && `is-${tone}`].filter(Boolean).join(' ');
+        status.textContent = text || '';
+    }
+
+    // Clipped rather than hidden, so without these it keeps a tab stop that
+    // shows no focus ring; the visible button forwards the click anyway.
     const fileInput = el('input', {
         type: 'file',
         accept: '.json,application/json',
         class: 'visually-hidden',
+        tabindex: '-1',
+        'aria-hidden': 'true',
         onChange: async (e) => {
             const file = e.target.files?.[0];
             if (!file) return;
@@ -171,8 +194,7 @@ function packImportControls(ctx) {
                 const result = saveCustomPack(JSON.parse(await file.text()));
                 showResult(result);
             } catch (err) {
-                status.className = 'import-status is-error';
-                status.textContent = `Could not read that file: ${err.message}`;
+                notice('error', `Could not read that file: ${err.message}`);
             }
             e.target.value = '';
         },
@@ -180,14 +202,15 @@ function packImportControls(ctx) {
 
     function showResult(result) {
         if (result.ok) {
+            pasteDraft = '';
+            notice('warn', result.warnings.slice(0, 3).join(' '));
             draft.packId = result.pack.id;
             draft.roundIds = result.pack.rounds.map((r) => r.id);
             saveDraft();
             ctx.engines.audio.play('correct');
             ctx.actions.render();
         } else {
-            status.className = 'import-status is-error';
-            status.textContent = `That pack has problems: ${result.errors.slice(0, 3).join(' ')}`;
+            notice('error', `That pack has problems: ${result.errors.slice(0, 3).join(' ')}`);
             ctx.engines.audio.play('error');
         }
     }
@@ -196,7 +219,8 @@ function packImportControls(ctx) {
         class: 'json-paste',
         rows: '3',
         placeholder: '…or paste quiz pack JSON here and press Import',
-    });
+        onInput: (e) => { pasteDraft = e.target.value; },
+    }, pasteDraft);
 
     const currentPack = getPack(draft.packId);
 
@@ -236,17 +260,20 @@ function packImportControls(ctx) {
                 }, icon('trash'), 'Delete')
                 : null,
             fileInput),
-        el('details', { class: 'paste-details' },
+        el('details', { class: 'paste-details', open: Boolean(pasteDraft) },
             el('summary', { text: 'Paste JSON instead' }),
             paste,
             el('button', {
                 class: 'btn btn-ghost',
                 onClick: () => {
+                    if (!paste.value.trim()) {
+                        notice('error', 'Paste a quiz pack JSON first.');
+                        return;
+                    }
                     try {
                         showResult(saveCustomPack(JSON.parse(paste.value)));
                     } catch (err) {
-                        status.className = 'import-status is-error';
-                        status.textContent = `That is not valid JSON: ${err.message}`;
+                        notice('error', `That is not valid JSON: ${err.message}`);
                     }
                 },
             }, 'Import pasted JSON')),
@@ -276,7 +303,7 @@ function roundPicker(pack, rerender) {
         ...pack.rounds.filter((r) => !draft.roundIds.includes(r.id)),
     ];
 
-    ordered.forEach((round, index) => {
+    ordered.forEach((round) => {
         const on = draft.roundIds.includes(round.id);
         list.appendChild(el('div', { class: ['round-row', on && 'is-on'] },
             el('label', { class: 'round-main' },
@@ -285,8 +312,12 @@ function roundPicker(pack, rerender) {
                     checked: on,
                     onChange: (e) => {
                         if (e.target.checked) {
-                            if (!draft.roundIds.includes(round.id)) draft.roundIds.splice(index, 0, round.id);
+                            if (!draft.roundIds.includes(round.id)) {
+                                draft.roundIds.splice(reinsertionPoint(pack, round), 0, round.id);
+                                lastRoundPosition.delete(round.id);
+                            }
                         } else {
+                            lastRoundPosition.set(round.id, draft.roundIds.indexOf(round.id));
                             draft.roundIds = draft.roundIds.filter((id) => id !== round.id);
                         }
                         saveDraft();
@@ -312,6 +343,19 @@ function roundPicker(pack, rerender) {
     return list;
 }
 
+/**
+ * Where a re-ticked round belongs: back where the host left it if we saw it
+ * unticked this session, otherwise its natural slot in the pack's own order.
+ * The display list puts unticked rounds last, so its index there is no guide.
+ */
+function reinsertionPoint(pack, round) {
+    const remembered = lastRoundPosition.get(round.id);
+    if (remembered !== undefined) return Math.min(remembered, draft.roundIds.length);
+    return pack.rounds
+        .filter((r) => draft.roundIds.includes(r.id) || r.id === round.id)
+        .indexOf(round);
+}
+
 function moveRound(id, delta) {
     const from = draft.roundIds.indexOf(id);
     const to = from + delta;
@@ -327,7 +371,7 @@ function teamEditor(rerender) {
     const list = el('div', { class: 'team-list' });
 
     draft.teams.forEach((team, index) => {
-        list.appendChild(el('div', { class: 'team-row' },
+        list.appendChild(el('div', { class: 'team-row', dataset: { teamId: team.id } },
             el('button', {
                 class: 'team-swatch',
                 style: { background: team.colour },
@@ -347,7 +391,7 @@ function teamEditor(rerender) {
                 placeholder: `Team ${index + 1}`,
                 onInput: (e) => { team.name = e.target.value; saveDraft(); },
                 onKeydown: (e) => {
-                    if (e.key === 'Enter') { addTeam(); rerender(); }
+                    if (e.key === 'Enter') { e.preventDefault(); addTeamAndFocus(); }
                 },
             }),
             el('button', {
@@ -357,19 +401,31 @@ function teamEditor(rerender) {
     });
 
     function addTeam(name) {
-        draft.teams.push({
+        const team = {
             id: `team-${Date.now()}-${draft.teams.length}`,
             name: name || suggestTeamName(draft.teams.length),
             colour: TEAM_COLOURS[draft.teams.length % TEAM_COLOURS.length],
-        });
+        };
+        draft.teams.push(team);
         saveDraft();
+        return team.id;
+    }
+
+    // The rerender replaces every node on the screen, so without this the host
+    // types the next team name into the window's keyboard shortcuts.
+    function addTeamAndFocus() {
+        const id = addTeam();
+        rerender();
+        const input = document.querySelector(`[data-team-id="${id}"] .team-name`);
+        input?.focus();
+        input?.select();
     }
 
     wrap.appendChild(list);
     wrap.appendChild(el('div', { class: 'row wrap' },
         el('button', {
             class: 'btn btn-ghost',
-            onClick: () => { addTeam(); rerender(); },
+            onClick: () => addTeamAndFocus(),
         }, icon('plus', 16), 'Add a team'),
         el('button', {
             class: 'btn btn-ghost',
@@ -402,14 +458,25 @@ function suggestTeamName(index) {
 
 // ---- settings panel (also used mid-quiz) ----
 
-export function renderSettingsPanel(ctx, rerender = () => {}) {
+export function renderSettingsPanel(ctx, rerender = () => {}, { inline = false } = {}) {
     const s = getSettings();
     const { engines } = ctx;
 
-    const set = (patch, redraw = false) => {
+    // Retuning an engine needs no redraw, and sliders fire on every drag event.
+    const retune = (patch) => {
         updateSettings(patch);
         applySettingsToEngines(ctx);
-        if (redraw) rerender();
+    };
+
+    // Opened as an overlay mid-quiz, the screen behind the panel is still
+    // showing the old rules — the joker column, the points per answer — until
+    // something redraws it. On the setup screen the panel is that screen.
+    const redrawApp = inline ? () => {} : () => ctx.actions.render();
+
+    const set = (patch, rebuildPanel = false) => {
+        retune(patch);
+        redrawApp();
+        if (rebuildPanel) rerender();
     };
 
     return el('div', { class: 'settings-panel' },
@@ -418,8 +485,8 @@ export function renderSettingsPanel(ctx, rerender = () => {}) {
             toggle('Speak everything aloud', s.speechEnabled, (v) => set({ speechEnabled: v }, true),
                 engines.speech.supported ? '' : 'Your browser has no speech synthesis — this will stay silent.'),
             voiceSelect(ctx, set),
-            slider('Speed', s.speechRate, 0.6, 1.6, 0.05, (v) => set({ speechRate: v }), (v) => `${v.toFixed(2)}×`),
-            slider('Pitch', s.speechPitch, 0.5, 1.5, 0.05, (v) => set({ speechPitch: v }), (v) => v.toFixed(2)),
+            slider('Speed', s.speechRate, 0.6, 1.6, 0.05, (v) => retune({ speechRate: v }), (v) => `${v.toFixed(2)}×`),
+            slider('Pitch', s.speechPitch, 0.5, 1.5, 0.05, (v) => retune({ speechPitch: v }), (v) => v.toFixed(2)),
             el('div', { class: 'row wrap' },
                 el('button', {
                     class: 'btn btn-ghost',
@@ -444,10 +511,10 @@ export function renderSettingsPanel(ctx, rerender = () => {}) {
 
         group('Sound', [
             toggle('Sound effects and music', s.audioEnabled, (v) => set({ audioEnabled: v }, true)),
-            slider('Master volume', s.masterVolume, 0, 1, 0.05, (v) => set({ masterVolume: v }), pct),
-            slider('Effects', s.sfxVolume, 0, 1, 0.05, (v) => set({ sfxVolume: v }), pct),
-            slider('Music bed', s.musicVolume, 0, 1, 0.05, (v) => set({ musicVolume: v }), pct),
-            slider('Music clips', s.clipVolume, 0, 1, 0.05, (v) => set({ clipVolume: v }), pct),
+            slider('Master volume', s.masterVolume, 0, 1, 0.05, (v) => retune({ masterVolume: v }), pct),
+            slider('Effects', s.sfxVolume, 0, 1, 0.05, (v) => retune({ sfxVolume: v }), pct),
+            slider('Music bed', s.musicVolume, 0, 1, 0.05, (v) => retune({ musicVolume: v }), pct),
+            slider('Music clips', s.clipVolume, 0, 1, 0.05, (v) => retune({ clipVolume: v }), pct),
             toggle('Play music under the questions', s.musicEnabled, (v) => set({ musicEnabled: v })),
             el('div', { class: 'row wrap sound-test' },
                 soundTest(ctx, 'roundStart', 'Round sting'),
@@ -467,13 +534,13 @@ export function renderSettingsPanel(ctx, rerender = () => {}) {
 
         group('Timing', [
             toggle('Countdown timer on each question', s.timerEnabled, (v) => set({ timerEnabled: v }, true)),
-            slider('Seconds to answer', s.timerSeconds, 5, 120, 5, (v) => set({ timerSeconds: v }), (v) => `${v}s`),
+            slider('Seconds to answer', s.timerSeconds, 5, 120, 5, (v) => retune({ timerSeconds: v }), (v) => `${v}s`),
             toggle('Drum roll before every answer', s.dramaticReveal, (v) => set({ dramaticReveal: v })),
             toggle('Run the quiz hands-free', s.autoAdvance, (v) => set({ autoAdvance: v }, true),
                 'Reveals the answer and moves on by itself. Great for a big screen, nerve-racking for a host.'),
             s.autoAdvance
                 ? slider('Pause on each answer', s.autoAdvanceSeconds, 3, 30, 1,
-                    (v) => set({ autoAdvanceSeconds: v }), (v) => `${v}s`)
+                    (v) => retune({ autoAdvanceSeconds: v }), (v) => `${v}s`)
                 : null,
             numberField('Half-time break after round', s.intervalAfterRound, 0, 12,
                 (v) => set({ intervalAfterRound: v }, true), '0 for no break'),
@@ -497,6 +564,7 @@ export function renderSettingsPanel(ctx, rerender = () => {}) {
                     resetSettings();
                     applySettingsToEngines(ctx);
                     applyBigScreen();
+                    redrawApp();
                     rerender();
                 },
             }, 'Reset all settings'),

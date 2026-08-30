@@ -112,6 +112,8 @@ function emptyGame() {
         revealed: false,
         askedIntervalAfter: null,
         tiebreak: null,     // { teamIds, guesses: {teamId: number}, winnerId }
+        tiebreakPoints: {}, // teamId -> 1, kept out of the rounds so a joker cannot double it
+        intervalEndsAt: null,
         startedAt: null,
         finishedAt: null,
     };
@@ -120,6 +122,7 @@ function emptyGame() {
 let game = storage.get(GAME_KEY, null) || emptyGame();
 if (!game.marks || typeof game.marks !== 'object') game = emptyGame();
 if (!game.jokers || typeof game.jokers !== 'object') game.jokers = {};
+if (!game.tiebreakPoints || typeof game.tiebreakPoints !== 'object') game.tiebreakPoints = {};
 
 const listeners = new Set();
 
@@ -259,6 +262,31 @@ export function setBonus(roundId, teamId, points) {
     });
 }
 
+/**
+ * Resize the stored marks to the pack as it stands now. A round edited and
+ * re-imported mid-quiz can be shorter than the one the game was started with,
+ * and roundScore counts every 1 in the row it finds — including the ones for
+ * questions nobody will be asked.
+ */
+export function reconcileMarks(pack) {
+    if (!pack || pack.id !== game.packId) return game;
+
+    return updateGame((g) => {
+        for (const roundId of g.roundIds) {
+            const round = pack.rounds.find((r) => r.id === roundId);
+            if (!round) continue;
+
+            const { length } = round.questions;
+            const rows = g.marks[roundId] || (g.marks[roundId] = {});
+            for (const team of g.teams) {
+                const row = rows[team.id] || [];
+                if (row.length === length) continue;
+                rows[team.id] = Array.from({ length }, (_, i) => row[i] ?? null);
+            }
+        }
+    });
+}
+
 // ---- scoring ----
 
 export function roundScore(roundId, teamId) {
@@ -292,9 +320,23 @@ export function toggleJoker(roundId, teamId) {
 }
 
 export function totalScore(teamId, upToRoundIndex = Infinity) {
-    return game.roundIds
+    const rounds = game.roundIds
         .slice(0, upToRoundIndex + 1)
         .reduce((sum, roundId) => sum + roundScore(roundId, teamId), 0);
+
+    // The tie-break decider only counts once every round has been played.
+    const decided = upToRoundIndex >= game.roundIds.length - 1;
+    return rounds + (decided ? (game.tiebreakPoints?.[teamId] || 0) : 0);
+}
+
+/**
+ * Hand the tie-break winner the point that settles it. Assignment rather than
+ * increment, so a host who walks back through the tie-break cannot award twice.
+ */
+export function awardTiebreakPoint(teamId) {
+    updateGame((g) => {
+        g.tiebreakPoints = teamId ? { [teamId]: 1 } : {};
+    });
 }
 
 /**
@@ -322,7 +364,12 @@ export function standings(upToRoundIndex = Infinity) {
         row.position = position;
     });
 
-    const previous = game.history[game.history.length - 1];
+    // The leaderboard snapshots this round before it renders, so the newest
+    // history entry is usually the very round being shown: skip back past it.
+    const history = game.history || [];
+    let prevIndex = history.length - 1;
+    while (prevIndex >= 0 && history[prevIndex].roundId === roundId) prevIndex--;
+    const previous = history[prevIndex];
     const prevPositions = new Map(
         (previous?.standings || []).map((s) => [s.teamId, s.position]),
     );
@@ -369,18 +416,21 @@ export function currentRoundId() {
 
 // ---- export ----
 
+/** Round names and team names are free text, so every cell is quoted. */
+const csvCell = (value) => `"${String(value).replace(/"/g, '""')}"`;
+
 export function scoresAsCsv(pack) {
     const rounds = game.roundIds.map((id) => pack.rounds.find((r) => r.id === id)).filter(Boolean);
     const header = ['Team', ...rounds.map((r) => r.name), 'Total'];
-    const lines = [header.join(',')];
+    const lines = [header.map(csvCell).join(',')];
 
     for (const row of standings()) {
         const cells = [
-            `"${row.team.name.replace(/"/g, '""')}"`,
+            row.team.name,
             ...rounds.map((r) => `${roundScore(r.id, row.team.id)}${hasJoker(r.id, row.team.id) ? ' (joker)' : ''}`),
             row.total,
         ];
-        lines.push(cells.join(','));
+        lines.push(cells.map(csvCell).join(','));
     }
     return lines.join('\n');
 }

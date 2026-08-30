@@ -162,10 +162,11 @@ export function ordinal(n) {
     }
 }
 
-export function ordinalWord(n) {
-    const words = ['zeroth', 'first', 'second', 'third', 'fourth', 'fifth',
-        'sixth', 'seventh', 'eighth', 'ninth', 'tenth'];
-    return words[n] || ordinal(n);
+/** Cardinal numbers as words, for anything the host reads aloud. */
+export function numberWord(n) {
+    const words = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven',
+        'eight', 'nine', 'ten', 'eleven', 'twelve'];
+    return words[n] ?? String(n);
 }
 
 export function plural(n, one, many = `${one}s`) {

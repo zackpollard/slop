@@ -8,7 +8,7 @@
  */
 
 import {
-    el, svgEl, icon, ordinal, plural, fmtTime, listSentence,
+    el, svgEl, icon, ordinal, plural, fmtTime, listSentence, numberWord,
 } from './dom.js';
 import {
     standings, roundScore, cycleMark, fillRow, setBonus, getGame, updateGame,
@@ -731,14 +731,14 @@ function fullTable(ctx, rows) {
 /** The words the host actually says, kept next to the screens they belong to. */
 export const script = {
     roundIntro(round, index, total) {
-        const parts = [`Round ${index + 1}.`, `${round.name}.`];
+        const parts = [`Round ${numberWord(index + 1)}.`, `${round.name}.`];
         if (round.intro) parts.push(round.intro);
         if (index + 1 === total) parts.push('This is the last round, so no pressure.');
         return parts.join(' ');
     },
 
     question(question, index) {
-        return `Question ${index + 1}. ${question.spokenQuestion || question.question}`;
+        return `Question ${numberWord(index + 1)}. ${question.spokenQuestion || question.question}`;
     },
 
     timeUp() {

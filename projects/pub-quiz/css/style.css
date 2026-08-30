@@ -20,7 +20,9 @@
 
     --text: #ece7d8;
     --text-muted: #9aa094;
-    --text-dim: #6d746a;
+    /* The dimmest tier still has to clear 4.5:1 on --surface-hover, the lightest
+       surface it ever sits on. */
+    --text-dim: #90978c;
 
     --gold: #c4a24e;
     --gold-bright: #e0bd6a;
@@ -46,7 +48,9 @@
 
 /* ---------- base ---------- */
 
-html { font-size: 16px; scroll-behavior: smooth; }
+/* 100%, not 16px: everything below is sized in rem, so the reader's own browser
+   font-size setting has to be the one that wins. */
+html { font-size: 100%; scroll-behavior: smooth; }
 
 body {
     font-family: var(--font-body);
@@ -60,7 +64,7 @@ body {
     min-height: 100vh;
     min-height: 100dvh;
     -webkit-font-smoothing: antialiased;
-    padding-top: 56px;
+    padding-top: 3.5rem;
 }
 
 /* faint baize weave, keeps the flat dark from looking like a void */
@@ -114,7 +118,7 @@ a:hover { text-decoration: underline; }
 .topbar {
     position: fixed;
     top: 0; left: 0; right: 0;
-    height: 56px;
+    height: 3.5rem;
     z-index: 40;
     display: flex;
     align-items: center;
@@ -171,8 +175,10 @@ a:hover { text-decoration: underline; }
     cursor: pointer;
     transition: all 0.15s var(--ease);
 }
-.tool-btn:hover { background: var(--surface); color: var(--text); border-color: var(--border); }
-.tool-btn.is-off { color: var(--text-dim); opacity: 0.6; }
+/* Muted is signalled by colour alone: dimming with opacity put the one state the
+   host needs to catch from across the room below the 3:1 non-text minimum. */
+.tool-btn.is-off { color: var(--red); }
+.tool-btn:hover, .tool-btn.is-off:hover { background: var(--surface); color: var(--text); border-color: var(--border); }
 
 .speaking-dot {
     width: 8px; height: 8px; border-radius: 50%;
@@ -403,13 +409,15 @@ select.input { cursor: pointer; }
 .round-row {
     display: flex; align-items: center; gap: 0.6rem;
     padding: 0.6rem 0.8rem;
-    border: 1px solid var(--border);
+    border: 1px dashed var(--border);
     border-radius: var(--radius-sm);
     background: var(--surface-2);
-    opacity: 0.5;
     transition: all 0.15s;
 }
-.round-row.is-on { opacity: 1; border-color: var(--border-bright); }
+/* An off round is still read — it is what the host judges before ticking it back
+   on — so the state rides on the border and the decorative icon, not on the text. */
+.round-row.is-on { border-style: solid; border-color: var(--border-bright); }
+.round-row:not(.is-on) .round-icon { opacity: 0.5; }
 .round-main { display: flex; align-items: center; gap: 0.7rem; flex: 1; cursor: pointer; min-width: 0; }
 .round-icon { font-size: 1.15rem; }
 .round-name { font-weight: 600; flex: 1; }
@@ -501,7 +509,7 @@ input[type="checkbox"] {
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    min-height: calc(100vh - 56px - 4rem);
+    min-height: calc(100vh - 3.5rem - 4rem);
     text-align: center;
     gap: 1.5rem;
 }
@@ -1147,6 +1155,9 @@ body.big-screen .btn-large { padding: 1rem 2rem; font-size: 1.15rem; }
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
         animation-duration: 0.01ms !important;
+        /* Without this, a delayed animation sits pinned to its `from` keyframe —
+           opacity 0 — and the stagger survives as a sequence of pops. */
+        animation-delay: -0.01ms !important;
         animation-iteration-count: 1 !important;
         transition-duration: 0.01ms !important;
         scroll-behavior: auto !important;
@@ -1158,12 +1169,22 @@ body.big-screen .btn-large { padding: 1rem 2rem; font-size: 1.15rem; }
 .print-root { display: none; }
 
 @media print {
-    body.is-printing { padding: 0; background: #fff; color: #000; }
-    body.is-printing .topbar,
-    body.is-printing .app,
-    body.is-printing .overlay-root,
-    body.is-printing .confetti-canvas { display: none !important; }
-    body.is-printing::before { display: none; }
+    /* Ctrl+P never reaches printNode(), so paper safety cannot be gated on
+       .is-printing: browsers drop the dark backgrounds and the cream text is
+       left on white paper. */
+    body { padding: 0; background: #fff !important; color: #000; }
+    body::before,
+    .topbar,
+    .overlay-root,
+    .confetti-canvas { display: none !important; }
+    /* Gold and muted text needs the dark ground it was picked against; on white
+       it prints at 2-3:1. !important because the state rules that set those
+       colours are more specific. The staged sheets are outside .app, untouched. */
+    .app, .app * { color: #000 !important; }
+    .hero-title .accent { -webkit-text-fill-color: #000; }
+
+    /* A staged sheet replaces the app entirely. */
+    body.is-printing .app { display: none !important; }
     body.is-printing .print-root { display: block; }
 
     .sheet {

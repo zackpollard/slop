@@ -213,6 +213,11 @@ function updateTimerUI() {
  * host who reaches for the timer switch mid-question has to be obeyed by hand.
  */
 function syncTimerToSettings() {
+    // Only the question clock answers to this switch. Half time has its own
+    // clock, and stopping that because the host turned question timing off
+    // would strand the room staring at a frozen 0:00.
+    if (timer.mode === 'interval' || game().phase === 'interval') return;
+
     const live = game().phase === 'question' && !game().revealed;
     if (!settings().timerEnabled) {
         stopTimer();
@@ -623,23 +628,26 @@ function intervalTimeUp() {
     say('Right, that is time. Back to your seats please.', { enabled: settings().readScores });
 }
 
+/**
+ * The break is the one stretch of the night the host walks away from, so its
+ * deadline is written into the game as well: a lid closed over half time comes
+ * back to the break the room was actually given, not a fresh one.
+ */
 function armIntervalTimer(seconds) {
+    State.updateGame((gm) => { gm.intervalEndsAt = Date.now() + seconds * 1000; });
     startTimer(seconds, { mode: 'interval', onEnd: intervalTimeUp });
 }
 
 async function startInterval() {
     const token = ++seq;
-    const seconds = settings().intervalMinutes * 60;
-    // The deadline goes into the game so a lid closed over half time comes back
-    // to the break the room was actually given, not a fresh one.
-    State.updateGame((gm) => {
-        gm.phase = 'interval';
-        gm.intervalEndsAt = Date.now() + seconds * 1000;
-    });
+    State.setPhase('interval');
     render();
     engines.audio.startMusic('interval');
-    armIntervalTimer(seconds);
-    await say(script.interval(settings().intervalMinutes), { enabled: settings().readIntros });
+    armIntervalTimer(settings().intervalMinutes * 60);
+    await say(
+        script.interval(settings().intervalMinutes, game().roundIndex + 1, game().roundIds.length),
+        { enabled: settings().readIntros },
+    );
     if (token !== seq) return;
 }
 
@@ -826,10 +834,15 @@ const actions = {
             resumeTimer();
             engines.audio.play('click');
         } else if (settings().timerEnabled && game().phase === 'question' && !game().revealed) {
-            // A new generation: the clock only reaches here after running out,
-            // and onTimeUp may still be a second away from revealing the answer
-            // the host has just bought the room more time to find.
+            // Either the clock ran out, or it has not been armed yet because the
+            // host is still being read the question. Both cases start a fresh
+            // generation — which abandons whatever runQuestion was still going
+            // to do — so cut the preamble off cleanly rather than leaving the
+            // voice talking over a clock that has already started.
             const token = ++seq;
+            engines.speech.cancel();
+            engines.clips.stop();
+            engines.audio.stopMelody();
             startTimer(settings().timerSeconds, { mode: 'question', onEnd: () => onTimeUp(token) });
         }
         render();
@@ -915,16 +928,10 @@ const actions = {
     },
 
     addIntervalTime(seconds) {
-        if (timer.mode === 'interval') {
-            timer.remaining += seconds;
-            timer.deadline += seconds * 1000;
-            if (!timer.running) resumeTimer();
-            updateTimerUI();
-        } else {
-            // tick() drops the mode when the break runs out, and a resumed quiz
-            // never had one: there is no clock left to nudge, so start another.
-            armIntervalTimer(seconds);
-        }
+        // tick() drops the mode when the break runs out, and a quiz resumed into
+        // half time never had one: there is not always a clock left to nudge.
+        const left = timer.mode === 'interval' ? timer.remaining : 0;
+        armIntervalTimer(left + seconds);
         engines.audio.play('click');
     },
 
@@ -952,8 +959,8 @@ const actions = {
             if (distance < best) { best = distance; winnerId = teamId; }
         }
         if (!winnerId) {
-            // Nobody typed a guess. Say so out loud rather than looking broken
-            // in front of the room.
+            // No usable guess came in. Make a noise about it rather than sitting
+            // there doing nothing at the most public moment of the night.
             engines.audio.play('error');
             return;
         }
@@ -977,11 +984,10 @@ const actions = {
     showResults() {
         // The tie-break winner takes the trophy: give them a single decisive point.
         const g = game();
-        if (g.tiebreak?.winnerId) {
-            const roundId = g.roundIds[g.roundIds.length - 1];
-            State.setBonus(roundId, g.tiebreak.winnerId,
-                (g.bonus[roundId]?.[g.tiebreak.winnerId] || 0) + 1);
-        }
+        // Awarded outside the rounds: as a round bonus it would be doubled by a
+        // joker played on the final round, which is not what winning a
+        // tie-break is worth.
+        if (g.tiebreak?.winnerId) State.awardTiebreakPoint(g.tiebreak.winnerId);
         showResults();
     },
 
@@ -1201,6 +1207,9 @@ async function boot() {
     // A saved quiz does not barge straight back onto the screen: the host gets
     // the setup page with a resume banner, so they can check the sound first.
     offeringResume = State.hasResumableGame();
+
+    // A saved game may have been written against an older version of its pack.
+    if (offeringResume) State.reconcileMarks(activePack());
 
     // If they do resume onto a live question, give the clock a sensible face so
     // the host can just press play rather than staring at a dead 0:00.

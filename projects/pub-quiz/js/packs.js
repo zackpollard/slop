@@ -222,6 +222,49 @@ function guessIcon(id, name) {
 // ---- library ----
 
 let cache = null;
+let builtInIdCache = null;
+
+/**
+ * The ids the built-in packs occupy. getPack() answers with the first match and
+ * built-ins are listed first, so a custom pack sharing an id would be stored and
+ * shown in the picker but never actually loaded.
+ */
+function builtInIds() {
+    if (!builtInIdCache) {
+        builtInIdCache = new Set(
+            BUILT_IN_PACKS
+                .map((raw) => validatePack(raw, { source: 'built-in' }))
+                .filter((r) => r.ok)
+                .map((r) => r.pack.id),
+        );
+    }
+    return builtInIdCache;
+}
+
+/** An id close to `wanted` that no other pack has claimed. */
+function freeCustomId(wanted, taken) {
+    let candidate = `${wanted}-yours`;
+    for (let n = 2; taken.has(candidate); n++) candidate = `${wanted}-yours-${n}`;
+    return candidate;
+}
+
+/** Imported packs, renaming any that was stored before built-in ids were reserved. */
+function storedCustomPacks() {
+    const stored = storage.get(CUSTOM_KEY, []);
+    const taken = new Set([...builtInIds(), ...stored.map((p) => slug(p.id || ''))]);
+    let renamed = false;
+
+    for (const p of stored) {
+        const id = slug(p.id || '');
+        if (!builtInIds().has(id)) continue;
+        p.id = freeCustomId(id, taken);
+        taken.add(p.id);
+        renamed = true;
+    }
+
+    if (renamed) storage.set(CUSTOM_KEY, stored);
+    return stored;
+}
 
 /** All packs available to the host: built-ins plus imported ones. */
 export function allPacks({ refresh = false } = {}) {
@@ -233,7 +276,7 @@ export function allPacks({ refresh = false } = {}) {
         if (ok) packs.push(pack);
         else console.warn('[pub-quiz] built-in pack failed validation', raw?.name, errors);
     }
-    for (const raw of storage.get(CUSTOM_KEY, [])) {
+    for (const raw of storedCustomPacks()) {
         const { ok, pack } = validatePack(raw, { source: 'custom' });
         if (ok) packs.push(pack);
     }
@@ -250,9 +293,30 @@ export function saveCustomPack(rawPack) {
     const result = validatePack(rawPack, { source: 'custom' });
     if (!result.ok) return result;
 
-    const stored = storage.get(CUSTOM_KEY, []).filter((p) => slug(p.id || '') !== result.pack.id);
-    stored.push({ ...rawPack, id: result.pack.id });
-    storage.set(CUSTOM_KEY, stored);
+    const stored = storage.get(CUSTOM_KEY, []);
+
+    // A pack exported from the app carries the built-in's id, and hosts are told
+    // to edit that export and import it back — so give the copy an id of its own
+    // rather than one the built-in would keep winning.
+    if (builtInIds().has(result.pack.id)) {
+        const taken = new Set([...builtInIds(), ...stored.map((p) => slug(p.id || ''))]);
+        const fresh = freeCustomId(result.pack.id, taken);
+        result.warnings.unshift(`"${result.pack.id}" is a built-in pack id — your copy was saved as "${fresh}".`);
+        result.pack.id = fresh;
+    }
+
+    const kept = stored.filter((p) => slug(p.id || '') !== result.pack.id);
+    kept.push({ ...rawPack, id: result.pack.id });
+
+    if (!storage.set(CUSTOM_KEY, kept)) {
+        return {
+            ok: false,
+            pack: null,
+            errors: ["Could not save the pack — this browser's storage is full or disabled."],
+            warnings: result.warnings,
+        };
+    }
+
     cache = null;
     return result;
 }
@@ -281,6 +345,7 @@ export function exportPack(pack) {
             name: r.name,
             icon: r.icon,
             intro: r.intro,
+            ...(r.blurb ? { blurb: r.blurb } : {}),
             questions: r.questions.map((q) => ({
                 question: q.question,
                 answer: q.answer,
@@ -289,6 +354,9 @@ export function exportPack(pack) {
                 topic: q.topic,
                 funFact: q.funFact,
                 ...(q.melody ? { melody: q.melody } : {}),
+                ...(q.spokenQuestion ? { spokenQuestion: q.spokenQuestion } : {}),
+                ...(q.spokenAnswer ? { spokenAnswer: q.spokenAnswer } : {}),
+                ...(q.hint ? { hint: q.hint } : {}),
                 ...(q.clip ? { clip: q.clip } : {}),
                 ...(q.source ? { source: q.source } : {}),
             })),
