@@ -358,6 +358,7 @@ function questionControls(ctx) {
     const { game, round, actions, settings } = ctx;
     const revealed = game.revealed;
     const isLast = game.questionIndex >= round.questions.length - 1;
+    const holdAnswers = settings.answersAtEndOfRound;
 
     return el('div', { class: 'stage-controls' },
         el('button', {
@@ -375,15 +376,110 @@ function questionControls(ctx) {
 
         !revealed && settings.timerEnabled ? pauseButton(ctx) : null,
 
-        revealed
+        revealed || holdAnswers
             ? el('button', {
                 class: 'btn btn-primary btn-large',
                 onClick: () => actions.next(),
-            }, isLast ? 'Finish the round' : 'Next question', icon('next', 18))
+            }, isLast ? (holdAnswers ? 'On to the answers' : 'Finish the round') : 'Next question',
+            icon('next', 18))
             : el('button', {
                 class: 'btn btn-primary btn-large',
                 onClick: () => actions.reveal(),
             }, icon('eye', 18), 'Reveal the answer'));
+}
+
+// ---- answers ----
+
+/**
+ * The end-of-round answer read-out. Every question is listed so the room can
+ * follow along, and the answers appear one at a time as the host works down
+ * them, which is the pace a table can actually mark at.
+ */
+export function renderAnswers(ctx) {
+    const { game, round, actions, refs } = ctx;
+    const shown = game.answerIndex;
+    const total = round.questions.length;
+    const allShown = shown >= total;
+
+    const list = el('ol', { class: 'answer-list' },
+        ...round.questions.map((q, i) => {
+            const revealed = i < shown;
+            const isNewest = i === shown - 1;
+            const row = el('li', {
+                class: ['answer-row', revealed && 'is-revealed', isNewest && 'is-newest'],
+            },
+            el('span', { class: 'answer-num', text: String(i + 1) }),
+            el('div', { class: 'answer-body' },
+                el('p', { class: 'answer-q', text: q.question }),
+                revealed
+                    ? el('div', { class: 'answer-detail' },
+                        el('p', { class: 'answer-a', text: q.answer }),
+                        q.acceptable.length
+                            ? el('p', { class: 'answer-alt', text: `or ${listSentence(q.acceptable)}` })
+                            : null,
+                        q.funFact ? el('p', { class: 'answer-fact', text: q.funFact }) : null,
+                        q.clip ? el('p', { class: 'answer-credit', text: clipCredit(q.clip) }) : null,
+                        // The question screen holds back a credit that would
+                        // name the answer, so it lands here instead.
+                        q.image
+                            ? el('p', { class: 'answer-credit' },
+                                imageCredit(q.image),
+                                q.image.sourceUrl
+                                    ? el('a', {
+                                        class: 'source-link',
+                                        href: q.image.sourceUrl,
+                                        target: '_blank',
+                                        rel: 'noopener noreferrer',
+                                    }, icon('link', 12), 'Source')
+                                    : null)
+                            : null)
+                    : null),
+            revealed && q.image
+                ? el('img', { class: 'answer-thumb', src: q.image.src, alt: '' })
+                : null);
+
+            if (isNewest) refs.newestAnswer = row;
+            return row;
+        }));
+
+    // Keep the answer just read in view without yanking the page about.
+    requestAnimationFrame(() => {
+        refs.newestAnswer?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+
+    return el('div', { class: 'screen answers' },
+        el('header', { class: 'screen-head' },
+            el('div', { class: 'round-chip-standalone' }, round.icon, ` ${round.name}`),
+            el('h1', {}, 'The ', el('span', { class: 'accent', text: 'answers' })),
+            el('p', { class: 'screen-sub' },
+                allShown
+                    ? 'That is all ten. Get the sheets marked and the scores in.'
+                    : `Swap sheets and mark as we go — ${shown} of ${total} so far.`)),
+
+        list,
+
+        el('div', { class: 'stage-controls' },
+            el('button', {
+                class: 'btn btn-ghost',
+                onClick: () => actions.previous(),
+            }, icon('prev', 16), 'Back'),
+
+            !allShown
+                ? el('button', {
+                    class: 'btn btn-ghost',
+                    onClick: () => actions.revealAllAnswers(),
+                }, 'Show them all')
+                : null,
+
+            allShown
+                ? el('button', {
+                    class: 'btn btn-primary btn-large',
+                    onClick: () => actions.finishAnswers(),
+                }, icon('check', 18), game.teams.length ? 'On to the marking' : 'Next round')
+                : el('button', {
+                    class: 'btn btn-primary btn-large',
+                    onClick: () => actions.revealNextAnswer(),
+                }, icon('eye', 18), shown === 0 ? 'First answer' : 'Next answer')));
 }
 
 // ---- marking ----

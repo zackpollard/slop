@@ -22,7 +22,7 @@ import {
     draft, draftTeams,
 } from './setup.js';
 import {
-    renderRoundIntro, renderQuestion, renderMarking, renderLeaderboard,
+    renderRoundIntro, renderQuestion, renderAnswers, renderMarking, renderLeaderboard,
     renderInterval, renderTiebreak, renderResults, script,
 } from './screens.js';
 import {
@@ -45,8 +45,10 @@ const engines = {
 
 let seq = 0;                    // async generation token
 let offeringResume = false;     // a saved quiz is waiting; show setup until the host chooses
-let revealing = false;          // a reveal is between its drum roll and its answer
+let revealing = false;
+let revealingAnswer = false;          // a reveal is between its drum roll and its answer
 let lastPhaseChangeAt = 0;      // when the screen on the wall went up
+let lastRenderedPhase = '';     // ...and which screen that was
 let lastScreenKey = '';         // and what it was, so a redraw is not re-announced
 let refs = {};                  // live DOM references handed out by the screens
 let overlayCloser = null;
@@ -325,7 +327,14 @@ function render() {
     const host = $('#app');
     if (!host) return;
 
-    lastPhaseChangeAt = performance.now();
+    // Only a genuine change of screen restarts the double-tap guard. Every
+    // render used to, which meant a screen that redraws in place — the answers
+    // being read out one at a time — made the host wait between key presses.
+    const phaseNow = offeringResume ? 'setup' : ctx.game.phase;
+    if (phaseNow !== lastRenderedPhase) {
+        lastRenderedPhase = phaseNow;
+        lastPhaseChangeAt = performance.now();
+    }
 
     let screen;
     if (offeringResume) {
@@ -339,6 +348,7 @@ function render() {
     switch (ctx.game.phase) {
         case 'roundIntro': screen = ctx.round ? renderRoundIntro(ctx) : renderSetup(ctx); break;
         case 'question': screen = ctx.question ? renderQuestion(ctx) : renderSetup(ctx); break;
+        case 'answers': screen = ctx.round ? renderAnswers(ctx) : renderSetup(ctx); break;
         case 'marking': screen = ctx.round ? renderMarking(ctx) : renderSetup(ctx); break;
         case 'leaderboard': screen = ctx.round ? renderLeaderboard(ctx) : renderSetup(ctx); break;
         case 'interval': screen = renderInterval(ctx); break;
@@ -586,6 +596,90 @@ async function startRound() {
     }
 }
 
+/**
+ * The end of a round, the pub way: the questions have all been asked, sheets get
+ * swapped, and the answers are read out one at a time so tables can mark.
+ */
+async function startAnswers() {
+    const token = ++seq;
+    stopTimer();
+    timer.mode = null;
+    engines.clips.stop();
+    engines.audio.stopMusic({ fade: 0.6 });
+
+    State.updateGame((gm) => {
+        gm.phase = 'answers';
+        gm.answerIndex = 0;
+        gm.revealed = false;
+    });
+    render();
+    engines.audio.play('whoosh');
+
+    await say('That is the end of the round. Swap your sheets with the table next to you, '
+        + 'and here are the answers.', { enabled: settings().readScores });
+    if (token !== seq) return;
+
+    if (settings().autoAdvance) {
+        await sleep(1000);
+        if (token === seq) actions.revealNextAnswer();
+    }
+}
+
+async function revealNextAnswer() {
+    const round = currentRound();
+    if (!round || revealingAnswer) return;
+
+    const index = game().answerIndex;
+    if (index >= round.questions.length) return;
+
+    revealingAnswer = true;
+    const token = ++seq;
+    try {
+        const question = round.questions[index];
+
+        // One drum roll for the whole round, not ten.
+        if (settings().dramaticReveal && index === 0) {
+            engines.audio.play('drumroll');
+            await sleep(900);
+            if (token !== seq) return;
+        }
+
+        engines.audio.play('reveal');
+        State.updateGame((gm) => { gm.answerIndex = index + 1; });
+        render();
+        if (settings().confetti) engines.celebrate.sparkle();
+
+        await say(`Question ${index + 1}. ${script.answer(question)}`,
+            { enabled: settings().readAnswers });
+        if (token !== seq) return;
+
+        if (question.funFact && settings().readFunFacts) {
+            await say(question.funFact, { interrupt: false });
+            if (token !== seq) return;
+        }
+    } finally {
+        revealingAnswer = false;
+    }
+
+    if (settings().autoAdvance && game().answerIndex < round.questions.length) {
+        await sleep(settings().autoAdvanceSeconds * 1000);
+        if (token === seq) actions.revealNextAnswer();
+    }
+}
+
+function finishAnswers() {
+    seq += 1;
+    engines.speech.cancel();
+    engines.audio.play('whoosh');
+
+    if (!game().teams.length) {
+        actions.afterLeaderboard();
+        return;
+    }
+    State.setPhase('marking');
+    render();
+}
+
 async function finishRound() {
     const token = ++seq;
     stopTimer();
@@ -753,7 +847,7 @@ const actions = {
     },
 
     beginRound() {
-        State.updateGame((gm) => { gm.questionIndex = 0; gm.revealed = false; });
+        State.updateGame((gm) => { gm.questionIndex = 0; gm.revealed = false; gm.answerIndex = 0; });
         // Warm the round's media so a question does not open on a spinner.
         const round = currentRound();
         if (round) {
@@ -764,14 +858,39 @@ const actions = {
     },
 
     reveal() {
+        if (settings().answersAtEndOfRound) return;
         if (revealing || game().revealed) return;
         revealAnswer();
     },
+
+    revealNextAnswer,
+    revealAllAnswers() {
+        const round = currentRound();
+        if (!round) return;
+        seq += 1;
+        engines.speech.cancel();
+        engines.audio.play('reveal');
+        State.updateGame((gm) => { gm.answerIndex = round.questions.length; });
+        render();
+    },
+    finishAnswers,
 
     next() {
         const round = currentRound();
         if (!round) return;
         const g = game();
+
+        // Answers held to the end of the round: Next just moves on, and the
+        // last question opens the answers rather than revealing its own.
+        if (settings().answersAtEndOfRound) {
+            if (g.questionIndex >= round.questions.length - 1) {
+                startAnswers();
+                return;
+            }
+            State.updateGame((gm) => { gm.questionIndex += 1; gm.revealed = false; });
+            runQuestion();
+            return;
+        }
 
         if (!g.revealed) { actions.reveal(); return; }
 
@@ -785,6 +904,29 @@ const actions = {
 
     previous() {
         const g = game();
+
+        if (g.phase === 'answers') {
+            seq += 1;
+            engines.speech.cancel();
+            if (g.answerIndex > 0) {
+                State.updateGame((gm) => { gm.answerIndex -= 1; });
+                render();
+                return;
+            }
+            // Back past the first answer returns to the last question.
+            const round = currentRound();
+            State.updateGame((gm) => {
+                gm.phase = 'question';
+                gm.questionIndex = Math.max(0, (round?.questions.length || 1) - 1);
+                gm.revealed = false;
+            });
+            stopTimer();
+            timer.mode = null;
+            timer.remaining = 0;
+            render();
+            return;
+        }
+
         if (g.revealed) {
             seq += 1;
             const token = seq;
@@ -881,8 +1023,17 @@ const actions = {
     },
 
     backToQuestions() {
+        const round = currentRound();
+        if (settings().answersAtEndOfRound) {
+            State.updateGame((gm) => {
+                gm.phase = 'answers';
+                gm.answerIndex = round?.questions.length || 0;
+            });
+            render();
+            return;
+        }
         State.updateGame((gm) => {
-            gm.questionIndex = Math.max(0, (currentRound()?.questions.length || 1) - 1);
+            gm.questionIndex = Math.max(0, (round?.questions.length || 1) - 1);
             gm.revealed = true;
         });
         State.setPhase('question');
@@ -1195,6 +1346,12 @@ function primaryAction() {
     switch (game().phase) {
         case 'roundIntro': actions.beginRound(); break;
         case 'question': actions.next(); break;
+        case 'answers': {
+            const round = currentRound();
+            if (round && game().answerIndex >= round.questions.length) finishAnswers();
+            else revealNextAnswer();
+            break;
+        }
         case 'marking': actions.confirmMarks(); break;
         case 'leaderboard': actions.afterLeaderboard(); break;
         case 'interval': actions.endInterval(); break;

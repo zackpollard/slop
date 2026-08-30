@@ -28,7 +28,11 @@ Live at **[pub-quiz.slop.zackpollard.pro](https://pub-quiz.slop.zackpollard.pro)
   friends — which needs no files and no connection at all.
 - **Runs the clock.** A per-question countdown ring that you can pause, extend
   or skip, with an optional hands-free mode that reveals and advances by itself.
-- **Takes the marks.** After each round, a grid of teams against questions:
+- **Runs a round the pub way.** All ten questions get asked with nothing given
+  away, then the answers are read out at the end while sheets are swapped —
+  one at a time, at the pace a table can actually mark at. If you would rather
+  reveal each answer as you go, there is a switch for that.
+- **Takes the marks.** After the answers, a grid of teams against questions:
   tap to cycle correct, wrong, blank. Bonus points, quick-fill rows, and the
   answer key one click away.
 - **Picture rounds.** Questions can carry an image — a logo stripped of its
@@ -56,11 +60,15 @@ Live at **[pub-quiz.slop.zackpollard.pro](https://pub-quiz.slop.zackpollard.pro)
    sound buttons. Do this *before* the pub fills up.
 4. Press **F** for full screen, plug the laptop into the telly, and start.
 
+A round runs like this: ask all ten questions, then the answers screen lists
+them and reveals one at a time as you press on, so tables can swap sheets and
+mark. Then the marking grid, then the leaderboard.
+
 Handy keys while you host:
 
 | Key | Does |
 |---|---|
-| `Space` / `→` | The obvious next thing: begin, reveal, next |
+| `Space` / `→` | The obvious next thing: begin, next question, next answer |
 | `←` | Back a question |
 | `R` | Read the question again |
 | `P` | Pause or resume the timer |

@@ -23,6 +23,9 @@ export const DEFAULT_SETTINGS = {
     autoAdvance: false,
     autoAdvanceSeconds: 8,
     dramaticReveal: true,       // drum roll before every answer
+    // The pub way: ask all ten, then read the answers out while sheets are
+    // swapped. Turn this off to reveal each answer as you go instead.
+    answersAtEndOfRound: true,
     intervalAfterRound: 3,      // 0 = no half-time break
     intervalMinutes: 10,
 
@@ -92,7 +95,7 @@ export const TEAM_COLOURS = [
 // ---- game ----
 
 /**
- * phase: 'setup' | 'roundIntro' | 'question' | 'reveal' | 'marking'
+ * phase: 'setup' | 'roundIntro' | 'question' | 'answers' | 'marking'
  *      | 'leaderboard' | 'interval' | 'tiebreak' | 'results'
  */
 function emptyGame() {
@@ -110,6 +113,7 @@ function emptyGame() {
         roundIndex: 0,
         questionIndex: 0,
         revealed: false,
+        answerIndex: 0,     // how many of the round's answers have been read out
         askedIntervalAfter: null,
         tiebreak: null,     // { teamIds, guesses: {teamId: number}, winnerId }
         tiebreakPoints: {}, // teamId -> 1, kept out of the rounds so a joker cannot double it
@@ -122,6 +126,7 @@ function emptyGame() {
 let game = storage.get(GAME_KEY, null) || emptyGame();
 if (!game.marks || typeof game.marks !== 'object') game = emptyGame();
 if (!game.jokers || typeof game.jokers !== 'object') game.jokers = {};
+if (typeof game.answerIndex !== 'number') game.answerIndex = 0;
 if (!game.tiebreakPoints || typeof game.tiebreakPoints !== 'object') game.tiebreakPoints = {};
 
 const listeners = new Set();

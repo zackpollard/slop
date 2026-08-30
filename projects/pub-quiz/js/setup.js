@@ -535,7 +535,10 @@ export function renderSettingsPanel(ctx, rerender = () => {}, { inline = false }
         group('Timing', [
             toggle('Countdown timer on each question', s.timerEnabled, (v) => set({ timerEnabled: v }, true)),
             slider('Seconds to answer', s.timerSeconds, 5, 120, 5, (v) => retune({ timerSeconds: v }), (v) => `${v}s`),
-            toggle('Drum roll before every answer', s.dramaticReveal, (v) => set({ dramaticReveal: v })),
+            toggle('Hold the answers until the end of the round', s.answersAtEndOfRound,
+                (v) => set({ answersAtEndOfRound: v }), 'The pub way: ask all ten, swap sheets, '
+                + 'then read the answers out. Turn off to reveal each answer as you go.'),
+            toggle('Drum roll before the answers', s.dramaticReveal, (v) => set({ dramaticReveal: v })),
             toggle('Run the quiz hands-free', s.autoAdvance, (v) => set({ autoAdvance: v }, true),
                 'Reveals the answer and moves on by itself. Great for a big screen, nerve-racking for a host.'),
             s.autoAdvance
