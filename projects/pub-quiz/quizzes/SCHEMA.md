@@ -198,8 +198,10 @@ domain.
 
 - Ten questions is the usual round length, but any number works, and rounds do
   not have to be the same length.
-- A mix of three easy, four medium and three hard reads well: open with an easy
-  one, put the hardest at eight and nine, finish on something everyone gets.
+- A mix of three easy, four medium and three hard reads well.
+- Order each round easiest first and hardest last. A round that ramps lets a
+  table settle in before it starts struggling, and it makes the difficulty
+  labels do real work rather than just colouring a chip.
 - Every question is **read aloud**. Avoid symbols, brackets, "which of the
   following", and anything that only works written down.
 - Avoid answers that go stale — current champions, record holders, "the newest".
