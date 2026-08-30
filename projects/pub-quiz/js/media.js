@@ -102,6 +102,9 @@ export function normaliseImage(raw) {
         sourceUrl: typeof raw.sourceUrl === 'string' ? raw.sourceUrl.trim() : '',
         // 'contain' keeps a logo whole; 'cover' fills the frame with a photo.
         fit: raw.fit === 'cover' ? 'cover' : 'contain',
+        // A contained image sits on a plate so dark marks do not vanish into
+        // the dark theme. A pale mark needs the opposite.
+        plate: raw.plate === 'dark' ? 'dark' : 'light',
         trademark: Boolean(raw.trademark),
     };
 }

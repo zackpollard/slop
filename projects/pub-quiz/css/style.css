@@ -636,6 +636,12 @@ input[type="checkbox"] {
     padding: 1.75rem;
 }
 
+/* A pale mark would disappear on the cream plate, so it gets a dark one. */
+.picture-frame.is-contain.plate-dark {
+    background: linear-gradient(180deg, #24291f, #14170f);
+    border-color: var(--border-bright);
+}
+
 .picture-frame.is-cover { padding: 0; }
 
 .picture {

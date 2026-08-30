@@ -152,7 +152,8 @@ function imagePanel(ctx) {
     });
 
     const frame = el('div', {
-        class: ['picture-frame', `is-${image.fit}`],
+        class: ['picture-frame', `is-${image.fit}`,
+            image.fit === 'contain' && `plate-${image.plate}`],
     }, img);
 
     const status = el('p', { class: 'picture-status' });
