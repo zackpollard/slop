@@ -63,5 +63,8 @@ variable "projects" {
     unifi-store = {
       subdomain = "unifi-store.slop"
     }
+    pub-quiz = {
+      subdomain = "pub-quiz.slop"
+    }
   }
 }

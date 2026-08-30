@@ -1,0 +1,685 @@
+/*
+ * screens.js — every screen of a running quiz.
+ *
+ * These are pure render functions: they take a context object built by app.js
+ * and return a DOM node. Anything that needs to happen (speaking, timing,
+ * scoring, navigation) is done through ctx.actions, and anything that needs
+ * live updating without a re-render is registered on ctx.refs.
+ */
+
+import {
+    el, svgEl, icon, ordinal, ordinalWord, plural, fmtTime, listSentence,
+} from './dom.js';
+import {
+    standings, roundScore, cycleMark, fillRow, setBonus,
+    hasJoker, jokerRound, toggleJoker,
+} from './state.js';
+import { MELODIES } from './audio.js';
+
+const DIFFICULTY_LABELS = { easy: 'Easy', medium: 'Medium', hard: 'Hard' };
+
+// ---- shared bits ----
+
+function roundChip(ctx) {
+    const { game, round } = ctx;
+    return el('div', { class: 'round-chip' },
+        el('span', { class: 'round-chip-icon', text: round.icon }),
+        el('span', { class: 'round-chip-name', text: round.name }),
+        el('span', { class: 'round-chip-count', text: `Round ${game.roundIndex + 1} of ${game.roundIds.length}` }));
+}
+
+function progressDots(ctx) {
+    const { round, game } = ctx;
+    const dots = el('div', { class: 'dots', 'aria-hidden': 'true' });
+    round.questions.forEach((_, i) => {
+        dots.appendChild(el('span', {
+            class: ['dot', i < game.questionIndex && 'is-done', i === game.questionIndex && 'is-now'],
+        }));
+    });
+    return dots;
+}
+
+function difficultyChip(difficulty) {
+    return el('span', { class: `chip chip-${difficulty}` },
+        el('span', { class: 'pips' },
+            ...[1, 2, 3].map((n) => el('span', {
+                class: ['pip', n <= ({ easy: 1, medium: 2, hard: 3 }[difficulty] || 2) && 'is-on'],
+            }))),
+        DIFFICULTY_LABELS[difficulty] || difficulty);
+}
+
+function sourceLink(source) {
+    if (!source?.url) return null;
+    return el('a', {
+        class: 'source-link',
+        href: source.url,
+        target: '_blank',
+        rel: 'noopener noreferrer',
+    }, icon('link', 14), source.name || 'Source');
+}
+
+// ---- round intro ----
+
+export function renderRoundIntro(ctx) {
+    const { round, game, actions } = ctx;
+    const isFirst = game.roundIndex === 0;
+
+    return el('div', { class: 'screen stage round-intro' },
+        el('div', { class: 'round-intro-inner' },
+            el('div', { class: 'round-number', text: `Round ${game.roundIndex + 1}` }),
+            el('div', { class: 'round-glyph', text: round.icon }),
+            el('h1', { class: 'round-title', text: round.name }),
+            round.intro ? el('p', { class: 'round-blurb', text: round.intro }) : null,
+            el('p', { class: 'round-facts' },
+                el('span', { text: plural(round.questions.length, 'question') }),
+                ctx.settings.timerEnabled
+                    ? el('span', { text: `${ctx.settings.timerSeconds} seconds each` })
+                    : el('span', { text: 'no timer' }),
+                game.teams.length ? el('span', { text: plural(game.teams.length, 'team') }) : null)),
+
+        el('div', { class: 'stage-controls' },
+            !isFirst ? el('button', {
+                class: 'btn btn-ghost',
+                onClick: () => actions.repeatSpeech(),
+            }, icon('repeat', 16), 'Read it again') : null,
+            el('button', {
+                class: 'btn btn-primary btn-large',
+                onClick: () => actions.beginRound(),
+            }, icon('play', 18), isFirst ? 'Begin' : 'Start the round')));
+}
+
+// ---- question ----
+
+export function renderQuestion(ctx) {
+    const {
+        game, settings, round, question, refs,
+    } = ctx;
+    const revealed = game.revealed;
+    const number = game.questionIndex + 1;
+
+    const card = el('div', { class: ['question-card', revealed && 'is-revealed'] },
+        el('div', { class: 'question-head' },
+            el('span', { class: 'question-number', text: `Question ${number}` }),
+            el('span', { class: 'question-of', text: `of ${round.questions.length}` }),
+            el('div', { class: 'question-tags' },
+                settings.showTopic && question.topic
+                    ? el('span', { class: 'chip chip-topic', text: question.topic }) : null,
+                settings.showDifficulty ? difficultyChip(question.difficulty) : null)),
+
+        el('h1', { class: 'question-text', text: question.question }),
+
+        question.melody ? melodyPlayer(ctx) : null,
+
+        revealed ? answerPanel(ctx) : null);
+
+    return el('div', { class: 'screen stage question-stage' },
+        el('div', { class: 'stage-top' },
+            roundChip(ctx),
+            settings.showProgress ? progressDots(ctx) : null),
+        card,
+        settings.timerEnabled && !revealed ? timerRing(ctx, refs) : null,
+        questionControls(ctx));
+}
+
+function melodyPlayer(ctx) {
+    const { question, engines, actions } = ctx;
+    const meta = MELODIES[question.melody] || null;
+
+    const button = el('button', {
+        class: ['btn btn-melody', engines.audio.playingMelody && 'is-playing'],
+        onClick: async () => {
+            // The tune plays itself once when the question comes up. Clicking
+            // over the top of that would cut it off and — because the clock is
+            // waiting on that first play to finish — start the countdown early.
+            if (engines.audio.playingMelody) return;
+
+            // Only hold the clock if it was actually running: on the first play
+            // it has not started yet, and blindly resuming afterwards would set
+            // it going while the host is still talking.
+            const wasRunning = ctx.timer.running;
+            if (wasRunning) actions.pauseTimer(true);
+
+            await engines.audio.unlock();
+            button.classList.add('is-playing');
+            await engines.audio.playMelody(question.melody);
+            button.classList.remove('is-playing');
+
+            if (wasRunning) actions.pauseTimer(false);
+        },
+    }, icon('music', 22), el('span', { text: 'Play the tune' }));
+
+    return el('div', { class: 'melody-player' },
+        button,
+        el('p', { class: 'melody-hint', text: 'Listen carefully — you can hear it as many times as you like.' }),
+        ctx.game.revealed && meta
+            ? el('p', { class: 'melody-meta', text: `${meta.title} — ${meta.composer}, ${meta.year}` })
+            : null);
+}
+
+function timerRing(ctx, refs) {
+    const total = ctx.settings.timerSeconds;
+    const circumference = 2 * Math.PI * 54;
+
+    const ringProgress = svgEl('circle', {
+        class: 'ring-progress',
+        cx: 60, cy: 60, r: 54,
+        'stroke-dasharray': circumference,
+        'stroke-dashoffset': 0,
+    });
+
+    const svg = svgEl('svg', { viewBox: '0 0 120 120', class: 'ring', 'aria-hidden': 'true' },
+        svgEl('circle', { class: 'ring-track', cx: 60, cy: 60, r: 54 }),
+        ringProgress);
+
+    const text = el('div', { class: 'timer-text', text: fmtTime(ctx.timer.remaining ?? total) });
+
+    refs.ring = ringProgress;
+    refs.ringCircumference = circumference;
+    refs.timerText = text;
+
+    return el('div', { class: 'timer', id: 'timer' },
+        svg,
+        text,
+        timerToggle(ctx));
+}
+
+function timerToggle(ctx) {
+    const button = el('button', {
+        class: 'timer-toggle',
+        'aria-label': 'Pause or resume the timer',
+        onClick: () => ctx.actions.toggleTimer(),
+    });
+    ctx.refs.timerToggle = button;
+    return button;
+}
+
+function answerPanel(ctx) {
+    const { question } = ctx;
+    return el('div', { class: 'answer-panel' },
+        el('div', { class: 'answer-label', text: 'The answer is' }),
+        el('div', { class: 'answer-text', text: question.answer }),
+        question.acceptable.length
+            ? el('div', { class: 'answer-accept', text: `Also accept: ${listSentence(question.acceptable)}` })
+            : null,
+        question.funFact
+            ? el('p', { class: 'fun-fact' }, el('span', { class: 'fun-fact-icon', text: '💡' }), question.funFact)
+            : null,
+        sourceLink(question.source));
+}
+
+/**
+ * The pause/resume button and the little toggle on the ring both describe the
+ * clock, which starts *after* this screen is drawn — so they are handed to the
+ * controller through refs and relabelled as the clock changes, rather than
+ * being frozen at render time.
+ */
+function pauseButton(ctx) {
+    const button = el('button', {
+        class: 'btn btn-ghost',
+        onClick: () => ctx.actions.toggleTimer(),
+    });
+    ctx.refs.pauseButton = button;
+    return button;
+}
+
+function questionControls(ctx) {
+    const { game, round, actions, settings } = ctx;
+    const revealed = game.revealed;
+    const isLast = game.questionIndex >= round.questions.length - 1;
+
+    return el('div', { class: 'stage-controls' },
+        el('button', {
+            class: 'btn btn-ghost',
+            disabled: game.questionIndex === 0 && !revealed,
+            onClick: () => actions.previous(),
+        }, icon('prev', 16), 'Back'),
+
+        !revealed
+            ? el('button', {
+                class: 'btn btn-ghost',
+                onClick: () => actions.repeatSpeech(),
+            }, icon('repeat', 16), 'Read it again')
+            : null,
+
+        !revealed && settings.timerEnabled ? pauseButton(ctx) : null,
+
+        revealed
+            ? el('button', {
+                class: 'btn btn-primary btn-large',
+                onClick: () => actions.next(),
+            }, isLast ? 'Finish the round' : 'Next question', icon('next', 18))
+            : el('button', {
+                class: 'btn btn-primary btn-large',
+                onClick: () => actions.reveal(),
+            }, icon('eye', 18), 'Reveal the answer'));
+}
+
+// ---- marking ----
+
+export function renderMarking(ctx) {
+    const { game, round, actions } = ctx;
+    const roundId = round.id;
+    const questionCount = round.questions.length;
+
+    const table = el('table', { class: 'mark-table' });
+    const head = el('tr', {},
+        el('th', { class: 'sticky-col', text: 'Team' }),
+        ...round.questions.map((q, i) => el('th', {
+            class: 'mark-col',
+            title: `${q.question} — ${q.answer}`,
+        }, String(i + 1))),
+        el('th', { class: 'bonus-col', text: 'Bonus' }),
+        ctx.settings.jokersEnabled ? el('th', { class: 'joker-col', text: 'Joker' }) : null,
+        el('th', { class: 'total-col', text: 'Round' }));
+    table.appendChild(el('thead', {}, head));
+
+    const body = el('tbody');
+    for (const team of game.teams) {
+        const totalCell = el('td', { class: 'total-col', text: String(roundScore(roundId, team.id)) });
+
+        const refresh = () => {
+            totalCell.textContent = String(roundScore(roundId, team.id));
+            ctx.refs.markSummary?.();
+        };
+
+        const cells = round.questions.map((_, i) => {
+            const value = game.marks[roundId]?.[team.id]?.[i] ?? null;
+            const button = el('button', {
+                class: ['mark-cell', value === 1 && 'is-right', value === 0 && 'is-wrong'],
+                'aria-label': `Question ${i + 1} for ${team.name}`,
+                onClick: () => {
+                    const next = cycleMark(roundId, team.id, i);
+                    button.className = ['mark-cell', next === 1 && 'is-right', next === 0 && 'is-wrong']
+                        .filter(Boolean).join(' ');
+                    button.textContent = next === 1 ? '✓' : (next === 0 ? '✗' : '');
+                    ctx.engines.audio.play(next === 1 ? 'correct' : (next === 0 ? 'click' : 'click'));
+                    refresh();
+                },
+                text: value === 1 ? '✓' : (value === 0 ? '✗' : ''),
+            });
+            return el('td', { class: 'mark-col' }, button);
+        });
+
+        body.appendChild(el('tr', {},
+            el('th', { class: 'sticky-col team-cell' },
+                el('span', { class: 'team-dot', style: { background: team.colour } }),
+                el('span', { class: 'team-name', text: team.name }),
+                el('span', { class: 'quick' },
+                    el('button', {
+                        class: 'quick-btn', title: 'Mark all correct',
+                        onClick: () => { fillRow(roundId, team.id, 1, questionCount); actions.render(); },
+                    }, '✓'),
+                    el('button', {
+                        class: 'quick-btn', title: 'Clear the row',
+                        onClick: () => { fillRow(roundId, team.id, null, questionCount); actions.render(); },
+                    }, '–'))),
+            ...cells,
+            el('td', { class: 'bonus-col' },
+                el('input', {
+                    type: 'number', class: 'input input-bonus', value: String(game.bonus[roundId]?.[team.id] ?? 0),
+                    min: '-10', max: '20',
+                    onChange: (e) => { setBonus(roundId, team.id, e.target.value); refresh(); },
+                })),
+            ctx.settings.jokersEnabled ? el('td', { class: 'joker-col' }, jokerButton(ctx, roundId, team)) : null,
+            totalCell));
+    }
+    table.appendChild(body);
+
+    const answerKey = el('details', { class: 'answer-key' },
+        el('summary', {}, `Answer key for ${round.name}`),
+        el('ol', { class: 'key-list' },
+            ...round.questions.map((q) => el('li', {},
+                el('span', { class: 'key-q', text: q.question }),
+                el('span', { class: 'key-a', text: q.answer }),
+                q.acceptable.length ? el('span', { class: 'key-alt', text: `or ${listSentence(q.acceptable)}` }) : null))));
+
+    return el('div', { class: 'screen marking' },
+        el('header', { class: 'screen-head' },
+            el('h1', {}, 'Marking · ', el('span', { class: 'accent', text: round.name })),
+            el('p', { class: 'screen-sub', text: 'Tap a box to cycle it: correct, wrong, blank. Swap sheets between teams and be ruthless.' })),
+        el('div', { class: 'table-wrap' }, table),
+        answerKey,
+        el('div', { class: 'stage-controls' },
+            el('button', { class: 'btn btn-ghost', onClick: () => actions.backToQuestions() },
+                icon('prev', 16), 'Back to the questions'),
+            el('button', { class: 'btn btn-primary btn-large', onClick: () => actions.confirmMarks() },
+                icon('check', 18), 'Scores are in')));
+}
+
+function jokerButton(ctx, roundId, team) {
+    const playedHere = hasJoker(roundId, team.id);
+    const playedElsewhere = jokerRound(team.id) && !playedHere;
+    const otherRound = playedElsewhere
+        ? ctx.pack.rounds.find((r) => r.id === jokerRound(team.id))
+        : null;
+
+    return el('button', {
+        class: ['joker-btn', playedHere && 'is-played'],
+        disabled: Boolean(playedElsewhere),
+        title: playedElsewhere
+            ? `Joker already played on ${otherRound ? otherRound.name : 'another round'}`
+            : 'Double this round for this team',
+        onClick: () => {
+            const on = toggleJoker(roundId, team.id);
+            ctx.engines.audio.play(on ? 'points' : 'click');
+            ctx.actions.render();
+        },
+    }, playedHere ? '★ ×2' : (playedElsewhere ? '–' : '☆'));
+}
+
+// ---- leaderboard ----
+
+export function renderLeaderboard(ctx) {
+    const { game, round, actions } = ctx;
+    const rows = standings(game.roundIndex);
+    const max = Math.max(1, ...rows.map((r) => r.total));
+    const isLastRound = game.roundIndex >= game.roundIds.length - 1;
+
+    const board = el('div', { class: 'board' });
+    rows.forEach((row, index) => {
+        const bar = el('div', {
+            class: 'board-bar',
+            style: { width: '0%', background: row.team.colour },
+        });
+        // animate in after paint
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+            bar.style.width = `${Math.max(6, (row.total / max) * 100)}%`;
+        }));
+
+        board.appendChild(el('div', {
+            class: ['board-row', row.position === 1 && 'is-leader'],
+            style: { animationDelay: `${index * 70}ms` },
+        },
+        el('div', { class: 'board-pos', text: ordinal(row.position) }),
+        el('div', { class: 'board-main' },
+            el('div', { class: 'board-name' },
+                el('span', { text: row.team.name }),
+                movementBadge(row.movement)),
+            el('div', { class: 'board-track' }, bar)),
+        el('div', { class: 'board-score' },
+            el('span', { class: 'board-total', text: String(row.total) }),
+            el('span', {
+                class: ['board-round', hasJoker(game.roundIds[game.roundIndex], row.team.id) && 'is-joker'],
+                text: `+${row.roundTotal}${hasJoker(game.roundIds[game.roundIndex], row.team.id) ? ' ★' : ''}`,
+            }))));
+    });
+
+    return el('div', { class: 'screen leaderboard' },
+        el('header', { class: 'screen-head' },
+            el('div', { class: 'round-chip-standalone' }, round.icon, ` ${round.name}`),
+            el('h1', {}, 'The ', el('span', { class: 'accent', text: 'scores' }), ' on the doors'),
+            el('p', { class: 'screen-sub', text: leaderboardSubtitle(rows, game) })),
+        board,
+        el('div', { class: 'stage-controls' },
+            el('button', { class: 'btn btn-ghost', onClick: () => actions.render() }, icon('repeat', 16), 'Redraw'),
+            el('button', { class: 'btn btn-ghost', onClick: () => actions.backToMarking() }, 'Fix the marks'),
+            el('button', { class: 'btn btn-primary btn-large', onClick: () => actions.afterLeaderboard() },
+                isLastRound ? 'To the final scores' : 'Next round', icon('next', 18))));
+}
+
+function movementBadge(movement) {
+    if (!movement) return null;
+    const up = movement > 0;
+    return el('span', {
+        class: ['move', up ? 'move-up' : 'move-down'],
+        title: `${up ? 'Up' : 'Down'} ${Math.abs(movement)}`,
+    }, `${up ? '▲' : '▼'}${Math.abs(movement)}`);
+}
+
+function leaderboardSubtitle(rows, game) {
+    if (!rows.length) return 'No teams — score it on paper.';
+    const leaders = rows.filter((r) => r.position === 1);
+    const remaining = game.roundIds.length - game.roundIndex - 1;
+    const tail = remaining > 0 ? ` ${plural(remaining, 'round')} still to play.` : ' That is the last of the questions.';
+    if (leaders.length > 1) {
+        return `${listSentence(leaders.map((l) => l.team.name))} are tied at the top on ${plural(leaders[0].total, 'point')}.${tail}`;
+    }
+    const gap = leaders[0].total - (rows[1]?.total ?? leaders[0].total);
+    if (rows.length === 1) return `${leaders[0].team.name} on ${plural(leaders[0].total, 'point')}.${tail}`;
+    return gap === 0
+        ? `${leaders[0].team.name} lead on ${plural(leaders[0].total, 'point')}.${tail}`
+        : `${leaders[0].team.name} lead on ${plural(leaders[0].total, 'point')}, ${plural(gap, 'point')} clear.${tail}`;
+}
+
+// ---- interval ----
+
+export function renderInterval(ctx) {
+    const { actions, refs, settings } = ctx;
+    const text = el('div', { class: 'interval-clock', text: fmtTime(ctx.timer.remaining ?? settings.intervalMinutes * 60) });
+    refs.intervalText = text;
+
+    return el('div', { class: 'screen stage interval' },
+        el('div', { class: 'interval-inner' },
+            el('div', { class: 'interval-glyph' }, icon('coffee', 64)),
+            el('h1', { class: 'interval-title', text: 'Half time' }),
+            el('p', { class: 'interval-sub', text: 'Get a drink in, compare notes, accuse each other of cheating.' }),
+            text,
+            el('p', { class: 'interval-standings', text: intervalStandingsLine(ctx) })),
+        el('div', { class: 'stage-controls' },
+            el('button', { class: 'btn btn-ghost', onClick: () => actions.addIntervalTime(60) }, '+1 minute'),
+            el('button', { class: 'btn btn-primary btn-large', onClick: () => actions.endInterval() },
+                icon('play', 18), 'Back to the quiz')));
+}
+
+function intervalStandingsLine(ctx) {
+    const rows = standings(ctx.game.roundIndex);
+    if (!rows.length) return '';
+    return rows.slice(0, 3).map((r) => `${ordinal(r.position)} ${r.team.name} (${r.total})`).join(' · ');
+}
+
+// ---- tie-break ----
+
+export function renderTiebreak(ctx) {
+    const { game, pack, actions } = ctx;
+    const tb = pack.tiebreaker;
+    const tied = game.tiebreak?.teamIds || [];
+    const teams = game.teams.filter((t) => tied.includes(t.id));
+    const resolved = Boolean(game.tiebreak?.winnerId);
+
+    const inputs = new Map();
+
+    return el('div', { class: 'screen stage tiebreak' },
+        el('div', { class: 'tiebreak-inner' },
+            el('div', { class: 'tiebreak-flash', text: 'Tie-break!' }),
+            el('h1', { class: 'question-text', text: tb.question }),
+            el('p', { class: 'tiebreak-rule', text: `Closest guess wins${tb.unit ? ` — answer in ${tb.unit}` : ''}. No conferring.` }),
+
+            el('div', { class: 'tiebreak-entries' },
+                ...teams.map((team) => {
+                    const guess = game.tiebreak?.guesses?.[team.id];
+                    const input = el('input', {
+                        type: 'number', class: 'input tiebreak-input',
+                        value: guess ?? '', placeholder: '0', disabled: resolved,
+                    });
+                    inputs.set(team.id, input);
+                    return el('label', { class: 'tiebreak-entry' },
+                        el('span', { class: 'team-dot', style: { background: team.colour } }),
+                        el('span', { class: 'tiebreak-team', text: team.name }),
+                        input,
+                        resolved && guess !== undefined
+                            ? el('span', {
+                                class: 'tiebreak-delta',
+                                text: `out by ${Math.abs(Number(guess) - tb.answer).toLocaleString('en-GB')}`,
+                            })
+                            : null);
+                })),
+
+            resolved
+                ? el('div', { class: 'answer-panel' },
+                    el('div', { class: 'answer-label', text: 'The answer was' }),
+                    el('div', { class: 'answer-text', text: `${tb.answer.toLocaleString('en-GB')}${tb.unit ? ` ${tb.unit}` : ''}` }),
+                    tb.funFact ? el('p', { class: 'fun-fact' }, el('span', { class: 'fun-fact-icon', text: '💡' }), tb.funFact) : null,
+                    sourceLink(tb.source))
+                : null),
+
+        el('div', { class: 'stage-controls' },
+            resolved
+                ? el('button', { class: 'btn btn-primary btn-large', onClick: () => actions.showResults() },
+                    icon('trophy', 18), 'Crown the winners')
+                : el('button', {
+                    class: 'btn btn-primary btn-large',
+                    onClick: () => {
+                        const guesses = {};
+                        for (const [teamId, input] of inputs) {
+                            const value = Number(input.value);
+                            if (Number.isFinite(value) && input.value !== '') guesses[teamId] = value;
+                        }
+                        actions.resolveTiebreak(guesses);
+                    },
+                }, icon('eye', 18), 'Lock them in and reveal')));
+}
+
+// ---- results ----
+
+export function renderResults(ctx) {
+    const { actions } = ctx;
+    const rows = standings();
+    const podium = rows.slice(0, 3);
+    const winner = rows[0];
+
+    const podiumOrder = [podium[1], podium[0], podium[2]].filter(Boolean);
+
+    return el('div', { class: 'screen results' },
+        el('header', { class: 'screen-head' },
+            el('div', { class: 'results-badge' }, icon('trophy', 22), 'Final scores'),
+            el('h1', { class: 'results-title' },
+                winner
+                    ? el('span', {}, el('span', { class: 'accent', text: winner.team.name }), ' win the quiz')
+                    : 'That is your lot')),
+
+        podium.length
+            ? el('div', { class: 'podium' },
+                ...podiumOrder.map((row) => el('div', {
+                    class: ['podium-slot', `podium-${row.position}`],
+                },
+                el('div', { class: 'podium-name', text: row.team.name }),
+                el('div', {
+                    class: 'podium-block',
+                    style: { background: `linear-gradient(180deg, ${row.team.colour}, ${row.team.colour}66)` },
+                },
+                el('span', { class: 'podium-pos', text: ordinal(row.position) }),
+                el('span', { class: 'podium-score', text: String(row.total) })))))
+            : null,
+
+        rows.length ? fullTable(ctx, rows) : el('p', { class: 'empty', text: 'No teams were playing — hope the questions were good.' }),
+
+        el('div', { class: 'stage-controls wrap' },
+            el('button', { class: 'btn btn-ghost', onClick: () => actions.printSheets() }, icon('print', 16), 'Print the results'),
+            el('button', { class: 'btn btn-ghost', onClick: () => actions.exportCsv() }, icon('download', 16), 'Download scores'),
+            el('button', { class: 'btn btn-ghost', onClick: () => actions.celebrateAgain() }, icon('sparkle', 16), 'Again!'),
+            el('button', { class: 'btn btn-primary btn-large', onClick: () => actions.newQuiz() }, icon('home', 18), 'New quiz')));
+}
+
+function fullTable(ctx, rows) {
+    const rounds = ctx.game.roundIds
+        .map((id) => ctx.pack.rounds.find((r) => r.id === id))
+        .filter(Boolean);
+
+    const table = el('table', { class: 'results-table' });
+    table.appendChild(el('thead', {}, el('tr', {},
+        el('th', { text: '' }),
+        el('th', { class: 'left', text: 'Team' }),
+        ...rounds.map((r) => el('th', { title: r.name }, r.icon)),
+        el('th', { text: 'Total' }))));
+
+    const body = el('tbody');
+    for (const row of rows) {
+        body.appendChild(el('tr', { class: row.position === 1 ? 'is-winner' : '' },
+            el('td', { class: 'pos', text: ordinal(row.position) }),
+            el('td', { class: 'left' },
+                el('span', { class: 'team-dot', style: { background: row.team.colour } }),
+                row.team.name),
+            ...rounds.map((r) => el('td', {
+                class: hasJoker(r.id, row.team.id) ? 'is-joker' : '',
+                title: hasJoker(r.id, row.team.id) ? 'Joker played — doubled' : '',
+                text: `${roundScore(r.id, row.team.id)}${hasJoker(r.id, row.team.id) ? '★' : ''}`,
+            })),
+            el('td', { class: 'total', text: String(row.total) })));
+    }
+    table.appendChild(body);
+
+    return el('div', { class: 'table-wrap' }, table);
+}
+
+// ---- spoken copy ----
+
+/** The words the host actually says, kept next to the screens they belong to. */
+export const script = {
+    roundIntro(round, index, total) {
+        const parts = [`Round ${ordinalWord(index + 1) === 'first' ? 'one' : index + 1}.`, `${round.name}.`];
+        if (round.intro) parts.push(round.intro);
+        if (index + 1 === total) parts.push('This is the last round, so no pressure.');
+        return parts.join(' ');
+    },
+
+    question(question, index) {
+        return `Question ${index + 1}. ${question.spokenQuestion || question.question}`;
+    },
+
+    timeUp() {
+        return 'Time is up. Pens down please.';
+    },
+
+    answer(question) {
+        const answer = question.spokenAnswer || question.answer;
+        const parts = [`The answer is ${answer}.`];
+        if (question.acceptable?.length) {
+            parts.push(`We would also have accepted ${listSentence(question.acceptable)}.`);
+        }
+        return parts.join(' ');
+    },
+
+    funFact(question) {
+        return question.funFact || '';
+    },
+
+    standings(rows, roundsRemaining) {
+        if (!rows.length) return '';
+        const leaders = rows.filter((r) => r.position === 1);
+        const parts = [];
+        if (leaders.length > 1) {
+            parts.push(`It is all square at the top. ${listSentence(leaders.map((l) => l.team.name))} are tied on ${leaders[0].total} points.`);
+        } else {
+            parts.push(`In the lead, with ${plural(leaders[0].total, 'point')}, ${leaders[0].team.name}.`);
+            const second = rows.find((r) => r.position !== 1);
+            if (second) {
+                const gap = leaders[0].total - second.total;
+                parts.push(`${second.team.name} are ${gap === 1 ? 'a point' : `${gap} points`} behind.`);
+            }
+        }
+        if (roundsRemaining > 0) {
+            parts.push(roundsRemaining === 1 ? 'One round to go.' : `${roundsRemaining} rounds still to play.`);
+        }
+        return parts.join(' ');
+    },
+
+    winner(rows) {
+        if (!rows.length) return 'That is the end of the quiz. Thank you all for playing.';
+        const winners = rows.filter((r) => r.position === 1);
+        if (winners.length > 1) {
+            return `We have a dead heat. ${listSentence(winners.map((w) => w.team.name))} finish level on ${plural(winners[0].total, 'point')}.`;
+        }
+        const parts = [
+            'Ladies and gentlemen, your winners tonight,',
+            `with ${plural(winners[0].total, 'point')},`,
+            `${winners[0].team.name}!`,
+        ];
+        const runnerUp = rows.find((r) => r.position !== 1);
+        if (runnerUp) parts.push(`In second place, ${runnerUp.team.name} on ${runnerUp.total}.`);
+        parts.push('Thank you all for playing, and mind how you go.');
+        return parts.join(' ');
+    },
+
+    interval(minutes) {
+        return `That is the half way point. We will break for ${plural(minutes, 'minute')}. Get yourselves a drink, and no looking anything up.`;
+    },
+
+    tiebreak(tb) {
+        return `We cannot separate them, so it goes to a tie break. Closest guess wins. ${tb.question}`;
+    },
+
+    tiebreakResult(tb, winnerName, guess) {
+        return `The answer was ${tb.answer.toLocaleString('en-GB')}${tb.unit ? ` ${tb.unit}` : ''}. `
+            + `${winnerName} guessed ${Number(guess).toLocaleString('en-GB')}, and take it.`;
+    },
+};

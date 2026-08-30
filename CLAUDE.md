@@ -48,6 +48,7 @@ tofu/                  # OpenTofu infrastructure (Cloudflare Pages + DNS)
 | texas-holdem | `projects/texas-holdem/` | Static HTML/CSS/JS, PeerJS | Multiplayer Texas Hold'em poker with peer-to-peer networking |
 | cards-against-humanity | `projects/cards-against-humanity/` | Static HTML/CSS/JS, PeerJS | P2P Cards Against Humanity party game |
 | waze-beep-sound-pack | `projects/waze-beep-sound-pack/` | Static HTML/CSS/JS, Web Audio API, JSZip (CDN) | Beeps-only Waze sound pack generator with WAV/zip export |
+| pub-quiz | `projects/pub-quiz/` | Static HTML/CSS/JS (ES modules), Web Speech API, Web Audio API | Reusable pub quiz host app: JSON/JS quiz packs, spoken questions and answers, synthesised music and sound effects, name-that-tune melodies, per-question timer, on-screen marking, leaderboards, tie-breaker, podium and printable answer sheets |
 | unifi-store | `projects/unifi-store/` | Static HTML/CSS/JS (ES modules) | Parody UniFi Store: real scraped catalog (`catalog.json`) + specs (`specs.json`), cart, fake checkout w/ promo codes, daily deals, compare tool, rack builder, order tracking, dopamine dashboard — all in `localStorage` |
 
 **When adding a new project:**

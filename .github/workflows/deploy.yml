@@ -172,6 +172,9 @@ jobs:
           - name: unifi-store
             pages-project: slop-unifi-store
             directory: projects/unifi-store
+          - name: pub-quiz
+            pages-project: slop-pub-quiz
+            directory: projects/pub-quiz
     steps:
       - name: Checkout
         uses: actions/checkout@v4

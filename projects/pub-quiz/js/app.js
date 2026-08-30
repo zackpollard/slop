@@ -1,0 +1,968 @@
+/*
+ * app.js — the quizmaster.
+ *
+ * Owns the three engines (sound, voice, celebration), the running clock, the
+ * keyboard, and the state machine that walks a quiz from "welcome to the quiz"
+ * all the way to the fanfare. Screens are rendered by screens.js and setup.js;
+ * everything they can *do* comes through the `actions` object below.
+ *
+ * Async flow note: every step that awaits speech or sound takes a copy of
+ * `seq`, and bails out if the host has moved on in the meantime. That is what
+ * stops a rapid double-click leaving two voices talking over each other.
+ */
+
+import { QuizAudio } from './audio.js';
+import { QuizSpeech } from './speech.js';
+import { Celebrate } from './celebrate.js';
+import * as State from './state.js';
+import { getPack, allPacks } from './packs.js';
+import {
+    renderSetup, renderSettingsPanel, applySettingsToEngines, applyBigScreen,
+    draft, draftTeams,
+} from './setup.js';
+import {
+    renderRoundIntro, renderQuestion, renderMarking, renderLeaderboard,
+    renderInterval, renderTiebreak, renderResults, script,
+} from './screens.js';
+import {
+    buildAnswerSheets, buildAnswerKey, buildResultsSheet, printNode,
+} from './sheets.js';
+import {
+    el, icon, mount, $, fmtTime, sleep, plural,
+} from './dom.js';
+
+// ---- engines ----
+
+const engines = {
+    audio: new QuizAudio(),
+    speech: new QuizSpeech(),
+    celebrate: new Celebrate(document.getElementById('confetti')),
+};
+
+// ---- module state ----
+
+let seq = 0;                    // async generation token
+let offeringResume = false;     // a saved quiz is waiting; show setup until the host chooses
+let refs = {};                  // live DOM references handed out by the screens
+let overlayCloser = null;
+
+const timer = {
+    mode: null,                 // 'question' | 'interval'
+    total: 0,
+    remaining: 0,
+    running: false,
+    deadline: 0,
+    handle: 0,
+    onEnd: null,
+    tickingArmed: false,
+};
+
+// ---- helpers ----
+
+const settings = () => State.getSettings();
+const game = () => State.getGame();
+
+function activePack() {
+    const g = game();
+    return getPack(g.packId) || getPack(draft.packId) || allPacks()[0] || null;
+}
+
+function currentRound(pack = activePack()) {
+    const g = game();
+    if (!pack || !g.roundIds.length) return null;
+    return pack.rounds.find((r) => r.id === g.roundIds[g.roundIndex]) || null;
+}
+
+function currentQuestion(round = currentRound()) {
+    return round ? round.questions[game().questionIndex] || null : null;
+}
+
+function buildCtx() {
+    const pack = activePack();
+    const round = currentRound(pack);
+    return {
+        game: game(),
+        settings: settings(),
+        pack,
+        round,
+        question: currentQuestion(round),
+        actions,
+        engines,
+        refs,
+        timer,
+        resumable: resumeLabel(),
+    };
+}
+
+function resumeLabel() {
+    if (!State.hasResumableGame()) return '';
+    const g = game();
+    const pack = getPack(g.packId);
+    const round = pack?.rounds.find((r) => r.id === g.roundIds[g.roundIndex]);
+    return `${g.packName || 'A quiz'} — round ${g.roundIndex + 1}${round ? ` (${round.name})` : ''}, `
+        + `question ${g.questionIndex + 1}.`;
+}
+
+/** Speak, ducking the music underneath, and only if the host wants it read. */
+async function say(text, { enabled = true, interrupt = true } = {}) {
+    if (!text || !enabled || !settings().speechEnabled) return 'skipped';
+    engines.audio.duck(true);
+    try {
+        return await engines.speech.speak(text, { interrupt });
+    } finally {
+        engines.audio.duck(false);
+    }
+}
+
+// ---- the clock ----
+
+function startTimer(seconds, { mode = 'question', onEnd = null } = {}) {
+    stopTimer();
+    timer.mode = mode;
+    timer.total = seconds;
+    timer.remaining = seconds;
+    timer.running = true;
+    timer.deadline = performance.now() + seconds * 1000;
+    timer.onEnd = onEnd;
+    timer.tickingArmed = false;
+    timer.handle = setInterval(tick, 100);
+    updateTimerUI();
+}
+
+function stopTimer() {
+    if (timer.handle) clearInterval(timer.handle);
+    timer.handle = 0;
+    timer.running = false;
+    engines.audio.stopTicking();
+    timer.tickingArmed = false;
+}
+
+function pauseTimer() {
+    if (!timer.running) return;
+    timer.remaining = Math.max(0, (timer.deadline - performance.now()) / 1000);
+    stopTimer();
+    updateTimerUI();
+}
+
+function resumeTimer() {
+    if (timer.running || timer.remaining <= 0 || !timer.mode) return;
+    timer.running = true;
+    timer.deadline = performance.now() + timer.remaining * 1000;
+    timer.handle = setInterval(tick, 100);
+    armTicking();
+    updateTimerUI();
+}
+
+function armTicking() {
+    if (timer.mode !== 'question') return;
+    if (timer.remaining <= 10.5 && timer.remaining > 0 && !timer.tickingArmed) {
+        timer.tickingArmed = true;
+        engines.audio.startTicking(Math.ceil(timer.remaining));
+    }
+}
+
+function tick() {
+    timer.remaining = Math.max(0, (timer.deadline - performance.now()) / 1000);
+    armTicking();
+    updateTimerUI();
+
+    if (timer.remaining <= 0) {
+        const done = timer.onEnd;
+        stopTimer();
+        timer.mode = null;
+        if (done) done();
+    }
+}
+
+function updateTimerUI() {
+    if (refs.timerText) refs.timerText.textContent = fmtTime(timer.remaining);
+    if (refs.intervalText) refs.intervalText.textContent = fmtTime(timer.remaining);
+
+    if (refs.ring && timer.total > 0) {
+        const fraction = Math.max(0, Math.min(1, timer.remaining / timer.total));
+        refs.ring.style.strokeDashoffset = String(refs.ringCircumference * (1 - fraction));
+    }
+
+    // The clock starts after the screen is drawn, so relabel its controls here
+    // rather than leaving them frozen on whatever state they rendered with.
+    if (refs.pauseButton) {
+        refs.pauseButton.replaceChildren(
+            icon(timer.running ? 'pause' : 'play', 16),
+            document.createTextNode(timer.running ? 'Pause' : 'Resume'),
+        );
+    }
+    if (refs.timerToggle) {
+        refs.timerToggle.replaceChildren(icon(timer.running ? 'pause' : 'play', 16));
+    }
+
+    const holder = document.getElementById('timer');
+    if (holder) {
+        holder.classList.toggle('is-urgent', timer.remaining <= 10 && timer.remaining > 5);
+        holder.classList.toggle('is-critical', timer.remaining <= 5);
+        holder.classList.toggle('is-paused', !timer.running && timer.remaining > 0);
+    }
+}
+
+// ---- rendering ----
+
+function render() {
+    refs = {};
+    const ctx = buildCtx();
+    const host = $('#app');
+    if (!host) return;
+
+    let screen;
+    if (offeringResume) {
+        mount(host, renderSetup(ctx));
+        renderTopbar(ctx);
+        document.body.dataset.phase = 'setup';
+        return;
+    }
+
+    switch (ctx.game.phase) {
+        case 'roundIntro': screen = ctx.round ? renderRoundIntro(ctx) : renderSetup(ctx); break;
+        case 'question': screen = ctx.question ? renderQuestion(ctx) : renderSetup(ctx); break;
+        case 'marking': screen = ctx.round ? renderMarking(ctx) : renderSetup(ctx); break;
+        case 'leaderboard': screen = ctx.round ? renderLeaderboard(ctx) : renderSetup(ctx); break;
+        case 'interval': screen = renderInterval(ctx); break;
+        case 'tiebreak': screen = ctx.pack?.tiebreaker ? renderTiebreak(ctx) : renderResults(ctx); break;
+        case 'results': screen = renderResults(ctx); break;
+        default: screen = renderSetup(ctx);
+    }
+
+    mount(host, screen);
+    renderTopbar(ctx);
+    updateTimerUI();
+    document.body.dataset.phase = ctx.game.phase;
+}
+
+function renderTopbar(ctx) {
+    const bar = $('#topbar');
+    if (!bar) return;
+    const s = ctx.settings;
+    const inQuiz = ctx.game.phase !== 'setup' && !offeringResume;
+
+    const position = inQuiz && ctx.round
+        ? `${ctx.round.icon} ${ctx.round.name} · ${ctx.game.phase === 'question'
+            ? `Q${ctx.game.questionIndex + 1}/${ctx.round.questions.length}`
+            : `Round ${ctx.game.roundIndex + 1}/${ctx.game.roundIds.length}`}`
+        : '';
+
+    mount(bar,
+        el('div', { class: 'topbar-left' },
+            el('button', {
+                class: 'brand',
+                title: inQuiz ? 'Back to the setup screen' : 'The Pub Quiz',
+                onClick: () => (inQuiz ? actions.confirmQuit() : window.scrollTo({ top: 0, behavior: 'smooth' })),
+            }, el('span', { class: 'brand-mark', text: '?' }), el('span', { class: 'brand-name', text: 'Pub Quiz' })),
+            position ? el('span', { class: 'topbar-position', text: position }) : null),
+
+        el('div', { class: 'topbar-right' },
+            el('span', { class: 'speaking-dot', id: 'speaking-dot', title: 'The host is speaking' }),
+            toolButton(s.speechEnabled ? 'speech' : 'speechOff', s.speechEnabled ? 'Mute the voice (V)' : 'Unmute the voice (V)',
+                () => actions.toggleSpeech(), s.speechEnabled),
+            toolButton(s.audioEnabled ? 'volume' : 'mute', s.audioEnabled ? 'Mute the sound (M)' : 'Unmute the sound (M)',
+                () => actions.toggleAudio(), s.audioEnabled),
+            toolButton('settings', 'Settings (S)', () => actions.openSettings()),
+            toolButton('expand', 'Full screen (F)', () => actions.toggleFullscreen()),
+            toolButton('keyboard', 'Keyboard shortcuts (?)', () => actions.openHelp()),
+            inQuiz ? el('button', { class: 'btn btn-ghost btn-small', onClick: () => actions.confirmQuit() }, 'End quiz') : null));
+}
+
+function toolButton(iconName, title, onClick, active = true) {
+    return el('button', {
+        class: ['tool-btn', !active && 'is-off'],
+        title,
+        'aria-label': title,
+        onClick,
+    }, icon(iconName, 18));
+}
+
+// ---- overlays ----
+
+function openOverlay(title, content, { wide = false } = {}) {
+    closeOverlay();
+    const root = $('#overlay-root');
+    if (!root) return;
+
+    const panel = el('div', { class: ['overlay-panel', wide && 'is-wide'], role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
+        el('header', { class: 'overlay-head' },
+            el('h2', { text: title }),
+            el('button', { class: 'icon-btn', 'aria-label': 'Close', onClick: () => closeOverlay() }, icon('cross', 18))),
+        el('div', { class: 'overlay-body' }, content));
+
+    const scrim = el('div', { class: 'overlay-scrim', onClick: () => closeOverlay() });
+    mount(root, scrim, panel);
+    root.hidden = false;
+    panel.querySelector('button')?.focus();
+    overlayCloser = () => {
+        root.hidden = true;
+        mount(root);
+        overlayCloser = null;
+    };
+}
+
+function closeOverlay() {
+    if (overlayCloser) overlayCloser();
+}
+
+// ---- flow ----
+
+async function runQuestion({ speakIt = true } = {}) {
+    const token = ++seq;
+    stopTimer();
+    timer.mode = null;
+    timer.remaining = settings().timerEnabled ? settings().timerSeconds : 0;
+    timer.total = settings().timerSeconds;
+
+    State.setPhase('question', { revealed: false });
+    render();
+
+    const question = currentQuestion();
+    if (!question) return;
+
+    engines.audio.play('question');
+    if (settings().musicEnabled) engines.audio.startMusic('think');
+
+    if (speakIt) {
+        await say(script.question(question, game().questionIndex), { enabled: settings().readQuestions });
+        if (token !== seq) return;
+
+        if (settings().repeatQuestion && settings().readQuestions) {
+            await sleep(500);
+            if (token !== seq) return;
+            await say(question.spokenQuestion || question.question, { enabled: true });
+            if (token !== seq) return;
+        }
+    }
+
+    if (question.melody) {
+        await engines.audio.unlock();
+        await engines.audio.playMelody(question.melody);
+        if (token !== seq) return;
+    }
+
+    if (settings().timerEnabled) {
+        startTimer(settings().timerSeconds, { mode: 'question', onEnd: () => onTimeUp(token) });
+    }
+}
+
+async function onTimeUp(token) {
+    if (token !== seq) return;
+    engines.audio.play('timeUp');
+    if (settings().confetti) engines.celebrate.pulse('#c45e4e');
+    await say(script.timeUp(), { enabled: settings().readQuestions });
+    if (token !== seq) return;
+
+    if (settings().autoAdvance) {
+        await sleep(1200);
+        if (token === seq) actions.reveal();
+    }
+}
+
+async function revealAnswer() {
+    const token = ++seq;
+    const question = currentQuestion();
+    if (!question) return;
+
+    stopTimer();
+    timer.mode = null;
+    engines.audio.stopMusic({ fade: 0.6 });
+
+    if (settings().dramaticReveal) {
+        engines.audio.play('drumroll');
+        await sleep(1100);
+        if (token !== seq) return;
+    }
+
+    engines.audio.play('reveal');
+    State.setPhase('question', { revealed: true });
+    render();
+    if (settings().confetti) engines.celebrate.sparkle();
+
+    await say(script.answer(question), { enabled: settings().readAnswers });
+    if (token !== seq) return;
+
+    if (question.funFact && settings().readFunFacts) {
+        await say(question.funFact, { interrupt: false });
+        if (token !== seq) return;
+    }
+
+    if (settings().autoAdvance) {
+        await sleep(settings().autoAdvanceSeconds * 1000);
+        if (token === seq) actions.next();
+    }
+}
+
+async function startRound() {
+    const token = ++seq;
+    const round = currentRound();
+    if (!round) return;
+
+    State.setPhase('roundIntro');
+    render();
+    engines.audio.play('roundStart');
+    if (settings().musicEnabled) engines.audio.startMusic('lobby');
+
+    await say(script.roundIntro(round, game().roundIndex, game().roundIds.length),
+        { enabled: settings().readIntros });
+    if (token !== seq) return;
+
+    if (settings().autoAdvance) {
+        await sleep(1200);
+        if (token === seq) actions.beginRound();
+    }
+}
+
+async function finishRound() {
+    const token = ++seq;
+    stopTimer();
+    engines.audio.stopMusic({ fade: 0.8 });
+
+    if (!game().teams.length) {
+        // No teams: skip marking and the leaderboard entirely.
+        actions.afterLeaderboard();
+        return;
+    }
+
+    State.setPhase('marking');
+    render();
+    engines.audio.play('whoosh');
+    await say('That is the end of the round. Swap your sheets with the table next to you.',
+        { enabled: settings().readScores });
+    if (token !== seq) return;
+}
+
+async function showLeaderboard() {
+    const token = ++seq;
+    State.snapshotStandings(game().roundIndex);
+    State.setPhase('leaderboard');
+    render();
+
+    engines.audio.play('leaderboard');
+    if (settings().musicEnabled) engines.audio.startMusic('lobby');
+    if (settings().confetti) engines.celebrate.burst({ count: 60, origin: { x: 0.5, y: 0.3 } });
+
+    const rows = State.standings(game().roundIndex);
+    const remaining = game().roundIds.length - game().roundIndex - 1;
+    await say(script.standings(rows, remaining), { enabled: settings().readScores });
+    if (token !== seq) return;
+}
+
+async function startInterval() {
+    const token = ++seq;
+    State.setPhase('interval');
+    render();
+    engines.audio.startMusic('interval');
+    startTimer(settings().intervalMinutes * 60, {
+        mode: 'interval',
+        onEnd: () => {
+            engines.audio.play('roundStart');
+            say('Right, that is time. Back to your seats please.', { enabled: settings().readScores });
+        },
+    });
+    await say(script.interval(settings().intervalMinutes), { enabled: settings().readIntros });
+    if (token !== seq) return;
+}
+
+async function startTiebreak() {
+    const token = ++seq;
+    const pack = activePack();
+    const tied = State.leaders().map((r) => r.team.id);
+
+    State.updateGame((g) => {
+        g.tiebreak = { teamIds: tied, guesses: {}, winnerId: null };
+        g.phase = 'tiebreak';
+    });
+    render();
+
+    engines.audio.play('whoosh');
+    engines.audio.startMusic('tension');
+    await say(script.tiebreak(pack.tiebreaker), { enabled: settings().readIntros });
+    if (token !== seq) return;
+}
+
+async function showResults() {
+    const token = ++seq;
+    stopTimer();
+    State.updateGame((g) => {
+        g.phase = 'results';
+        g.finishedAt = Date.now();
+    });
+    render();
+
+    engines.audio.stopMusic({ fade: 0.5 });
+    engines.audio.play('drumroll');
+    await sleep(1300);
+    if (token !== seq) return;
+
+    engines.audio.play('fanfare');
+    if (settings().confetti) engines.celebrate.cannons();
+    await sleep(1400);
+    if (token !== seq) return;
+
+    engines.audio.play('applause');
+    await say(script.winner(State.standings()), { enabled: settings().readScores });
+}
+
+// ---- actions ----
+
+const actions = {
+    render,
+
+    async start() {
+        const pack = getPack(draft.packId) || allPacks()[0];
+        if (!pack) return;
+        offeringResume = false;
+
+        await engines.audio.unlock();
+        applySettingsToEngines({ engines });
+
+        State.startGame({ pack, roundIds: draft.roundIds, teams: draftTeams() });
+        engines.audio.play('whoosh');
+
+        const token = ++seq;
+        State.setPhase('roundIntro');
+        render();
+        if (settings().musicEnabled) engines.audio.startMusic('lobby');
+
+        await say(
+            `Good evening, and welcome to ${pack.name}. `
+            + `${plural(game().roundIds.length, 'round')}, `
+            + `${plural(game().roundIds.reduce((n, id) => n + (pack.rounds.find((r) => r.id === id)?.questions.length || 0), 0), 'question')}, `
+            + 'and no phones. Let us begin.',
+            { enabled: settings().readIntros },
+        );
+        if (token !== seq) return;
+        await startRound();
+    },
+
+    async resume() {
+        offeringResume = false;
+        await engines.audio.unlock();
+        applySettingsToEngines({ engines });
+        const g = game();
+        if (g.phase === 'question' && !g.revealed) runQuestion({ speakIt: false });
+        else render();
+    },
+
+    discardResume() {
+        offeringResume = false;
+        State.resetGame();
+        render();
+    },
+
+    beginRound() {
+        State.updateGame((gm) => { gm.questionIndex = 0; gm.revealed = false; });
+        runQuestion();
+    },
+
+    reveal() {
+        if (game().revealed) return;
+        revealAnswer();
+    },
+
+    next() {
+        const round = currentRound();
+        if (!round) return;
+        const g = game();
+
+        if (!g.revealed) { actions.reveal(); return; }
+
+        if (g.questionIndex >= round.questions.length - 1) {
+            finishRound();
+            return;
+        }
+        State.updateGame((gm) => { gm.questionIndex += 1; gm.revealed = false; });
+        runQuestion();
+    },
+
+    previous() {
+        const g = game();
+        if (g.revealed) {
+            seq += 1;
+            engines.speech.cancel();
+            State.setPhase('question', { revealed: false });
+            render();
+            return;
+        }
+        if (g.questionIndex === 0) return;
+        seq += 1;
+        engines.speech.cancel();
+        State.updateGame((gm) => { gm.questionIndex -= 1; gm.revealed = true; });
+        stopTimer();
+        render();
+    },
+
+    repeatSpeech() {
+        const g = game();
+        const round = currentRound();
+        if (g.phase === 'roundIntro' && round) {
+            say(script.roundIntro(round, g.roundIndex, g.roundIds.length));
+            return;
+        }
+        const question = currentQuestion(round);
+        if (!question) return;
+        say(g.revealed ? script.answer(question) : (question.spokenQuestion || question.question));
+    },
+
+    toggleTimer() {
+        if (timer.running) {
+            pauseTimer();
+            engines.audio.play('click');
+        } else if (timer.remaining > 0) {
+            resumeTimer();
+            engines.audio.play('click');
+        } else if (settings().timerEnabled && game().phase === 'question' && !game().revealed) {
+            const token = seq;
+            startTimer(settings().timerSeconds, { mode: 'question', onEnd: () => onTimeUp(token) });
+        }
+        render();
+    },
+
+    /** Used by the melody player so the clock does not run while a tune plays. */
+    pauseTimer(shouldPause) {
+        if (shouldPause) pauseTimer();
+        else resumeTimer();
+    },
+
+    backToQuestions() {
+        State.updateGame((gm) => {
+            gm.questionIndex = Math.max(0, (currentRound()?.questions.length || 1) - 1);
+            gm.revealed = true;
+        });
+        State.setPhase('question');
+        render();
+    },
+
+    confirmMarks() {
+        engines.audio.play('points');
+        showLeaderboard();
+    },
+
+    backToMarking() {
+        State.updateGame((gm) => {
+            if (gm.history.length && gm.history[gm.history.length - 1].roundId === gm.roundIds[gm.roundIndex]) {
+                gm.history.pop();
+            }
+            gm.phase = 'marking';
+        });
+        render();
+    },
+
+    afterLeaderboard() {
+        const g = game();
+        const isLast = g.roundIndex >= g.roundIds.length - 1;
+
+        if (isLast) {
+            const pack = activePack();
+            if (State.isTied() && pack?.tiebreaker && g.teams.length > 1) startTiebreak();
+            else showResults();
+            return;
+        }
+
+        const justFinished = g.roundIndex + 1;
+        if (settings().intervalAfterRound === justFinished && g.askedIntervalAfter !== justFinished) {
+            State.updateGame((gm) => { gm.askedIntervalAfter = justFinished; });
+            startInterval();
+            return;
+        }
+
+        State.updateGame((gm) => {
+            gm.roundIndex += 1;
+            gm.questionIndex = 0;
+            gm.revealed = false;
+        });
+        startRound();
+    },
+
+    addIntervalTime(seconds) {
+        timer.remaining += seconds;
+        timer.deadline += seconds * 1000;
+        if (!timer.running) resumeTimer();
+        updateTimerUI();
+        engines.audio.play('click');
+    },
+
+    endInterval() {
+        stopTimer();
+        State.updateGame((gm) => {
+            gm.roundIndex += 1;
+            gm.questionIndex = 0;
+            gm.revealed = false;
+        });
+        startRound();
+    },
+
+    async resolveTiebreak(guesses) {
+        const token = ++seq;
+        const pack = activePack();
+        const tb = pack.tiebreaker;
+
+        let winnerId = null;
+        let best = Infinity;
+        for (const [teamId, guess] of Object.entries(guesses)) {
+            const distance = Math.abs(Number(guess) - tb.answer);
+            if (distance < best) { best = distance; winnerId = teamId; }
+        }
+        if (!winnerId) return;
+
+        State.updateGame((gm) => {
+            gm.tiebreak = { ...gm.tiebreak, guesses, winnerId };
+        });
+
+        engines.audio.play('drumroll');
+        await sleep(1100);
+        if (token !== seq) return;
+
+        engines.audio.play('reveal');
+        render();
+
+        const winner = game().teams.find((t) => t.id === winnerId);
+        await say(script.tiebreakResult(tb, winner?.name || 'nobody', guesses[winnerId]),
+            { enabled: settings().readScores });
+    },
+
+    showResults() {
+        // The tie-break winner takes the trophy: give them a single decisive point.
+        const g = game();
+        if (g.tiebreak?.winnerId) {
+            const roundId = g.roundIds[g.roundIds.length - 1];
+            State.setBonus(roundId, g.tiebreak.winnerId,
+                (g.bonus[roundId]?.[g.tiebreak.winnerId] || 0) + 1);
+        }
+        showResults();
+    },
+
+    celebrateAgain() {
+        engines.audio.play('fanfare');
+        if (settings().confetti) engines.celebrate.cannons();
+        setTimeout(() => engines.audio.play('applause'), 900);
+    },
+
+    exportCsv() {
+        const pack = activePack();
+        if (!pack) return;
+        const csv = State.scoresAsCsv(pack);
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = el('a', { href: url, download: `${pack.id}-scores.csv` });
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    },
+
+    printSheets() {
+        const pack = activePack();
+        if (!pack) return;
+        const g = game();
+        const inProgress = g.phase !== 'setup' && g.roundIds.length;
+        const roundIds = inProgress ? g.roundIds : draft.roundIds;
+        const teams = inProgress ? g.teams : draftTeams();
+
+        const choose = el('div', { class: 'print-choices' },
+            el('p', { text: 'What would you like on paper?' }),
+            el('div', { class: 'row wrap' },
+                el('button', {
+                    class: 'btn btn-primary',
+                    onClick: () => { closeOverlay(); printNode(buildAnswerSheets(pack, roundIds, teams)); },
+                }, icon('print', 16), 'Team answer sheets'),
+                el('button', {
+                    class: 'btn btn-ghost',
+                    onClick: () => { closeOverlay(); printNode(buildAnswerKey(pack, roundIds)); },
+                }, icon('print', 16), "Host's answer key"),
+                g.phase === 'results'
+                    ? el('button', {
+                        class: 'btn btn-ghost',
+                        onClick: () => { closeOverlay(); printNode(buildResultsSheet(pack, g)); },
+                    }, icon('print', 16), 'Final scores')
+                    : null));
+
+        openOverlay('Print', choose);
+    },
+
+    newQuiz() {
+        offeringResume = false;
+        seq += 1;
+        engines.speech.cancel();
+        engines.audio.stopMusic({ fade: 0.4 });
+        engines.celebrate.stop();
+        stopTimer();
+        State.resetGame();
+        render();
+        window.scrollTo({ top: 0 });
+    },
+
+    confirmQuit() {
+        if (game().phase === 'setup') return;
+        if (!confirm('End this quiz and go back to the setup screen? The scores will be lost.')) return;
+        actions.newQuiz();
+    },
+
+    toggleSpeech() {
+        const on = !settings().speechEnabled;
+        State.updateSettings({ speechEnabled: on });
+        engines.speech.setEnabled(on);
+        if (!on) engines.speech.cancel();
+        render();
+    },
+
+    toggleAudio() {
+        const on = !settings().audioEnabled;
+        State.updateSettings({ audioEnabled: on });
+        engines.audio.setMuted(!on);
+        render();
+    },
+
+    openSettings() {
+        const ctx = buildCtx();
+        openOverlay('Settings', renderSettingsPanel(ctx, () => actions.openSettings()), { wide: true });
+    },
+
+    openHelp() {
+        openOverlay('Keyboard shortcuts', helpContent());
+    },
+
+    async toggleFullscreen() {
+        try {
+            if (document.fullscreenElement) await document.exitFullscreen();
+            else await document.documentElement.requestFullscreen();
+        } catch { /* the browser said no; nothing we can do */ }
+    },
+};
+
+function helpContent() {
+    const rows = [
+        ['Space or →', 'Do the obvious thing: begin, reveal, next'],
+        ['←', 'Go back a question'],
+        ['R', 'Read the question again'],
+        ['P', 'Pause or resume the timer'],
+        ['V', 'Mute or unmute the host voice'],
+        ['M', 'Mute or unmute the sound'],
+        ['F', 'Full screen'],
+        ['S', 'Settings'],
+        ['Esc', 'Stop the voice talking, or close this'],
+        ['?', 'This list'],
+    ];
+
+    return el('div', { class: 'shortcuts' },
+        el('table', {}, el('tbody', {},
+            ...rows.map(([key, what]) => el('tr', {},
+                el('td', {}, el('kbd', { text: key })),
+                el('td', { text: what }))))),
+        el('p', { class: 'hint' },
+            'Tip: put this on the big screen with F, and keep a laptop or phone in front of you for the marking.'));
+}
+
+// ---- keyboard ----
+
+function onKeydown(event) {
+    const target = event.target;
+    const typing = target instanceof HTMLElement
+        && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT'
+            || target.isContentEditable);
+
+    if (event.key === 'Escape') {
+        if (overlayCloser) closeOverlay();
+        else engines.speech.cancel();
+        return;
+    }
+    if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
+
+    const phase = game().phase;
+    const key = event.key.toLowerCase();
+
+    if (key === ' ' || event.key === 'ArrowRight' || event.key === 'Enter') {
+        if (phase === 'setup') return;
+        event.preventDefault();
+        primaryAction();
+        return;
+    }
+
+    switch (key) {
+        case 'arrowleft':
+            if (phase === 'question') { event.preventDefault(); actions.previous(); }
+            break;
+        case 'r': if (phase === 'question' || phase === 'roundIntro') actions.repeatSpeech(); break;
+        case 'p': if (phase === 'question') actions.toggleTimer(); break;
+        case 'v': actions.toggleSpeech(); break;
+        case 'm': actions.toggleAudio(); break;
+        case 'f': actions.toggleFullscreen(); break;
+        case 's': actions.openSettings(); break;
+        case '?': actions.openHelp(); break;
+        default: break;
+    }
+}
+
+function primaryAction() {
+    switch (game().phase) {
+        case 'roundIntro': actions.beginRound(); break;
+        case 'question': actions.next(); break;
+        case 'marking': actions.confirmMarks(); break;
+        case 'leaderboard': actions.afterLeaderboard(); break;
+        case 'interval': actions.endInterval(); break;
+        default: break;
+    }
+}
+
+// ---- boot ----
+
+async function boot() {
+    applyBigScreen();
+
+    // A saved quiz does not barge straight back onto the screen: the host gets
+    // the setup page with a resume banner, so they can check the sound first.
+    offeringResume = State.hasResumableGame();
+
+    // If they do resume onto a live question, give the clock a sensible face so
+    // the host can just press play rather than staring at a dead 0:00.
+    const resumed = game();
+    if (resumed.phase === 'question' && !resumed.revealed && settings().timerEnabled) {
+        timer.total = settings().timerSeconds;
+        timer.remaining = settings().timerSeconds;
+        timer.mode = 'question';
+    }
+
+    engines.speech.onChange(({ speaking }) => {
+        document.body.classList.toggle('is-speaking', Boolean(speaking));
+    });
+
+    render();
+
+    // Wire the host's controls FIRST. Voice discovery is the one part of this
+    // app that talks to a famously flaky browser API, and nothing about the
+    // keyboard, the mouse or the sound should wait on it.
+    window.addEventListener('keydown', onKeydown);
+    window.addEventListener('resize', () => engines.celebrate.resize());
+    window.addEventListener('beforeprint', () => engines.celebrate.stop());
+
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden && timer.running && game().phase === 'question') pauseTimer();
+    });
+
+    // First gesture anywhere unlocks the audio context.
+    const unlock = () => {
+        engines.audio.unlock();
+        window.removeEventListener('pointerdown', unlock);
+        window.removeEventListener('keydown', unlock);
+    };
+    window.addEventListener('pointerdown', unlock);
+    window.addEventListener('keydown', unlock);
+
+    applySettingsToEngines({ engines });
+
+    // Now go and find the voices, with our own belt-and-braces timeout on top
+    // of the engine's, so a browser that never answers cannot hold up the app.
+    await Promise.race([engines.speech.init(), sleep(4000)]);
+    applySettingsToEngines({ engines });
+    if (settings().speechVoiceId) engines.speech.setVoice(settings().speechVoiceId);
+
+    // The voice list arrives late in some browsers; redraw the picker once it does.
+    if (game().phase === 'setup' || offeringResume) render();
+}
+
+boot();
+
+// Handy for debugging a live quiz from the console.
+window.pubQuiz = { engines, actions, State, buildCtx };
