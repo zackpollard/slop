@@ -15,7 +15,9 @@
 export default {
     id: 'slop-classic-01',
     name: 'The Slop Classic',
-    description: 'Six rounds of British pub quiz: general knowledge, science, music, sport, animals, and a round for the children.',
+    description: 'Six rounds of British pub quiz — general knowledge, science, music, sport, '
+        + 'animals and a round for the children — plus a bonus Name That Tune round that '
+        + 'plays clips of the real records.',
     author: 'slop.zackpollard.pro',
     createdOn: '2026-08-30',
     version: 1,
