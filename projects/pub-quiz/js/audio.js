@@ -19,11 +19,15 @@
  *
  * Signal graph:
  *
- *   sfxBus ─┐
- *   musicBus┤
- *   melodyBus┼─> duckGain ─> masterGain ─> compressor ─> destination
- *   reverbReturn ─┘            ▲
- *   (reverbSend -> convolver -> reverbReturn)
+ *   sfxBus ────────────────┐
+ *   musicBus ─> musicDuck ─┼─> duckGain ─> masterGain ─> compressor ─> out
+ *   melodyBus ─────────────┘
+ *
+ * Reverb is an aux per destination, never a global one: a voice's send feeds a
+ * convolver whose return lands back in that voice's own bus (the sfx bus, the
+ * music *layer*, the melody bus). That is the only way a fader, a crossfade or
+ * stopMelody() takes the wet signal down with the dry one — a shared return
+ * wired into the master would keep playing whatever you just turned off.
  */
 
 // ---- capability detection ----
@@ -35,9 +39,11 @@ const AC = (typeof globalThis !== 'undefined' &&
 
 const MUSIC_LOOKAHEAD = 1.6;   // seconds of music scheduled beyond the clock
 const MUSIC_POLL = 260;        // ms between music scheduler wake-ups
-const TICK_LOOKAHEAD = 1.5;    // seconds of countdown ticks scheduled ahead
-const TICK_POLL = 220;         // ms between tick scheduler wake-ups
+const TICK_LOOKAHEAD = 1.0;    // seconds of countdown ticks scheduled ahead
+const TICK_POLL = 200;         // ms between tick scheduler wake-ups
 const DUCK_LEVEL = 0.25;       // ~ -12 dB while somebody is talking
+const MELODY_DUCK = 0.12;      // the bed gets out of the way of a played tune
+const RESUME_TIMEOUT = 1500;   // ms before we stop waiting on ctx.resume()
 const DEFAULT_MUSIC_FADE = 1.0;
 const DEFAULT_STOP_FADE = 0.8;
 const NOISE_SECONDS = 2;       // length of the shared white-noise buffer
@@ -144,11 +150,11 @@ export const MELODIES = {
         bpm: 132,
         notes: [
             ['G4', 0.5], ['D4', 0.5], ['G4', 0.5], ['D4', 0.5],
-            ['G4', 0.5], ['B4', 0.5], ['D5', 1], ['rest', 0.5],
+            ['G4', 0.5], ['B4', 0.5], ['D5', 1], ['D5', 0.5],
             ['C5', 0.5], ['A4', 0.5], ['F#4', 0.5], ['A4', 0.5],
             ['D4', 1], ['rest', 1],
             ['G4', 0.5], ['D4', 0.5], ['G4', 0.5], ['D4', 0.5],
-            ['G4', 0.5], ['B4', 0.5], ['D5', 1], ['rest', 0.5],
+            ['G4', 0.5], ['B4', 0.5], ['D5', 1], ['D5', 0.5],
             ['C5', 0.5], ['A4', 0.5], ['F#4', 0.5], ['A4', 0.5],
             ['D4', 1], ['rest', 1],
             ['G4', 0.5], ['D4', 0.5], ['G4', 0.5], ['D4', 0.5],
@@ -314,7 +320,11 @@ export const MOODS = {
         step(api, c) {
             const b = c.def.bars[c.bar];
             if (c.step === 0) {
-                api.pad(b.pad, c.t, c.beat * 3.9, { peak: 0.05, cutoff: 1300 });
+                // Longer than the bar (2.61 s) so consecutive pads overlap:
+                // a gap here reads as a slow swell-and-die every few seconds.
+                api.pad(b.pad, c.t, c.beat * 4.6, {
+                    peak: 0.05, cutoff: 1300, attack: 0.35, release: 0.9,
+                });
                 api.bass(b.bass, c.t, c.beat * 1.2, { peak: 0.15 });
                 api.kick(c.t, { peak: 0.1 });
             }
@@ -339,21 +349,26 @@ export const MOODS = {
         gain: 0.5,
         // Deliberately almost nothing: a slow pad, a heartbeat and the odd bell.
         // This plays under sixty questions a night; it must never nag.
+        // The bass sits at A2/F2/C3/G2 rather than an octave lower: below
+        // ~90 Hz the loudest voice in this bed simply vanishes on a phone or a
+        // pub Bluetooth speaker, so the mix balance depended on the hardware.
         bars: [
-            { bass: 'A1', pad: ['A2', 'C3', 'E3', 'G3'], bell: 'E5' },
-            { bass: 'F1', pad: ['F2', 'A2', 'C3', 'E3'], bell: 'C5' },
-            { bass: 'C2', pad: ['C3', 'E3', 'G3', 'B3'], bell: 'G5' },
-            { bass: 'G1', pad: ['G2', 'B2', 'D3', 'E3'], bell: 'D5' },
+            { bass: 'A2', pad: ['A2', 'C3', 'E3', 'G3'], bell: 'E5' },
+            { bass: 'F2', pad: ['F2', 'A2', 'C3', 'E3'], bell: 'C5' },
+            { bass: 'C3', pad: ['C3', 'E3', 'G3', 'B3'], bell: 'G5' },
+            { bass: 'G2', pad: ['G2', 'B2', 'D3', 'E3'], bell: 'D5' },
         ],
         step(api, c) {
             const b = c.def.bars[c.bar];
             if (c.step === 0) {
-                api.pad(b.pad, c.t, c.beat * 4.1, {
-                    peak: 0.042, cutoff: 820, attack: 1.1, release: 1.5,
+                // 4.9 beats against a 4-beat bar: each pad crossfades into the
+                // next instead of dying inside it.
+                api.pad(b.pad, c.t, c.beat * 4.9, {
+                    peak: 0.04, cutoff: 820, attack: 0.9, release: 1.4,
                 });
-                api.bass(b.bass, c.t, c.beat * 2.4, { peak: 0.12, cutoff: 190 });
+                api.bass(b.bass, c.t, c.beat * 2.4, { peak: 0.1, cutoff: 420 });
             }
-            if (c.step === 8) api.bass(b.bass, c.t, c.beat * 1.5, { peak: 0.06, cutoff: 170 });
+            if (c.step === 8) api.bass(b.bass, c.t, c.beat * 1.5, { peak: 0.05, cutoff: 380 });
             if (c.bar % 2 === 1 && c.step === 12) {
                 api.bell(b.bell, c.t, c.beat * 2.5, { peak: 0.022 });
             }
@@ -387,7 +402,9 @@ export const MOODS = {
         step(api, c) {
             const b = c.def.bars[c.bar];
             if (c.step === 0) {
-                api.pad(b.pad, c.t, c.beat * 3.8, { peak: 0.038, cutoff: 1500 });
+                api.pad(b.pad, c.t, c.beat * 4.4, {
+                    peak: 0.038, cutoff: 1500, attack: 0.3, release: 0.8,
+                });
                 api.kick(c.t, { peak: 0.13 });
             }
             if (c.step === 8) api.kick(c.t, { peak: 0.09 });
@@ -418,8 +435,8 @@ export const MOODS = {
         step(api, c) {
             const b = c.def.bars[c.bar];
             if (c.step === 0) {
-                api.pad(b.pad, c.t, c.beat * 3.9, {
-                    peak: 0.045, cutoff: 700, attack: 0.5, release: 0.8,
+                api.pad(b.pad, c.t, c.beat * 4.5, {
+                    peak: 0.045, cutoff: 700, attack: 0.5, release: 0.9,
                 });
             }
             if (c.step % 2 === 0) {
@@ -465,12 +482,16 @@ export class QuizAudio {
     #sfxBus = null;
     #musicBus = null;
     #melodyBus = null;
-    #reverbSend = null;
+    #musicDuck = null;       // dips the bed under a "name that tune" melody
+    #reverbIR = null;        // impulse response shared by every reverb unit
+    #sfxReverb = null;       // send -> convolver -> return, back into sfxBus
+    #reverbSend = null;      // === #sfxReverb.send: the default effects send
     #noiseBuf = null;
     #clapBuf = null;
 
     #active = new Set();     // live source nodes, for teardown
     #timers = new Set();     // pending setTimeout ids
+    #intervals = new Set();  // pending setInterval ids (every scheduler)
     #layers = new Set();     // music layers (current + any fading out)
     #layer = null;           // the layer currently being scheduled
     #mood = null;
@@ -506,7 +527,9 @@ export class QuizAudio {
     }
 
     get musicMood() {
-        return this.#mood || this.#pendingMood || null;
+        // A mood requested while the context was asleep is the one that will
+        // actually be playing, so it outranks whatever is still audible.
+        return this.#pendingMood || this.#mood || null;
     }
 
     get playingMelody() {
@@ -532,15 +555,14 @@ export class QuizAudio {
             if (!this.#ctx) return false;
             this.#wantRunning = true;
             if (this.#ctx.state !== 'running') {
-                await this.#ctx.resume();
+                // A blocked resume() can stay pending forever (Chrome's
+                // autoplay policy, some Safari builds), and callers await this
+                // inside a click handler: never hang on it.
+                await this.#settleWithin(this.#ctx.resume(), RESUME_TIMEOUT);
                 this.#silentPing();
             }
             const running = this.#ctx.state === 'running';
-            if (running && this.#pendingMood) {
-                const mood = this.#pendingMood;
-                this.#pendingMood = null;
-                this.startMusic(mood);
-            }
+            if (running) this.#applyPending();
             return running;
         } catch (err) {
             console.warn('[audio] unlock failed:', err && err.message ? err.message : err);
@@ -563,6 +585,10 @@ export class QuizAudio {
         this.#mood = null;
         for (const id of this.#timers) clearTimeout(id);
         this.#timers.clear();
+        // Schedulers live in here too, so nothing can outlive the object even
+        // if some state machine above was bypassed.
+        for (const id of this.#intervals) clearInterval(id);
+        this.#intervals.clear();
         for (const src of Array.from(this.#active)) {
             try { src.onended = null; src.stop(); } catch (_) { /* already stopped */ }
             try { src.disconnect(); } catch (_) { /* already gone */ }
@@ -570,8 +596,10 @@ export class QuizAudio {
         this.#active.clear();
         const ctx = this.#ctx;
         this.#ctx = null;
+        this.#destroyReverb(this.#sfxReverb);
         this.#master = this.#duckGain = this.#sfxBus = null;
-        this.#musicBus = this.#melodyBus = this.#reverbSend = null;
+        this.#musicBus = this.#melodyBus = this.#musicDuck = null;
+        this.#sfxReverb = this.#reverbSend = this.#reverbIR = null;
         this.#noiseBuf = this.#clapBuf = null;
         if (ctx) {
             try { ctx.onstatechange = null; } catch (_) { /* ignore */ }
@@ -680,6 +708,9 @@ export class QuizAudio {
             def,
             mood,
             gain,
+            // Its own reverb, returning into this layer's gain, so a crossfade
+            // or a music-volume change carries the wet signal with it.
+            reverb: this.#makeReverb(gain),
             sources: new Set(),
             step: 0,
             // Start on the next 16th boundary-ish; a small offset keeps the
@@ -692,14 +723,17 @@ export class QuizAudio {
         this.#layer = layer;
         this.#mood = mood;
 
-        this.#scheduleMusic(layer);
-        layer.timer = setInterval(() => {
+        const pump = () => {
             if (!this.#ctx || layer.timer === null) return;
             try { this.#scheduleMusic(layer); } catch (err) {
                 console.warn('[audio] music scheduler stopped:', err && err.message);
                 this.#fadeOutLayer(layer, 0.4);
             }
-        }, MUSIC_POLL);
+        };
+        // The poll is created *before* the first pass: a pass that throws (or
+        // that tears the layer down) must never leave a timer nobody holds.
+        layer.timer = this.#every(MUSIC_POLL, pump);
+        pump();
     }
 
     /** Fade the music out. opts.fade in seconds (default 0.8). */
@@ -738,27 +772,54 @@ export class QuizAudio {
         bus.gain.setValueAtTime(1, ctx.currentTime);
         bus.connect(this.#melodyBus);
 
-        const state = { bus, sources: new Set(), timer: null, resolve: null, done: false };
+        const state = {
+            bus,
+            reverb: this.#makeReverb(bus),
+            sources: new Set(),
+            timer: null,
+            poll: null,
+            resolve: null,
+            done: false,
+        };
         this.#melody = state;
+        // The audience has to *identify* this, and the beds are in fixed keys
+        // that will not agree with it, so the music gets out of the way.
+        this.#ramp(this.#musicDuck, MELODY_DUCK, 0.3);
 
         let t = ctx.currentTime + 0.12;
-        for (const [pitch, beats] of tune.notes) {
-            const dur = Math.max(0.05, beats * beat);
-            const hz = noteToFreq(pitch) * shift;
-            if (hz > 0) this.#melodyNote(hz, t, dur, 0.16 * gainMul, bus, state);
-            t += dur;
+        try {
+            for (const [pitch, beats] of tune.notes) {
+                const dur = Math.max(0.05, beats * beat);
+                const hz = noteToFreq(pitch) * shift;
+                if (hz > 0) this.#melodyNote(hz, t, dur, 0.16 * gainMul, bus, state);
+                t += dur;
+            }
+        } catch (err) {
+            // Never reject: callers await this for a boolean, not a throw.
+            console.warn('[audio] melody failed:', key, err && err.message);
+            this.#finishMelody(state, false);
+            return false;
         }
         const endsAt = t + 0.9;
 
         return new Promise((resolve) => {
             state.resolve = resolve;
-            const ms = Math.max(0, (endsAt - ctx.currentTime) * 1000);
-            state.timer = setTimeout(() => {
-                this.#timers.delete(state.timer);
+            // Completion is driven by the *audio* clock. Wall-clock time keeps
+            // running while a suspended or interrupted context is frozen, so a
+            // setTimeout would resolve mid-tune and let the rest of the notes
+            // play over whatever the app moved on to.
+            state.poll = this.#every(100, () => {
+                const c = this.#ctx;
+                if (!c || this.#closed) { this.#finishMelody(state, false); return; }
+                if (c.state !== 'running') { this.stopMelody(); return; }
+                if (c.currentTime >= endsAt) this.#finishMelody(state, true);
+            });
+            // Backstop, so the promise can never hang if the clock misbehaves.
+            const ms = Math.max(0, (endsAt - ctx.currentTime) * 1000) * 2 + 3000;
+            state.timer = this.#after(ms, () => {
                 state.timer = null;
                 this.#finishMelody(state, true);
-            }, ms);
-            this.#timers.add(state.timer);
+            });
         });
     }
 
@@ -766,11 +827,6 @@ export class QuizAudio {
     stopMelody() {
         const state = this.#melody;
         if (!state) return;
-        if (state.timer !== null) {
-            clearTimeout(state.timer);
-            this.#timers.delete(state.timer);
-            state.timer = null;
-        }
         const ctx = this.#ctx;
         if (ctx && state.bus) {
             const now = ctx.currentTime;
@@ -800,25 +856,75 @@ export class QuizAudio {
         const total = Math.floor(clamp(secondsRemaining, 0, 3600));
         if (!this.ready || total < 1) return;
 
+        const ctx = this.#ctx;
+        // Every tick of this countdown goes through one gain node, so a stop
+        // can silence the ticks already committed to the audio clock — they
+        // are short-lived sources started at absolute future times and there is
+        // nothing else left to cancel once they are scheduled.
+        const gain = ctx.createGain();
+        gain.gain.setValueAtTime(1, ctx.currentTime);
+        gain.connect(this.#sfxBus);
+
         const state = {
             total,
             i: 0,
-            start: this.#ctx.currentTime + 0.06,
+            start: ctx.currentTime + 0.06,
+            gain,
             timer: null,
+            done: false,
         };
         this.#tickState = state;
-        this.#scheduleTicks();
-        state.timer = setInterval(() => {
+        // The poll is created before the first pass: when the whole countdown
+        // fits inside the lookahead (n = 1 or 2) that pass finishes the
+        // schedule and detaches the state, and an interval created afterwards
+        // would be unreachable by stopTicking() *and* by close().
+        state.timer = this.#every(TICK_POLL, () => {
             try { this.#scheduleTicks(); } catch (_) { this.stopTicking(); }
-        }, TICK_POLL);
+        });
+        try { this.#scheduleTicks(); } catch (_) { this.stopTicking(); }
     }
 
+    /** Stop the countdown now, including ticks already handed to the clock. */
     stopTicking() {
         const state = this.#tickState;
         if (!state) return;
         this.#tickState = null;
-        if (state.timer !== null) clearInterval(state.timer);
+        state.done = true;
+        this.#clearEvery(state.timer);
         state.timer = null;
+        const ctx = this.#ctx;
+        const gain = state.gain;
+        if (!gain) return;
+        if (!ctx) {
+            try { gain.disconnect(); } catch (_) { /* ignore */ }
+            return;
+        }
+        const now = ctx.currentTime;
+        try {
+            const param = gain.gain;
+            param.cancelScheduledValues(now);
+            param.setValueAtTime(Math.max(param.value, 0.0001), now);
+            param.linearRampToValueAtTime(0.0001, now + 0.03);
+        } catch (_) { /* a closing context; nothing to ramp */ }
+        this.#after(400, () => { try { gain.disconnect(); } catch (_) { /* ignore */ } });
+    }
+
+    /**
+     * The schedule ran out on its own: keep the last committed ticks audible,
+     * just retire the scheduler and the gain node behind them.
+     */
+    #finishTicking(state) {
+        if (!state || state.done) return;
+        state.done = true;
+        if (this.#tickState === state) this.#tickState = null;
+        this.#clearEvery(state.timer);
+        state.timer = null;
+        const ctx = this.#ctx;
+        const gain = state.gain;
+        if (!gain) return;
+        const lead = ctx ? Math.max(0, (state.start + state.total) - ctx.currentTime) : 0;
+        this.#after((lead + 0.8) * 1000,
+            () => { try { gain.disconnect(); } catch (_) { /* ignore */ } });
     }
 
     get ticking() {
@@ -865,9 +971,16 @@ export class QuizAudio {
         sfx.connect(duck);
         this.#sfxBus = sfx;
 
+        // musicBus is the fader the app owns; musicDuck is ours, used to dip
+        // the bed under a melody without fighting setMusicVolume().
+        const musicDuck = ctx.createGain();
+        musicDuck.gain.setValueAtTime(1, now);
+        musicDuck.connect(duck);
+        this.#musicDuck = musicDuck;
+
         const music = ctx.createGain();
         music.gain.setValueAtTime(this.#vol.music, now);
-        music.connect(duck);
+        music.connect(musicDuck);
         this.#musicBus = music;
 
         const melody = ctx.createGain();
@@ -883,6 +996,9 @@ export class QuizAudio {
 
     #buildReverb() {
         const ctx = this.#ctx;
+        this.#reverbIR = null;
+        this.#sfxReverb = null;
+        this.#reverbSend = null;
         if (!ctx.createConvolver) return;
         try {
             const seconds = 1.5;
@@ -899,22 +1015,49 @@ export class QuizAudio {
                     data[i] = (rnd() * 2 - 1) * env;
                 }
             }
-            const conv = ctx.createConvolver();
-            conv.buffer = ir;
-            conv.normalize = true;
+            this.#reverbIR = ir;
+            this.#sfxReverb = this.#makeReverb(this.#sfxBus);
+            this.#reverbSend = this.#sfxReverb ? this.#sfxReverb.send : null;
+        } catch (err) {
+            this.#reverbIR = null;
+            this.#sfxReverb = null;
+            this.#reverbSend = null;
+            console.warn('[audio] reverb unavailable:', err && err.message);
+        }
+    }
 
+    /**
+     * One send -> convolver -> return chain whose wet output lands back in
+     * `dest`. Because the return re-enters the same node the dry signal passes
+     * through, every fader and fade-out downstream of `dest` applies to the
+     * reverb as well; a single global return would leak the wet copy of muted
+     * music and smear crossfades. All units share one impulse response.
+     */
+    #makeReverb(dest) {
+        const ctx = this.#ctx;
+        if (!ctx || !dest || !this.#reverbIR || !ctx.createConvolver) return null;
+        try {
+            const conv = ctx.createConvolver();
+            conv.buffer = this.#reverbIR;
+            conv.normalize = true;
             const ret = ctx.createGain();
             ret.gain.setValueAtTime(0.85, ctx.currentTime);
-            conv.connect(ret);
-            ret.connect(this.#duckGain);
-
             const send = ctx.createGain();
             send.gain.setValueAtTime(1, ctx.currentTime);
             send.connect(conv);
-            this.#reverbSend = send;
+            conv.connect(ret);
+            ret.connect(dest);
+            return { send, conv, ret };
         } catch (err) {
-            this.#reverbSend = null;
             console.warn('[audio] reverb unavailable:', err && err.message);
+            return null;
+        }
+    }
+
+    #destroyReverb(unit) {
+        if (!unit) return;
+        for (const node of [unit.send, unit.conv, unit.ret]) {
+            try { node.disconnect(); } catch (_) { /* ignore */ }
         }
     }
 
@@ -963,7 +1106,21 @@ export class QuizAudio {
         if (!ctx || this.#closed) return;
         // Safari parks the context as 'interrupted' after a phone call or a
         // route change; Chrome may suspend a backgrounded tab.
-        if (this.#wantRunning && ctx.state !== 'running') this.#tryResume();
+        if (ctx.state === 'running') {
+            // Back up without a fresh unlock(): honour whatever was asked for
+            // while we were asleep, or the bed is silently the wrong one.
+            this.#applyPending();
+            return;
+        }
+        if (this.#wantRunning) this.#tryResume();
+    }
+
+    /** Apply anything that was requested while the context was not running. */
+    #applyPending() {
+        const mood = this.#pendingMood;
+        if (!mood || this.#closed) return;
+        this.#pendingMood = null;
+        this.startMusic(mood);
     }
 
     #tryResume() {
@@ -971,10 +1128,28 @@ export class QuizAudio {
         if (!ctx || this.#resumeQueued || this.#closed) return;
         if (ctx.state === 'running' || ctx.state === 'closed') return;
         this.#resumeQueued = true;
-        Promise.resolve()
-            .then(() => ctx.resume())
-            .catch(() => { /* needs a fresh gesture; unlock() will retry */ })
+        let pending = null;
+        try { pending = ctx.resume(); } catch (_) { pending = null; }
+        // A resume() blocked by the autoplay policy can stay pending forever.
+        // The latch has to clear anyway, or auto-recovery is dead for the life
+        // of the page after a single blocked attempt.
+        this.#settleWithin(pending, RESUME_TIMEOUT)
             .then(() => { this.#resumeQueued = false; });
+    }
+
+    /** Resolve when `promise` settles or `ms` elapses — whichever comes first. */
+    #settleWithin(promise, ms) {
+        return new Promise((resolve) => {
+            let settled = false;
+            const finish = () => {
+                if (settled) return;
+                settled = true;
+                resolve();
+            };
+            const id = setTimeout(finish, Math.max(0, ms));
+            const done = () => { clearTimeout(id); finish(); };
+            Promise.resolve(promise).then(done, done);
+        });
     }
 
     // ---- plumbing helpers ---------------------------------------------------
@@ -1000,6 +1175,19 @@ export class QuizAudio {
         }, Math.max(0, ms));
         this.#timers.add(id);
         return id;
+    }
+
+    /** setInterval, but registered so close() is guaranteed to reach it. */
+    #every(ms, fn) {
+        const id = setInterval(fn, Math.max(1, ms));
+        this.#intervals.add(id);
+        return id;
+    }
+
+    #clearEvery(id) {
+        if (id === null || id === undefined) return;
+        clearInterval(id);
+        this.#intervals.delete(id);
     }
 
     /** Register a source so it is disconnected when it ends (or on close()). */
@@ -1074,11 +1262,14 @@ export class QuizAudio {
         }
 
         g.connect(o.dest || this.#sfxBus);
-        if (o.reverb && this.#reverbSend) {
+        // The send must belong to the same bus as the dry signal, otherwise the
+        // wet copy sails past every fader downstream of it.
+        const revSend = o.revSend !== undefined ? o.revSend : this.#reverbSend;
+        if (o.reverb && revSend) {
             const send = ctx.createGain();
             send.gain.setValueAtTime(clamp(o.reverb, 0, 1), t);
             g.connect(send);
-            send.connect(this.#reverbSend);
+            send.connect(revSend);
             chain.push(send);
         }
 
@@ -1132,11 +1323,12 @@ export class QuizAudio {
         }
         head.connect(g);
         g.connect(o.dest || this.#sfxBus);
-        if (o.reverb && this.#reverbSend) {
+        const revSend = o.revSend !== undefined ? o.revSend : this.#reverbSend;
+        if (o.reverb && revSend) {
             const send = ctx.createGain();
             send.gain.setValueAtTime(clamp(o.reverb, 0, 1), t);
             g.connect(send);
-            send.connect(this.#reverbSend);
+            send.connect(revSend);
             chain.push(send);
         }
 
@@ -1152,7 +1344,7 @@ export class QuizAudio {
         this.#tone({
             t, dur, dest, type: 'sine', freq, peak,
             attack: 0.004, filter: 'lowpass', cutoff: 6000,
-            reverb: opts.reverb ?? 0.35, layer: opts.layer,
+            reverb: opts.reverb ?? 0.35, revSend: opts.revSend, layer: opts.layer,
         });
         this.#tone({
             t, dur: dur * 0.6, dest, type: 'sine', freq: freq * 2.76,
@@ -1168,10 +1360,18 @@ export class QuizAudio {
     #melodyNote(freq, t, dur, peak, dest, state) {
         const ctx = this.#ctx;
         const body = Math.max(0.08, dur * 0.94);
-        const tail = 0.5;
+        // The ring has to fit the note. A flat 0.5 s tail turns Fur Elise's
+        // 0.13 s semiquavers into a five-deep semitone cluster, which is
+        // exactly the phrase the audience is supposed to recognise.
+        const tail = Math.min(0.5, Math.max(0.12, dur * 0.8));
         const nyq = ctx.sampleRate * 0.5;
+        const revSend = state && state.reverb ? state.reverb.send : null;
+        const revAmt = dur < 0.2 ? 0.15 : 0.3;
 
         const mk = (type, mul, level, wob) => {
+            // Never ramp exponentially to zero: playMelody({ gain: 0 }) is a
+            // documented call and a RangeError here would strand the melody.
+            const lvl = Math.max(0.0004, level);
             const osc = ctx.createOscillator();
             osc.type = type;
             osc.frequency.setValueAtTime(clamp(freq * mul, 16, nyq - 200), t);
@@ -1179,8 +1379,8 @@ export class QuizAudio {
 
             const g = ctx.createGain();
             g.gain.setValueAtTime(0.0001, t);
-            g.gain.exponentialRampToValueAtTime(level, t + 0.012);
-            g.gain.exponentialRampToValueAtTime(level * 0.45, t + Math.min(0.3, body));
+            g.gain.exponentialRampToValueAtTime(lvl, t + 0.012);
+            g.gain.exponentialRampToValueAtTime(lvl * 0.45, t + Math.min(0.3, body));
             g.gain.exponentialRampToValueAtTime(0.0001, t + body + tail);
 
             const flt = ctx.createBiquadFilter();
@@ -1192,11 +1392,11 @@ export class QuizAudio {
             flt.connect(g);
             g.connect(dest);
             const chain = [g, flt];
-            if (this.#reverbSend) {
+            if (revSend) {
                 const send = ctx.createGain();
-                send.gain.setValueAtTime(0.3, t);
+                send.gain.setValueAtTime(revAmt, t);
                 g.connect(send);
-                send.connect(this.#reverbSend);
+                send.connect(revSend);
                 chain.push(send);
             }
             osc.start(t);
@@ -1212,11 +1412,26 @@ export class QuizAudio {
     #finishMelody(state, completed) {
         if (!state || state.done) return;
         state.done = true;
-        if (this.#melody === state) this.#melody = null;
-        const bus = state.bus;
-        if (bus) {
-            this.#after(700, () => { try { bus.disconnect(); } catch (_) { /* ignore */ } });
+        if (state.timer !== null) {
+            clearTimeout(state.timer);
+            this.#timers.delete(state.timer);
+            state.timer = null;
         }
+        if (state.poll !== null) {
+            this.#clearEvery(state.poll);
+            state.poll = null;
+        }
+        if (this.#melody === state) {
+            this.#melody = null;
+            this.#ramp(this.#musicDuck, 1, 0.6);
+        }
+        const bus = state.bus;
+        const reverb = state.reverb;
+        // Long enough for the reverb tail (1.5 s) to run out on its own.
+        this.#after(1700, () => {
+            this.#destroyReverb(reverb);
+            try { if (bus) bus.disconnect(); } catch (_) { /* ignore */ }
+        });
         if (state.resolve) {
             const resolve = state.resolve;
             state.resolve = null;
@@ -1228,6 +1443,9 @@ export class QuizAudio {
 
     #makeApi(dest, layer) {
         const self = this;
+        // Read lazily: the layer owns its reverb, and a null unit means "no
+        // reverb" rather than "fall back to the shared effects send".
+        const rev = () => (layer && layer.reverb ? layer.reverb.send : null);
         return {
             dest,
             pad(notes, t, dur, o = {}) {
@@ -1245,6 +1463,7 @@ export class QuizAudio {
                         q: 0.6,
                         detune: (self.#rng() - 0.5) * 16,
                         reverb: o.reverb ?? 0.15,
+                        revSend: rev(),
                     });
                 }
             },
@@ -1268,7 +1487,7 @@ export class QuizAudio {
                     type: 'triangle', freq: f,
                     peak: o.peak ?? 0.05, attack: 0.004,
                     filter: 'lowpass', cutoff: o.cutoff ?? 2400, q: 0.8,
-                    reverb: o.reverb ?? 0.22,
+                    reverb: o.reverb ?? 0.22, revSend: rev(),
                 });
                 self.#tone({
                     t, dur: dur * 0.5, dest, layer,
@@ -1278,7 +1497,10 @@ export class QuizAudio {
             },
             bell(note, t, dur, o = {}) {
                 const f = noteToFreq(note);
-                if (f) self.#bell(f, t, dur, o.peak ?? 0.03, dest, { layer, reverb: 0.4 });
+                if (f) {
+                    self.#bell(f, t, dur, o.peak ?? 0.03, dest,
+                        { layer, reverb: 0.3, revSend: rev() });
+                }
             },
             kick(t, o = {}) {
                 self.#tone({
@@ -1307,7 +1529,7 @@ export class QuizAudio {
                     t, dur: 0.11, dest, layer,
                     peak: o.peak ?? 0.05, attack: 0.002,
                     filter: 'bandpass', freq: 1750, q: 1.1,
-                    reverb: 0.18,
+                    reverb: 0.18, revSend: rev(),
                 });
             },
         };
@@ -1349,7 +1571,7 @@ export class QuizAudio {
     #fadeOutLayer(layer, fade) {
         if (!layer || !this.#layers.has(layer)) return;
         if (layer.timer !== null) {
-            clearInterval(layer.timer);
+            this.#clearEvery(layer.timer);
             layer.timer = null;
         }
         const ctx = this.#ctx;
@@ -1371,13 +1593,15 @@ export class QuizAudio {
         if (!this.#layers.has(layer)) return;
         this.#layers.delete(layer);
         if (layer.timer !== null) {
-            clearInterval(layer.timer);
+            this.#clearEvery(layer.timer);
             layer.timer = null;
         }
         for (const src of Array.from(layer.sources)) {
             try { src.stop(); } catch (_) { /* already finished */ }
         }
         layer.sources.clear();
+        this.#destroyReverb(layer.reverb);
+        layer.reverb = null;
         try { layer.gain.disconnect(); } catch (_) { /* ignore */ }
         if (this.#layer === layer) {
             this.#layer = null;
@@ -1397,16 +1621,20 @@ export class QuizAudio {
             const t = state.start + state.i;
             if (t >= ctx.currentTime - 0.05) {
                 if (remaining <= 5) {
-                    const urgency = 6 - remaining;               // 1..5
-                    this.#sfx('tickUrgent', t, 0.85 + urgency * 0.14,
-                        { pitch: 1 + urgency * 0.07 });
+                    const urgency = (6 - remaining) / 5;         // 0.2 .. 1
+                    this.#sfx('tickUrgent', t, 0.9 + urgency * 0.3, {
+                        pitch: 1 + urgency * 0.25,
+                        urgency,
+                        dest: state.gain,
+                    });
                 } else {
-                    this.#sfx('tick', t, 0.75, { pitch: 1 });
+                    this.#sfx('tick', t, 0.75, { pitch: 1, dest: state.gain });
                 }
             }
             state.i++;
         }
-        if (state.i >= state.total) this.stopTicking();
+        // Natural end: retire the scheduler but let the queued ticks ring.
+        if (state.i >= state.total) this.#finishTicking(state);
     }
 
     // ---- the sound effects --------------------------------------------------
@@ -1414,6 +1642,10 @@ export class QuizAudio {
     #sfx(name, t, gain, opts = {}) {
         const pitch = clamp(opts.pitch ?? 1, 0.25, 4);
         const rev = this.#reverbSend ? 1 : 0;
+        // Ticks are routed through the countdown's own gain node so they can be
+        // silenced after they have been committed to the clock; everything else
+        // goes straight to the effects bus.
+        const dest = opts.dest || undefined;
 
         switch (name) {
             // Tiny UI tick: a wooden little "tk".
@@ -1513,29 +1745,33 @@ export class QuizAudio {
             // Clock ticks.
             case 'tick': {
                 this.#tone({
-                    t, dur: 0.05, type: 'sine', freq: 1500 * pitch,
+                    t, dur: 0.05, type: 'sine', freq: 1500 * pitch, dest,
                     peak: 0.07 * gain, attack: 0.001,
                 });
                 this.#noise({
-                    t, dur: 0.016, peak: 0.045 * gain, attack: 0.001,
+                    t, dur: 0.016, peak: 0.045 * gain, attack: 0.001, dest,
                     filter: 'bandpass', freq: 3600 * pitch, q: 2,
                 });
                 break;
             }
 
+            // Roughly 300 of these an evening, so the urgency is carried by the
+            // body of the tick, not by piling level into 2-5 kHz where the ear
+            // is most sensitive and small speakers have their presence bump.
             case 'tickUrgent': {
+                const urg = clamp(opts.urgency ?? 0, 0, 1);
                 this.#tone({
-                    t, dur: 0.07, type: 'square', freq: 2000 * pitch,
-                    peak: 0.075 * gain, attack: 0.001,
-                    filter: 'lowpass', cutoff: 5200,
+                    t, dur: 0.07, type: 'triangle', freq: 1350 * pitch, dest,
+                    peak: 0.07 * gain, attack: 0.001,
+                    filter: 'lowpass', cutoff: 3600,
                 });
                 this.#tone({
-                    t, dur: 0.09, type: 'sine', freq: 700 * pitch,
-                    peak: 0.05 * gain, attack: 0.001,
+                    t, dur: 0.1, type: 'sine', freq: 700 * pitch, dest,
+                    peak: 0.05 * (1 + urg * 0.9) * gain, attack: 0.001,
                 });
                 this.#noise({
-                    t, dur: 0.02, peak: 0.06 * gain, attack: 0.001,
-                    filter: 'bandpass', freq: 4200 * pitch, q: 1.6,
+                    t, dur: 0.018, peak: 0.04 * gain, attack: 0.001, dest,
+                    filter: 'bandpass', freq: 3000 * pitch, q: 1.6,
                 });
                 break;
             }
@@ -1759,6 +1995,11 @@ export class QuizAudio {
     #applause(t0, dur, gain) {
         const ctx = this.#ctx;
         if (!ctx || !this.#clapBuf) return;
+        // The grains are scheduled against the audio clock at t0, which play()
+        // lets the caller push into the future; the shared chain below is torn
+        // down on a wall clock, so every delay has to carry that lead time or
+        // pre-scheduled applause disconnects itself before it sounds.
+        const lead = Math.max(0, t0 - ctx.currentTime);
 
         // Shared colouring for every grain, so a clap costs two nodes not five.
         const bus = ctx.createGain();
@@ -1778,7 +2019,7 @@ export class QuizAudio {
             send.gain.setValueAtTime(0.35, t0);
             bus.connect(send);
             send.connect(this.#reverbSend);
-            this.#after((dur + 1.2) * 1000, () => {
+            this.#after((lead + dur + 1.6) * 1000, () => {
                 try { send.disconnect(); } catch (_) { /* ignore */ }
             });
         }
@@ -1833,7 +2074,7 @@ export class QuizAudio {
             at += 0.011 + (1 - density) * 0.05 + this.#rng() * 0.012;
         }
 
-        this.#after((dur + 1.6) * 1000, () => {
+        this.#after((lead + dur + 1.9) * 1000, () => {
             for (const p of spread) { try { p.disconnect(); } catch (_) { /* ignore */ } }
             try { band.disconnect(); } catch (_) { /* ignore */ }
             try { hp.disconnect(); } catch (_) { /* ignore */ }
