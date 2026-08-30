@@ -11,6 +11,7 @@
  */
 
 import { storage, uid } from './dom.js';
+import { normaliseClip } from './media.js';
 import slopClassic01 from '../quizzes/slop-classic-01.js';
 
 // ---- registry ----
@@ -137,6 +138,7 @@ export function validatePack(raw, { source = 'custom' } = {}) {
                 topic: isStr(q.topic) ? q.topic.trim() : '',
                 funFact: isStr(q.funFact) ? q.funFact.trim() : '',
                 melody: isStr(q.melody) ? q.melody.trim() : (isStr(q.melodyKey) ? q.melodyKey.trim() : ''),
+                clip: normaliseClip(q.clip),
                 spokenQuestion: isStr(q.spokenQuestion) ? q.spokenQuestion.trim() : '',
                 spokenAnswer: isStr(q.spokenAnswer) ? q.spokenAnswer.trim() : '',
                 hint: isStr(q.hint) ? q.hint.trim() : '',
@@ -287,6 +289,7 @@ export function exportPack(pack) {
                 topic: q.topic,
                 funFact: q.funFact,
                 ...(q.melody ? { melody: q.melody } : {}),
+                ...(q.clip ? { clip: q.clip } : {}),
                 ...(q.source ? { source: q.source } : {}),
             })),
         })),
@@ -306,6 +309,8 @@ export function packStats(pack) {
         byDifficulty,
         withSources: questions.filter((q) => q.source?.url).length,
         withMelody: questions.filter((q) => q.melody).length,
+        withClips: questions.filter((q) => q.clip).length,
+        streamedClips: questions.filter((q) => q.clip && q.clip.source === 'itunes').length,
         hasTiebreaker: Boolean(pack.tiebreaker),
     };
 }

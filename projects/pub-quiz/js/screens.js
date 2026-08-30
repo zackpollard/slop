@@ -15,6 +15,7 @@ import {
     hasJoker, jokerRound, toggleJoker,
 } from './state.js';
 import { MELODIES } from './audio.js';
+import { clipCredit } from './media.js';
 
 const DIFFICULTY_LABELS = { easy: 'Easy', medium: 'Medium', hard: 'Hard' };
 
@@ -108,7 +109,7 @@ export function renderQuestion(ctx) {
 
         el('h1', { class: 'question-text', text: question.question }),
 
-        question.melody ? melodyPlayer(ctx) : null,
+        question.clip ? clipPlayer(ctx) : (question.melody ? melodyPlayer(ctx) : null),
 
         revealed ? answerPanel(ctx) : null);
 
@@ -119,6 +120,57 @@ export function renderQuestion(ctx) {
         card,
         settings.timerEnabled && !revealed ? timerRing(ctx, refs) : null,
         questionControls(ctx));
+}
+
+/**
+ * The audio round. Deliberately anonymous: the clip is streamed straight from
+ * the store's preview CDN and nothing on screen names the track, because
+ * naming it would be the answer. The credit only appears on the reveal.
+ */
+function clipPlayer(ctx) {
+    const { question, engines, actions, refs } = ctx;
+    const clip = question.clip;
+    const revealed = ctx.game.revealed;
+
+    const bars = el('div', { class: 'eq', 'aria-hidden': 'true' },
+        ...Array.from({ length: 7 }, (_, i) => el('span', {
+            class: 'eq-bar',
+            style: { animationDelay: `${i * 90}ms` },
+        })));
+
+    const fill = el('div', { class: 'clip-fill' });
+    const status = el('span', { class: 'clip-status', text: 'Ready' });
+
+    const button = el('button', {
+        class: 'btn btn-melody',
+        onClick: () => actions.playClip(),
+    }, icon('play', 22), el('span', { text: 'Play the clip' }));
+
+    refs.clipButton = button;
+    refs.clipFill = fill;
+    refs.clipStatus = status;
+    refs.clipBars = bars;
+
+    return el('div', { class: 'clip-player' },
+        el('div', { class: 'clip-stage' },
+            bars,
+            el('div', { class: 'clip-track' }, fill)),
+        el('div', { class: 'clip-controls' },
+            button,
+            status),
+        el('p', { class: 'melody-hint', text: 'Play it as many times as you like — the clip is thirty seconds.' }),
+        revealed
+            ? el('p', { class: 'melody-meta' },
+                clipCredit(clip),
+                clip.storeUrl
+                    ? el('a', {
+                        class: 'source-link',
+                        href: clip.storeUrl,
+                        target: '_blank',
+                        rel: 'noopener noreferrer',
+                    }, icon('link', 14), 'Listen in full')
+                    : null)
+            : null);
 }
 
 function melodyPlayer(ctx) {

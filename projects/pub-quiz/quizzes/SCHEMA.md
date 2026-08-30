@@ -77,9 +77,60 @@ screen, edit the JSON, and import it back.
 | `funFact` | One sentence, read aloud on the reveal. Keep it under about 25 words. |
 | `source` | Where the answer was checked. Shown on the reveal and printed on the host's answer key. Strongly recommended — a quiz is only as good as its sources. |
 | `spokenQuestion` / `spokenAnswer` | Use when the written and spoken forms should differ: awkward names, symbols, numbers a synthesiser mangles. |
-| `melody` | Turns the question into a "name that tune" — see below. |
+| `clip` | Turns the question into a "name that tune" that plays a real record — see below. |
+| `melody` | Turns the question into a "name that tune" that plays a synthesised public-domain theme — see below. |
 
-### Name that tune
+### Name that tune, with a real record
+
+Give a question a `clip` and it plays a thirty-second preview of the actual
+recording, streamed from Apple's preview service at the moment you press play:
+
+```jsonc
+"clip": {
+  "source": "itunes",
+  "trackId": 1488408568,
+  "previewUrl": "https://audio-ssl.itunes.apple.com/.../mzaf_….m4a",
+  "artist": "The Weeknd",
+  "title": "Blinding Lights",
+  "year": 2019,
+  "storeUrl": "https://music.apple.com/gb/album/…?i=1488408568",
+  "start": 0,        // optional: seconds into the preview to begin
+  "seconds": 0       // optional: stop after this many seconds (0 = the lot)
+}
+```
+
+Nothing is downloaded or re-hosted — the pack stores only the track's id and its
+preview URL, and the audio comes from Apple when it plays. `artist`, `title` and
+`year` are **only** shown after the answer is revealed; before that the player is
+deliberately anonymous, because naming the track would be the answer.
+
+Because preview URLs go stale, the player falls back to Apple's lookup API using
+`trackId` and refreshes the URL by itself, so an old pack keeps working.
+
+**Finding the numbers.** Apple's search API is free and needs no key:
+
+```bash
+curl -sS "https://itunes.apple.com/search?term=SONG+ARTIST&entity=song&limit=5&country=GB"
+```
+
+Take `trackId`, `previewUrl`, `trackName`, `artistName` and `trackViewUrl` from
+the result. Check you have the *original* recording — the store is full of
+karaoke versions, tribute acts and re-recordings that will not fool anybody.
+
+Two things worth knowing when you write these questions:
+
+- **The preview is usually the chorus.** If the chorus sings the song's title,
+  do not ask "name this song" — ask which artist recorded it instead.
+- **It needs the internet on the night.** The setup screen warns you when a pack
+  contains streamed clips. Play one during your sound check.
+
+To use your own audio file instead, put it beside the project and use:
+
+```jsonc
+"clip": { "source": "url", "src": "clips/my-file.mp3", "credit": "Where it came from" }
+```
+
+### Name that tune, synthesised
 
 Set `melody` to one of the built-in public domain tunes and the question gets a
 **Play the tune** button; the melody is synthesised in the browser, so there are
@@ -89,8 +140,10 @@ no audio files to host and nothing to license.
 `williamTell`, `mountainKing`, `canonInD`, `twinkle`, `greensleeves`,
 `ruleBritannia`, `swanLake`
 
-All are pre-1900 compositions. If you add more, add them to `MELODIES` in
-`js/audio.js` and keep them public domain.
+All are pre-1900 compositions, synthesised in the browser — so they need no
+files and no internet, which makes them the safe choice for a pub with no wifi.
+If you add more, add them to `MELODIES` in `js/audio.js` and keep them public
+domain.
 
 ## Writing a good round
 

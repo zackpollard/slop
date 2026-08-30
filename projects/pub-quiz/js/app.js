@@ -14,6 +14,7 @@
 import { QuizAudio } from './audio.js';
 import { QuizSpeech } from './speech.js';
 import { Celebrate } from './celebrate.js';
+import { ClipPlayer } from './media.js';
 import * as State from './state.js';
 import { getPack, allPacks } from './packs.js';
 import {
@@ -37,6 +38,7 @@ const engines = {
     audio: new QuizAudio(),
     speech: new QuizSpeech(),
     celebrate: new Celebrate(document.getElementById('confetti')),
+    clips: new ClipPlayer(),
 };
 
 // ---- module state ----
@@ -203,6 +205,34 @@ function updateTimerUI() {
     }
 }
 
+function reportClipFailure() {
+    if (refs.clipStatus) {
+        refs.clipStatus.textContent = 'Clip unavailable — check the connection';
+        refs.clipStatus.classList.add('is-error');
+    }
+    engines.audio.play('error');
+}
+
+/** Keep the clip player's bar, label and equaliser in step with playback. */
+function syncClipUI({ playing, progress, duration }) {
+    if (refs.clipFill) {
+        refs.clipFill.style.width = duration > 0 ? `${Math.min(100, (progress / duration) * 100)}%` : '0%';
+    }
+    if (refs.clipStatus && !refs.clipStatus.classList.contains('is-error')) {
+        refs.clipStatus.textContent = playing
+            ? `${Math.floor(progress)}s of ${Math.round(duration) || 30}s`
+            : 'Ready';
+    }
+    if (refs.clipBars) refs.clipBars.classList.toggle('is-playing', playing);
+    if (refs.clipButton) {
+        refs.clipButton.replaceChildren(
+            icon(playing ? 'pause' : 'play', 22),
+            el('span', { text: playing ? 'Stop the clip' : 'Play the clip' }),
+        );
+    }
+    document.body.classList.toggle('is-clip-playing', playing);
+}
+
 // ---- rendering ----
 
 function render() {
@@ -321,8 +351,11 @@ async function runQuestion({ speakIt = true } = {}) {
     const question = currentQuestion();
     if (!question) return;
 
+    // No music bed under a music question — the clip IS the question.
+    const isAudioQuestion = Boolean(question.clip || question.melody);
+
     engines.audio.play('question');
-    if (settings().musicEnabled) engines.audio.startMusic('think');
+    if (settings().musicEnabled && !isAudioQuestion) engines.audio.startMusic('think');
 
     if (speakIt) {
         await say(script.question(question, game().questionIndex), { enabled: settings().readQuestions });
@@ -336,7 +369,12 @@ async function runQuestion({ speakIt = true } = {}) {
         }
     }
 
-    if (question.melody) {
+    if (question.clip) {
+        engines.audio.stopMusic({ fade: 0.3 });
+        const outcome = await engines.clips.play(question.clip);
+        if (token !== seq) return;
+        if (outcome === 'unavailable') reportClipFailure();
+    } else if (question.melody) {
         await engines.audio.unlock();
         await engines.audio.playMelody(question.melody);
         if (token !== seq) return;
@@ -367,6 +405,7 @@ async function revealAnswer() {
 
     stopTimer();
     timer.mode = null;
+    engines.clips.stop();
     engines.audio.stopMusic({ fade: 0.6 });
 
     if (settings().dramaticReveal) {
@@ -554,6 +593,9 @@ const actions = {
 
     beginRound() {
         State.updateGame((gm) => { gm.questionIndex = 0; gm.revealed = false; });
+        // Warm the round's clips so a question does not open on a buffering bar.
+        const round = currentRound();
+        if (round) engines.clips.preload(round.questions.map((q) => q.clip).filter(Boolean));
         runQuestion();
     },
 
@@ -582,6 +624,7 @@ const actions = {
         if (g.revealed) {
             seq += 1;
             engines.speech.cancel();
+            engines.clips.stop();
             State.setPhase('question', { revealed: false });
             render();
             return;
@@ -589,6 +632,7 @@ const actions = {
         if (g.questionIndex === 0) return;
         seq += 1;
         engines.speech.cancel();
+        engines.clips.stop();
         State.updateGame((gm) => { gm.questionIndex -= 1; gm.revealed = true; });
         stopTimer();
         render();
@@ -618,6 +662,29 @@ const actions = {
             startTimer(settings().timerSeconds, { mode: 'question', onEnd: () => onTimeUp(token) });
         }
         render();
+    },
+
+    /** Play (or stop) the clip on an audio question, holding the clock meanwhile. */
+    async playClip() {
+        const question = currentQuestion();
+        if (!question?.clip) return;
+
+        if (engines.clips.playing) {
+            engines.clips.stop();
+            return;
+        }
+
+        // Only hold the clock if it is actually running: on the automatic first
+        // play it has not started yet, and resuming afterwards would set it off
+        // while the host is still talking.
+        const wasRunning = timer.running;
+        if (wasRunning) pauseTimer();
+
+        engines.audio.stopMusic({ fade: 0.3 });
+        const outcome = await engines.clips.play(question.clip);
+        if (outcome === 'unavailable') reportClipFailure();
+
+        if (wasRunning) resumeTimer();
     },
 
     /** Used by the melody player so the clock does not run while a tune plays. */
@@ -786,6 +853,7 @@ const actions = {
         offeringResume = false;
         seq += 1;
         engines.speech.cancel();
+        engines.clips.stop();
         engines.audio.stopMusic({ fade: 0.4 });
         engines.celebrate.stop();
         stopTimer();
@@ -923,6 +991,8 @@ async function boot() {
         timer.remaining = settings().timerSeconds;
         timer.mode = 'question';
     }
+
+    engines.clips.onChange(syncClipUI);
 
     engines.speech.onChange(({ speaking }) => {
         document.body.classList.toggle('is-speaking', Boolean(speaking));

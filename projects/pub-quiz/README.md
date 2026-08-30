@@ -19,9 +19,13 @@ Live at **[pub-quiz.slop.zackpollard.pro](https://pub-quiz.slop.zackpollard.pro)
   download. Round stings, a music bed under the thinking time, a clock that
   gets more insistent as the seconds go, a buzzer, a drum roll before each
   answer, a fanfare and a round of applause for the winners.
-- **Name that tune.** Questions can play a public-domain melody through the
-  synthesiser — Beethoven's Fifth, Ode to Joy, Greensleeves and friends — so an
-  audio round needs no files either.
+- **A real music round.** Questions can play a thirty-second clip of the actual
+  record, streamed from Apple's preview service the moment you press play —
+  nothing downloaded, nothing re-hosted, and no track name on screen to give the
+  answer away. The credit and a link to the full song appear on the reveal.
+  For a pub with no wifi, questions can instead play a public-domain melody
+  through the synthesiser — Beethoven's Fifth, Ode to Joy, Greensleeves and
+  friends — which needs no files and no connection at all.
 - **Runs the clock.** A per-question countdown ring that you can pause, extend
   or skip, with an optional hands-free mode that reveals and advances by itself.
 - **Takes the marks.** After each round, a grid of teams against questions:
@@ -101,6 +105,7 @@ it uses ES modules.
 | `js/packs.js` | Pack registry, validation and normalisation, import/export |
 | `js/audio.js` | The entire sound design, synthesised — sound effects, music beds, melodies, the ticking clock |
 | `js/speech.js` | The host voice: voice ranking, the Chrome fifteen-second bug, watchdogs so speech can never wedge the quiz |
+| `js/media.js` | The audio round: streams a clip of a real record, refreshes stale preview links, preloads a round ahead |
 | `js/celebrate.js` | Canvas confetti, cannons, sparkles and flashes |
 | `js/sheets.js` | Answer sheets, answer key and score sheet for printing |
 | `js/dom.js` | Small DOM and formatting helpers |

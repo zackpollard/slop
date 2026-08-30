@@ -45,6 +45,7 @@ export const DEFAULT_SETTINGS = {
     musicVolume: 0.35,
     sfxVolume: 0.7,
     musicEnabled: true,
+    clipVolume: 0.9,            // the name-that-tune clips
 
     // Presentation
     bigScreen: false,           // oversized type for a TV

@@ -144,6 +144,7 @@ function packPicker(ctx, current, rerender) {
         el('div', { class: 'pack-stats' },
             el('span', { text: plural(stats.rounds, 'round') }),
             el('span', { text: plural(stats.questions, 'question') }),
+            stats.withClips ? el('span', { text: `${stats.withClips} with music` }) : null,
             stats.withSources === stats.questions
                 ? el('span', { class: 'verified', text: '✓ all sourced' })
                 : el('span', { text: `${stats.withSources}/${stats.questions} sourced` }),
@@ -199,7 +200,18 @@ function packImportControls(ctx) {
 
     const currentPack = getPack(draft.packId);
 
+    const streamed = currentPack ? packStats(currentPack).streamedClips : 0;
+
     return el('div', { class: 'pack-tools' },
+        streamed
+            ? el('div', { class: 'clip-warning' },
+                el('span', { text: '♪' }),
+                el('span', {
+                    text: `${plural(streamed, 'question')} in this pack play a clip of the real record, `
+                        + 'streamed at the moment you press play. You will need the internet on the night — '
+                        + 'give one a listen now to be sure.',
+                }))
+            : null,
         el('div', { class: 'row wrap' },
             el('button', { class: 'btn btn-ghost', onClick: () => fileInput.click() },
                 icon('upload'), 'Import a pack'),
@@ -435,6 +447,7 @@ export function renderSettingsPanel(ctx, rerender = () => {}) {
             slider('Master volume', s.masterVolume, 0, 1, 0.05, (v) => set({ masterVolume: v }), pct),
             slider('Effects', s.sfxVolume, 0, 1, 0.05, (v) => set({ sfxVolume: v }), pct),
             slider('Music bed', s.musicVolume, 0, 1, 0.05, (v) => set({ musicVolume: v }), pct),
+            slider('Music clips', s.clipVolume, 0, 1, 0.05, (v) => set({ clipVolume: v }), pct),
             toggle('Play music under the questions', s.musicEnabled, (v) => set({ musicEnabled: v })),
             el('div', { class: 'row wrap sound-test' },
                 soundTest(ctx, 'roundStart', 'Round sting'),
@@ -597,7 +610,7 @@ function voiceSelect(ctx, set) {
 
 export function applySettingsToEngines(ctx) {
     const s = getSettings();
-    const { audio, speech } = ctx.engines;
+    const { audio, speech, clips } = ctx.engines;
 
     audio.setMasterVolume(s.masterVolume);
     audio.setSfxVolume(s.sfxVolume);
@@ -608,6 +621,8 @@ export function applySettingsToEngines(ctx) {
     speech.setRate(s.speechRate);
     speech.setPitch(s.speechPitch);
     speech.setVolume(s.speechVolume);
+
+    if (clips) clips.setVolume(s.audioEnabled ? s.clipVolume : 0);
     if (s.speechVoiceId) speech.setVoice(s.speechVoiceId);
 }
 
