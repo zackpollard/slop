@@ -15,7 +15,7 @@ import {
     hasJoker, jokerRound, toggleJoker,
 } from './state.js';
 import { MELODIES } from './audio.js';
-import { clipCredit } from './media.js';
+import { clipCredit, imageCredit, creditSpoils } from './media.js';
 
 const DIFFICULTY_LABELS = { easy: 'Easy', medium: 'Medium', hard: 'Hard' };
 
@@ -109,6 +109,8 @@ export function renderQuestion(ctx) {
 
         el('h1', { class: 'question-text', text: question.question }),
 
+        question.image ? imagePanel(ctx) : null,
+
         question.clip ? clipPlayer(ctx) : (question.melody ? melodyPlayer(ctx) : null),
 
         revealed ? answerPanel(ctx) : null);
@@ -120,6 +122,64 @@ export function renderQuestion(ctx) {
         card,
         settings.timerEnabled && !revealed ? timerRing(ctx, refs) : null,
         questionControls(ctx));
+}
+
+/**
+ * The picture round.
+ *
+ * Logos are usually flat black or a single dark colour, so they need a light
+ * plate behind them or they vanish into the dark theme. Photographs fill their
+ * frame instead. The attribution sits under the picture at all times — a free
+ * licence is only free if you honour it — and the link back to the source
+ * appears on the reveal, where it cannot hint at the answer.
+ */
+function imagePanel(ctx) {
+    const { question, refs } = ctx;
+    const image = question.image;
+    const revealed = ctx.game.revealed;
+
+    const img = el('img', {
+        class: 'picture',
+        src: image.src,
+        alt: image.alt,
+        decoding: 'async',
+        onError: () => {
+            frame.classList.add('is-broken');
+            if (refs.pictureStatus) {
+                refs.pictureStatus.textContent = 'Picture missing — read the question out instead.';
+            }
+        },
+    });
+
+    const frame = el('div', {
+        class: ['picture-frame', `is-${image.fit}`],
+    }, img);
+
+    const status = el('p', { class: 'picture-status' });
+    refs.pictureStatus = status;
+
+    // A credit naming the brand is withheld until the reveal; see creditSpoils.
+    const spoils = creditSpoils(image, question.answer);
+    const credit = spoils && !revealed ? '' : imageCredit(image);
+
+    return el('div', { class: 'picture-panel' },
+        frame,
+        status,
+        credit || revealed
+            ? el('p', { class: 'picture-credit' },
+                credit,
+                revealed && image.sourceUrl
+                    ? el('a', {
+                        class: 'source-link',
+                        href: image.sourceUrl,
+                        target: '_blank',
+                        rel: 'noopener noreferrer',
+                    }, icon('link', 12), 'Source')
+                    : null,
+                revealed && image.trademark
+                    ? el('span', { class: 'picture-tm', text: 'Trademark of its owner, shown for identification.' })
+                    : null)
+            : null);
 }
 
 /**

@@ -605,6 +605,76 @@ input[type="checkbox"] {
     text-wrap: balance;
 }
 
+/* ---- the picture round ---- */
+
+.picture-panel {
+    margin-top: 1.6rem;
+    display: grid;
+    gap: 0.6rem;
+    justify-items: center;
+    width: 100%;
+}
+
+.picture-frame {
+    width: min(100%, 34rem);
+    aspect-ratio: 16 / 9;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+    border: 1px solid var(--border-bright);
+    border-radius: 14px;
+    background: var(--bg-deep);
+}
+
+/*
+ * Logos are usually flat black or one dark colour. On a dark theme they would
+ * disappear, so a contained image gets a light plate to sit on — the same way
+ * a brand sheet would print them.
+ */
+.picture-frame.is-contain {
+    background: linear-gradient(180deg, #f6f3ea, #e6e1d3);
+    padding: 1.75rem;
+}
+
+.picture-frame.is-cover { padding: 0; }
+
+.picture {
+    max-width: 100%;
+    max-height: 100%;
+    display: block;
+}
+
+.picture-frame.is-contain .picture { object-fit: contain; }
+
+.picture-frame.is-cover .picture {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.picture-frame.is-broken {
+    background: var(--surface-2);
+    border-style: dashed;
+    border-color: var(--red);
+}
+.picture-frame.is-broken .picture { display: none; }
+
+.picture-status { color: var(--red); font-size: 0.85rem; min-height: 1em; }
+
+.picture-credit {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    justify-content: center;
+    color: var(--text-dim);
+    font-size: 0.74rem;
+}
+.picture-credit .source-link { margin-top: 0; font-size: 0.74rem; }
+.picture-tm { font-style: italic; }
+
+body.big-screen .picture-frame { width: min(100%, 46rem); }
+
 /* ---- the audio round ---- */
 
 .clip-player {
@@ -1214,6 +1284,17 @@ body.big-screen .btn-large { padding: 1rem 2rem; font-size: 1.15rem; }
     .sheet-box { display: inline-block; width: 2.5cm; height: 1.2cm; border: 2px solid #000; }
     .key-lines { margin-left: 1.2em; }
     .key-lines li { margin-bottom: 0.28cm; font-size: 10.5pt; }
+    .key-lines li.has-picture { min-height: 1.6cm; }
+    .key-thumb {
+        float: right;
+        width: 2.4cm;
+        max-height: 1.5cm;
+        object-fit: contain;
+        margin: 0 0 0.2cm 0.3cm;
+        border: 1px solid #ccc;
+        padding: 2px;
+        background: #fff;
+    }
     .key-question { display: block; }
     .key-answer { font-size: 11pt; }
     .key-alt, .key-source { color: #555; font-size: 9pt; }

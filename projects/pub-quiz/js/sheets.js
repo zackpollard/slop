@@ -48,7 +48,10 @@ export function buildAnswerKey(pack, roundIds) {
     const rounds = roundIds.map((id) => pack.rounds.find((r) => r.id === id)).filter(Boolean);
 
     const roundBlocks = rounds.map((round, roundIndex) => {
-        const lines = round.questions.map((q) => el('li', {},
+        const lines = round.questions.map((q) => el('li', { class: q.image ? 'has-picture' : '' },
+            // A thumbnail on the host's key so they can tell at a glance which
+            // picture is on the screen behind them.
+            q.image ? el('img', { class: 'key-thumb', src: q.image.src, alt: '' }) : null,
             el('span', { class: 'key-question', text: q.question }),
             el('strong', { class: 'key-answer', text: q.answer }),
             q.acceptable.length ? el('span', { class: 'key-alt', text: ` (or ${q.acceptable.join(', ')})` }) : null,

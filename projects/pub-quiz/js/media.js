@@ -1,5 +1,5 @@
 /*
- * media.js — the audio round.
+ * media.js — the audio and picture rounds.
  *
  * Plays a short clip of a real recording for "name that tune" questions.
  * Clips are STREAMED, never downloaded or re-hosted: an iTunes clip is the
@@ -16,6 +16,10 @@
  *
  * Everything degrades: a dead link, a blocked network or an unsupported codec
  * resolves as a failure the host can see, and never throws into the quiz flow.
+ *
+ * Pictures work the other way round: they are freely-licensed files committed
+ * to the repo, so a picture round needs no internet at all. What they do need
+ * is attribution, which the pack carries and the screen renders.
  */
 
 const LOOKUP_URL = 'https://itunes.apple.com/lookup?id=';
@@ -71,6 +75,78 @@ export function normaliseClip(raw) {
         start,
         seconds,
     };
+}
+
+/**
+ * Normalise a picture-round image. Returns null when the question has no image.
+ *
+ *   { src, alt, credit, license, licenseUrl, sourceUrl, fit }
+ *
+ * `src` is a path inside the project. Name the files opaquely — q01.png, not
+ * ferrari.png — because the path is visible in the page source and a guessable
+ * filename hands the answer to anyone who opens the inspector.
+ */
+export function normaliseImage(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const src = typeof raw.src === 'string' ? raw.src.trim() : '';
+    if (!src) return null;
+
+    return {
+        src,
+        // Deliberately generic by default: alt text is read by screen readers
+        // and must not give the answer away before the reveal.
+        alt: typeof raw.alt === 'string' && raw.alt.trim() ? raw.alt.trim() : 'Picture question',
+        credit: typeof raw.credit === 'string' ? raw.credit.trim() : '',
+        license: typeof raw.license === 'string' ? raw.license.trim() : '',
+        licenseUrl: typeof raw.licenseUrl === 'string' ? raw.licenseUrl.trim() : '',
+        sourceUrl: typeof raw.sourceUrl === 'string' ? raw.sourceUrl.trim() : '',
+        // 'contain' keeps a logo whole; 'cover' fills the frame with a photo.
+        fit: raw.fit === 'cover' ? 'cover' : 'contain',
+        trademark: Boolean(raw.trademark),
+    };
+}
+
+/** The attribution line a free licence obliges us to show. */
+export function imageCredit(image) {
+    if (!image) return '';
+    return [image.credit, image.license].filter(Boolean).join(' · ');
+}
+
+/**
+ * Would showing the credit hand over the answer?
+ *
+ * Commons records the author of a corporate logo as the company itself, so the
+ * attribution line under a logo question reads "Adidas" — which is the answer,
+ * in small print, before anyone has guessed. Those cases are public domain and
+ * carry no attribution duty, so the credit is held back until the reveal. A
+ * photographer's name never spoils anything, so a CC BY photo keeps its credit
+ * on screen throughout, as its licence requires.
+ */
+export function creditSpoils(image, answer) {
+    if (!image || !answer) return false;
+    const haystack = `${image.credit} ${image.license}`.toLowerCase();
+    return String(answer)
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((word) => word.length >= 4)
+        .some((word) => haystack.includes(word));
+}
+
+/**
+ * Warm a round's images. Browsers cache by URL, so simply constructing an
+ * Image with the src is enough to have it decoded before the question lands.
+ */
+export function preloadImages(images) {
+    if (typeof Image !== 'function') return;
+    for (const image of images.filter(Boolean)) {
+        try {
+            const element = new Image();
+            element.decoding = 'async';
+            element.src = image.src;
+        } catch {
+            /* a failed preload just means it loads late */
+        }
+    }
 }
 
 /** A stable cache key for a clip. */

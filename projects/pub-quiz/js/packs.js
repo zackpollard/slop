@@ -11,7 +11,7 @@
  */
 
 import { storage, uid } from './dom.js';
-import { normaliseClip } from './media.js';
+import { normaliseClip, normaliseImage } from './media.js';
 import slopClassic01 from '../quizzes/slop-classic-01.js';
 
 // ---- registry ----
@@ -129,6 +129,29 @@ export function validatePack(raw, { source = 'custom' } = {}) {
                 issues.warn(`${qLabel} has no source — answers should be traceable.`);
             }
 
+            const image = normaliseImage(q.image);
+            if (image) {
+                // The image's path, alt text and credit are all in the page
+                // source before the answer is revealed. A filename like
+                // ferrari.png hands the answer to anyone who opens the
+                // inspector, so say so loudly.
+                const answer = String(q.answer || '').toLowerCase().trim();
+                const words = answer.split(/\s+/).filter((w) => w.length >= 4);
+                // The credit is not checked here: the screen holds it back until
+                // the reveal when it would spoil. The path and the alt text are
+                // always visible, so those have to be clean.
+                const haystack = `${image.src} ${image.alt}`.toLowerCase();
+                const leaks = words.filter((w) => haystack.includes(w));
+                if (answer.length >= 4 && leaks.length) {
+                    issues.warn(`${qLabel} gives its answer away in the image path or alt text `
+                        + `(found "${leaks.join('", "')}"). Rename the file and keep the alt text generic.`);
+                }
+                if (!image.credit && !image.license) {
+                    issues.warn(`${qLabel} has an image with no credit or licence — freely licensed `
+                        + 'pictures still have to be attributed.');
+                }
+            }
+
             return {
                 id: isStr(q.id) ? q.id : `${id}-q${qi + 1}`,
                 question: String(q.question || '').trim(),
@@ -139,6 +162,7 @@ export function validatePack(raw, { source = 'custom' } = {}) {
                 funFact: isStr(q.funFact) ? q.funFact.trim() : '',
                 melody: isStr(q.melody) ? q.melody.trim() : (isStr(q.melodyKey) ? q.melodyKey.trim() : ''),
                 clip: normaliseClip(q.clip),
+                image,
                 spokenQuestion: isStr(q.spokenQuestion) ? q.spokenQuestion.trim() : '',
                 spokenAnswer: isStr(q.spokenAnswer) ? q.spokenAnswer.trim() : '',
                 hint: isStr(q.hint) ? q.hint.trim() : '',
@@ -358,6 +382,7 @@ export function exportPack(pack) {
                 ...(q.spokenAnswer ? { spokenAnswer: q.spokenAnswer } : {}),
                 ...(q.hint ? { hint: q.hint } : {}),
                 ...(q.clip ? { clip: q.clip } : {}),
+                ...(q.image ? { image: q.image } : {}),
                 ...(q.source ? { source: q.source } : {}),
             })),
         })),
@@ -378,6 +403,7 @@ export function packStats(pack) {
         withSources: questions.filter((q) => q.source?.url).length,
         withMelody: questions.filter((q) => q.melody).length,
         withClips: questions.filter((q) => q.clip).length,
+        withImages: questions.filter((q) => q.image).length,
         streamedClips: questions.filter((q) => q.clip && q.clip.source === 'itunes').length,
         hasTiebreaker: Boolean(pack.tiebreaker),
     };

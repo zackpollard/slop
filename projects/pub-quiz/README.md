@@ -31,6 +31,11 @@ Live at **[pub-quiz.slop.zackpollard.pro](https://pub-quiz.slop.zackpollard.pro)
 - **Takes the marks.** After each round, a grid of teams against questions:
   tap to cycle correct, wrong, blank. Bonus points, quick-fill rows, and the
   answer key one click away.
+- **Picture rounds.** Questions can carry an image — a logo stripped of its
+  wordmark, a photograph of a car. Pictures are files in the project, so unlike
+  the music clips a picture round works with no internet at all. Every image is
+  credited on screen, and the validator refuses to let a filename or alt text
+  give the answer away.
 - **Jokers.** The pub-quiz classic: each team may play one joker across the
   night to double a round. Played from the marking grid, marked on the
   leaderboard, and there is a box for it on the printed answer sheets.
@@ -72,8 +77,9 @@ quiz, new pack, no code.
 
 The pack that ships with it (`quizzes/slop-classic-01.js`) is seventy questions
 across seven rounds — general knowledge, science, music, sport, animals and a
-kids' round, plus an optional **Name That Tune** round that plays clips of ten
-real records from 1969 to 2022. Each question was drafted, independently
+kids' round, plus three optional picture-and-sound rounds: **Name That Tune**
+(clips of ten real records from 1969 to 2022), **Guess the Logo** and **Name
+That Car**. Each question was drafted, independently
 fact-checked against a real source, audited as part of the whole pack, and then
 put through a pass for British spelling, vocabulary, units and subject balance.
 Every question carries the URL it was checked against, shown on screen when the
@@ -89,6 +95,8 @@ To write your own, press **Export this pack** on the setup screen, edit the
 JSON, and import it back — or drop a module into `quizzes/` and register it in
 `js/packs.js`. The format is documented in
 **[quizzes/SCHEMA.md](quizzes/SCHEMA.md)**.
+
+Picture credits are listed in **[images/CREDITS.md](images/CREDITS.md)**.
 
 ## Development
 
@@ -114,7 +122,7 @@ it uses ES modules.
 | `js/packs.js` | Pack registry, validation and normalisation, import/export |
 | `js/audio.js` | The entire sound design, synthesised — sound effects, music beds, melodies, the ticking clock |
 | `js/speech.js` | The host voice: voice ranking, the Chrome fifteen-second bug, watchdogs so speech can never wedge the quiz |
-| `js/media.js` | The audio round: streams a clip of a real record, refreshes stale preview links, preloads a round ahead |
+| `js/media.js` | The audio and picture rounds: streams a clip of a real record, refreshes stale preview links, preloads a round ahead, and holds back a credit that would spoil the answer |
 | `js/celebrate.js` | Canvas confetti, cannons, sparkles and flashes |
 | `js/sheets.js` | Answer sheets, answer key and score sheet for printing |
 | `js/dom.js` | Small DOM and formatting helpers |

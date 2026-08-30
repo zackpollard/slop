@@ -14,7 +14,7 @@
 import { QuizAudio } from './audio.js';
 import { QuizSpeech } from './speech.js';
 import { Celebrate } from './celebrate.js';
-import { ClipPlayer } from './media.js';
+import { ClipPlayer, preloadImages } from './media.js';
 import * as State from './state.js';
 import { getPack, allPacks } from './packs.js';
 import {
@@ -754,9 +754,12 @@ const actions = {
 
     beginRound() {
         State.updateGame((gm) => { gm.questionIndex = 0; gm.revealed = false; });
-        // Warm the round's clips so a question does not open on a buffering bar.
+        // Warm the round's media so a question does not open on a spinner.
         const round = currentRound();
-        if (round) engines.clips.preload(round.questions.map((q) => q.clip).filter(Boolean));
+        if (round) {
+            engines.clips.preload(round.questions.map((q) => q.clip).filter(Boolean));
+            preloadImages(round.questions.map((q) => q.image).filter(Boolean));
+        }
         runQuestion();
     },
 

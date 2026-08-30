@@ -77,8 +77,57 @@ screen, edit the JSON, and import it back.
 | `funFact` | One sentence, read aloud on the reveal. Keep it under about 25 words. |
 | `source` | Where the answer was checked. Shown on the reveal and printed on the host's answer key. Strongly recommended — a quiz is only as good as its sources. |
 | `spokenQuestion` / `spokenAnswer` | Use when the written and spoken forms should differ: awkward names, symbols, numbers a synthesiser mangles. |
+| `image` | Turns the question into a picture question — see below. |
 | `clip` | Turns the question into a "name that tune" that plays a real record — see below. |
 | `melody` | Turns the question into a "name that tune" that plays a synthesised public-domain theme — see below. |
+
+### Picture questions
+
+Give a question an `image` and the picture appears on screen with it:
+
+```jsonc
+"image": {
+  "src": "images/logos/logo-04.png",
+  "alt": "A company logo",              // generic on purpose — see below
+  "fit": "contain",                     // "contain" for logos, "cover" for photos
+  "credit": "Photographer or author",
+  "license": "CC BY-SA 4.0",
+  "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/",
+  "sourceUrl": "https://commons.wikimedia.org/wiki/File:...",
+  "trademark": true                     // shown on the reveal for brand marks
+}
+```
+
+Images are ordinary files in the project, so a picture round needs no internet
+at all — unlike the music clips.
+
+**Two rules the validator enforces**, because both are easy to get wrong:
+
+1. **Do not put the answer in the filename, the alt text or the credit.** The
+   image path is visible in the browser's network tab while the round is being
+   played. Name files opaquely — `logo-04.png`, never `ferrari.png` — and keep
+   the alt text generic. The validator warns if it spots the answer in any of
+   the three.
+2. **Every image needs a credit and a licence.** A freely licensed picture is
+   only free if you honour the attribution, so the app shows the credit under
+   the picture at all times and links to the source on the reveal.
+
+`fit` decides how the picture sits in its frame. Use `contain` for a logo — it
+is shown whole, on a light plate, because most logos are dark and would vanish
+into the dark theme. Use `cover` for a photograph, which fills the frame.
+
+**Where to get pictures you are allowed to use.** Wikimedia Commons, restricted
+to public domain and CC0/CC-BY/CC-BY-SA files. Those can be redistributed with
+attribution, which is what makes it legitimate to commit them. Do not use images
+from a general web search: most are all-rights-reserved, and the logos that look
+most tempting are usually the copyrighted ones.
+
+A caveat specific to logos: brand marks are public domain for *copyright*
+purposes only when they are too simple to qualify for protection — which in
+practice means plain wordmarks, and a wordmark spells out its own answer. The
+distinctive symbol logos are copyrighted. Car marque badges are the useful
+exception: they are symbols, and most are public domain. Set `trademark: true`
+on a brand mark and the reveal notes that it is shown for identification.
 
 ### Name that tune, with a real record
 
