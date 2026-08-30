@@ -1035,7 +1035,13 @@ body.big-screen .btn-large { padding: 1rem 2rem; font-size: 1.15rem; }
     .podium-2 .podium-block { height: 105px; }
     .podium-3 .podium-block { height: 85px; }
     .podium-score { font-size: 1.6rem; }
-    .slider-label { min-width: 6.5rem; }
+    /* Settings rows stack: a label and its control fight for width otherwise. */
+    .slider-row, .number-row, .field { flex-wrap: wrap; gap: 0.4rem 0.8rem; }
+    .slider-label { min-width: 100%; }
+    .slider-row input[type="range"] { flex: 1 1 60%; }
+    .number-row .input-number, .field select { margin-left: auto; }
+    .round-main { flex-wrap: wrap; }
+    .round-count { width: 100%; padding-left: 2.4rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {
