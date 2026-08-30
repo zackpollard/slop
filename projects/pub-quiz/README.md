@@ -70,11 +70,20 @@ Handy keys while you host:
 Questions live in **packs** — one file per quiz — so the site is reusable: new
 quiz, new pack, no code.
 
-The pack that ships with it (`quizzes/slop-classic-01.js`) is sixty questions
-across six rounds — general knowledge, science, music, sport, animals and a
-kids' round — each one drafted, independently fact-checked against a real
-source, and audited before it went in. Every question carries the URL it was
-checked against, shown on screen when the answer is revealed.
+The pack that ships with it (`quizzes/slop-classic-01.js`) is seventy questions
+across seven rounds — general knowledge, science, music, sport, animals and a
+kids' round, plus an optional **Name That Tune** round that plays clips of ten
+real records from 1969 to 2022. Each question was drafted, independently
+fact-checked against a real source, audited as part of the whole pack, and then
+put through a pass for British spelling, vocabulary, units and subject balance.
+Every question carries the URL it was checked against, shown on screen when the
+answer is revealed.
+
+There is a tie-breaker too, for when the top of the table finishes level: a
+nearest-wins estimate, checked against the building's own website.
+
+Rounds are chosen on the setup screen, so the audio round is there when you want
+it and out of the way when you do not.
 
 To write your own, press **Export this pack** on the setup screen, edit the
 JSON, and import it back — or drop a module into `quizzes/` and register it in
