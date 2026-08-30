@@ -45,6 +45,9 @@ const engines = {
 
 let seq = 0;                    // async generation token
 let offeringResume = false;     // a saved quiz is waiting; show setup until the host chooses
+let revealing = false;          // a reveal is between its drum roll and its answer
+let lastPhaseChangeAt = 0;      // when the screen on the wall went up
+let lastScreenKey = '';         // and what it was, so a redraw is not re-announced
 let refs = {};                  // live DOM references handed out by the screens
 let overlayCloser = null;
 
@@ -205,6 +208,22 @@ function updateTimerUI() {
     }
 }
 
+/**
+ * The clock is module state, and nothing in the app watches the settings, so a
+ * host who reaches for the timer switch mid-question has to be obeyed by hand.
+ */
+function syncTimerToSettings() {
+    const live = game().phase === 'question' && !game().revealed;
+    if (!settings().timerEnabled) {
+        stopTimer();
+        timer.mode = null;      // a null mode is what stops resumeTimer() reviving it
+        timer.remaining = 0;
+    } else if (live && !timer.running && timer.remaining <= 0) {
+        const token = ++seq;
+        startTimer(settings().timerSeconds, { mode: 'question', onEnd: () => onTimeUp(token) });
+    }
+}
+
 function reportClipFailure() {
     if (refs.clipStatus) {
         refs.clipStatus.textContent = 'Clip unavailable — check the connection';
@@ -235,17 +254,80 @@ function syncClipUI({ playing, progress, duration }) {
 
 // ---- rendering ----
 
+/**
+ * A polite live region, kept outside #app because mount() empties that on every
+ * redraw. Built here rather than in the markup so it cannot go missing.
+ */
+function liveRegion() {
+    let node = document.getElementById('live');
+    if (!node) {
+        node = el('div', { id: 'live', class: 'visually-hidden', role: 'status', 'aria-live': 'polite' });
+        document.body.appendChild(node);
+    }
+    return node;
+}
+
+function screenKey(ctx) {
+    if (offeringResume) return 'setup';
+    const g = ctx.game;
+    return [g.phase, g.roundIndex, g.questionIndex, g.revealed].join(':');
+}
+
+function screenMessage(ctx) {
+    const g = ctx.game;
+    if (offeringResume) return '';
+    if (g.phase === 'question' && ctx.question) {
+        return g.revealed
+            ? `The answer is ${ctx.question.answer}.`
+            : `Question ${g.questionIndex + 1} of ${ctx.round.questions.length}. ${ctx.question.question}`;
+    }
+    if (g.phase === 'roundIntro' && ctx.round) {
+        return `${ctx.round.name}. Round ${g.roundIndex + 1} of ${g.roundIds.length}.`;
+    }
+    return '';
+}
+
+/**
+ * The whole screen is rebuilt for every change, which tells a screen reader
+ * nothing and drops focus on the floor. Narrate the new screen and hand it the
+ * focus — but only when the screen really changed, so muting the voice halfway
+ * through marking does not move the host.
+ */
+function settleScreen(host, ctx) {
+    const key = screenKey(ctx);
+    if (key === lastScreenKey) return;
+    lastScreenKey = key;
+
+    const message = screenMessage(ctx);
+    const live = liveRegion();
+    // Clearing first is what makes an identical string announce a second time.
+    live.textContent = '';
+    if (message) requestAnimationFrame(() => { live.textContent = message; });
+
+    if (overlayCloser) return;
+    const heading = host.querySelector('h1');
+    if (!heading) return;
+    heading.tabIndex = -1;
+    // Nobody can tab to a heading, so the only focus it ever gets is this one —
+    // and a gold ring round the question is not what the pub wants on the telly.
+    heading.style.outline = 'none';
+    heading.focus({ preventScroll: true });
+}
+
 function render() {
     refs = {};
     const ctx = buildCtx();
     const host = $('#app');
     if (!host) return;
 
+    lastPhaseChangeAt = performance.now();
+
     let screen;
     if (offeringResume) {
         mount(host, renderSetup(ctx));
         renderTopbar(ctx);
         document.body.dataset.phase = 'setup';
+        settleScreen(host, ctx);
         return;
     }
 
@@ -264,6 +346,7 @@ function render() {
     renderTopbar(ctx);
     updateTimerUI();
     document.body.dataset.phase = ctx.game.phase;
+    settleScreen(host, ctx);
 }
 
 function renderTopbar(ctx) {
@@ -322,14 +405,50 @@ function openOverlay(title, content, { wide = false } = {}) {
         el('div', { class: 'overlay-body' }, content));
 
     const scrim = el('div', { class: 'overlay-scrim', onClick: () => closeOverlay() });
+    panel.addEventListener('keydown', trapTab);
+
+    const opener = document.activeElement;
+    const openerLabel = opener instanceof HTMLElement ? opener.getAttribute('aria-label') : null;
+
     mount(root, scrim, panel);
     root.hidden = false;
+    // aria-modal only promises the page behind is gone; inert makes it so for
+    // the keyboard and the mouse too.
+    setBackgroundInert(true);
     panel.querySelector('button')?.focus();
+
     overlayCloser = () => {
         root.hidden = true;
         mount(root);
+        setBackgroundInert(false);
         overlayCloser = null;
+        // A redraw behind the panel may have replaced the button that opened it.
+        const back = opener?.isConnected
+            ? opener
+            : (openerLabel && $(`#topbar [aria-label="${openerLabel}"]`));
+        if (back instanceof HTMLElement) back.focus();
     };
+}
+
+function setBackgroundInert(on) {
+    for (const id of ['topbar', 'app']) {
+        const node = document.getElementById(id);
+        if (node) node.inert = on;
+    }
+}
+
+/** Keep Tab inside the dialog: the quiz behind the scrim is not reachable. */
+function trapTab(event) {
+    if (event.key !== 'Tab') return;
+    const panel = event.currentTarget;
+    const stops = [...panel.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+        .filter((node) => !node.disabled && node.getClientRects().length);
+    if (!stops.length) return;
+
+    const edge = event.shiftKey ? stops[0] : stops[stops.length - 1];
+    if (document.activeElement !== edge) return;
+    event.preventDefault();
+    (event.shiftKey ? stops[stops.length - 1] : stops[0]).focus();
 }
 
 function closeOverlay() {
@@ -403,20 +522,29 @@ async function revealAnswer() {
     const question = currentQuestion();
     if (!question) return;
 
-    stopTimer();
-    timer.mode = null;
-    engines.clips.stop();
-    engines.audio.stopMusic({ fade: 0.6 });
+    // The drum roll runs for over a second with the reveal button still on
+    // screen and `revealed` still false, so hold the door shut ourselves until
+    // the state catches up.
+    revealing = true;
+    try {
+        stopTimer();
+        timer.mode = null;
+        engines.clips.stop();
+        engines.audio.stopMusic({ fade: 0.6 });
 
-    if (settings().dramaticReveal) {
-        engines.audio.play('drumroll');
-        await sleep(1100);
-        if (token !== seq) return;
+        if (settings().dramaticReveal) {
+            engines.audio.play('drumroll');
+            await sleep(1100);
+            if (token !== seq) return;
+        }
+
+        engines.audio.play('reveal');
+        State.setPhase('question', { revealed: true });
+        render();
+    } finally {
+        revealing = false;
     }
 
-    engines.audio.play('reveal');
-    State.setPhase('question', { revealed: true });
-    render();
     if (settings().confetti) engines.celebrate.sparkle();
 
     await say(script.answer(question), { enabled: settings().readAnswers });
@@ -474,9 +602,11 @@ async function finishRound() {
 
 async function showLeaderboard() {
     const token = ++seq;
-    State.snapshotStandings(game().roundIndex);
     State.setPhase('leaderboard');
     render();
+    // This round's snapshot is the baseline the NEXT board's movement arrows
+    // measure against, so it is only taken once this board has been drawn.
+    State.snapshotStandings(game().roundIndex);
 
     engines.audio.play('leaderboard');
     if (settings().musicEnabled) engines.audio.startMusic('lobby');
@@ -488,18 +618,27 @@ async function showLeaderboard() {
     if (token !== seq) return;
 }
 
+function intervalTimeUp() {
+    engines.audio.play('roundStart');
+    say('Right, that is time. Back to your seats please.', { enabled: settings().readScores });
+}
+
+function armIntervalTimer(seconds) {
+    startTimer(seconds, { mode: 'interval', onEnd: intervalTimeUp });
+}
+
 async function startInterval() {
     const token = ++seq;
-    State.setPhase('interval');
+    const seconds = settings().intervalMinutes * 60;
+    // The deadline goes into the game so a lid closed over half time comes back
+    // to the break the room was actually given, not a fresh one.
+    State.updateGame((gm) => {
+        gm.phase = 'interval';
+        gm.intervalEndsAt = Date.now() + seconds * 1000;
+    });
     render();
     engines.audio.startMusic('interval');
-    startTimer(settings().intervalMinutes * 60, {
-        mode: 'interval',
-        onEnd: () => {
-            engines.audio.play('roundStart');
-            say('Right, that is time. Back to your seats please.', { enabled: settings().readScores });
-        },
-    });
+    armIntervalTimer(seconds);
     await say(script.interval(settings().intervalMinutes), { enabled: settings().readIntros });
     if (token !== seq) return;
 }
@@ -581,8 +720,22 @@ const actions = {
         await engines.audio.unlock();
         applySettingsToEngines({ engines });
         const g = game();
-        if (g.phase === 'question' && !g.revealed) runQuestion({ speakIt: false });
-        else render();
+
+        if (g.phase === 'question' && !g.revealed) {
+            runQuestion({ speakIt: false });
+            return;
+        }
+
+        render();
+        if (g.phase === 'interval') {
+            const left = g.intervalEndsAt
+                ? Math.max(0, (g.intervalEndsAt - Date.now()) / 1000)
+                : settings().intervalMinutes * 60;
+            if (settings().musicEnabled) engines.audio.startMusic('interval');
+            // A break that ran out while the tab was shut stays at 0:00, and the
+            // host adds a minute if the room is still at the bar.
+            if (left > 0.5) armIntervalTimer(left);
+        }
     },
 
     discardResume() {
@@ -600,7 +753,7 @@ const actions = {
     },
 
     reveal() {
-        if (game().revealed) return;
+        if (revealing || game().revealed) return;
         revealAnswer();
     },
 
@@ -623,9 +776,20 @@ const actions = {
         const g = game();
         if (g.revealed) {
             seq += 1;
+            const token = seq;
             engines.speech.cancel();
             engines.clips.stop();
             State.setPhase('question', { revealed: false });
+            if (settings().timerEnabled) {
+                // The reveal retired the clock and its onEnd belongs to a
+                // generation this step has just invalidated. Put both back,
+                // paused, or the ring returns under a Resume button that does
+                // nothing and a clock that would expire in silence.
+                timer.mode = 'question';
+                timer.total = settings().timerSeconds;
+                if (timer.remaining <= 0) timer.remaining = settings().timerSeconds;
+                timer.onEnd = () => onTimeUp(token);
+            }
             render();
             return;
         }
@@ -635,6 +799,10 @@ const actions = {
         engines.clips.stop();
         State.updateGame((gm) => { gm.questionIndex -= 1; gm.revealed = true; });
         stopTimer();
+        // The previous question is shown revealed, which draws no ring: leave no
+        // clock behind that P could start with nothing on screen to explain it.
+        timer.mode = null;
+        timer.remaining = 0;
         render();
     },
 
@@ -654,11 +822,14 @@ const actions = {
         if (timer.running) {
             pauseTimer();
             engines.audio.play('click');
-        } else if (timer.remaining > 0) {
+        } else if (timer.remaining > 0 && timer.mode && !game().revealed) {
             resumeTimer();
             engines.audio.play('click');
         } else if (settings().timerEnabled && game().phase === 'question' && !game().revealed) {
-            const token = seq;
+            // A new generation: the clock only reaches here after running out,
+            // and onTimeUp may still be a second away from revealing the answer
+            // the host has just bought the room more time to find.
+            const token = ++seq;
             startTimer(settings().timerSeconds, { mode: 'question', onEnd: () => onTimeUp(token) });
         }
         render();
@@ -744,19 +915,27 @@ const actions = {
     },
 
     addIntervalTime(seconds) {
-        timer.remaining += seconds;
-        timer.deadline += seconds * 1000;
-        if (!timer.running) resumeTimer();
-        updateTimerUI();
+        if (timer.mode === 'interval') {
+            timer.remaining += seconds;
+            timer.deadline += seconds * 1000;
+            if (!timer.running) resumeTimer();
+            updateTimerUI();
+        } else {
+            // tick() drops the mode when the break runs out, and a resumed quiz
+            // never had one: there is no clock left to nudge, so start another.
+            armIntervalTimer(seconds);
+        }
         engines.audio.play('click');
     },
 
     endInterval() {
         stopTimer();
+        timer.mode = null;
         State.updateGame((gm) => {
             gm.roundIndex += 1;
             gm.questionIndex = 0;
             gm.revealed = false;
+            gm.intervalEndsAt = null;
         });
         startRound();
     },
@@ -772,7 +951,12 @@ const actions = {
             const distance = Math.abs(Number(guess) - tb.answer);
             if (distance < best) { best = distance; winnerId = teamId; }
         }
-        if (!winnerId) return;
+        if (!winnerId) {
+            // Nobody typed a guess. Say so out loud rather than looking broken
+            // in front of the room.
+            engines.audio.play('error');
+            return;
+        }
 
         State.updateGame((gm) => {
             gm.tiebreak = { ...gm.tiebreak, guesses, winnerId };
@@ -802,9 +986,10 @@ const actions = {
     },
 
     celebrateAgain() {
+        const token = seq;
         engines.audio.play('fanfare');
         if (settings().confetti) engines.celebrate.cannons();
-        setTimeout(() => engines.audio.play('applause'), 900);
+        setTimeout(() => { if (token === seq) engines.audio.play('applause'); }, 900);
     },
 
     exportCsv() {
@@ -885,7 +1070,7 @@ const actions = {
 
     openSettings() {
         const ctx = buildCtx();
-        openOverlay('Settings', renderSettingsPanel(ctx, () => actions.openSettings()), { wide: true });
+        openOverlay('Settings', renderSettingsPanel(ctx, rerenderSettings), { wide: true });
     },
 
     openHelp() {
@@ -899,6 +1084,26 @@ const actions = {
         } catch { /* the browser said no; nothing we can do */ }
     },
 };
+
+/**
+ * Settings that redraw rebuild the whole panel, so hold the host's place in it,
+ * and reconcile the screen behind — nothing else is listening for the change.
+ */
+function rerenderSettings() {
+    const controls = 'input, select, button, textarea';
+    const body = $('#overlay-root .overlay-body');
+    const scroll = body ? body.scrollTop : 0;
+    const index = body ? [...body.querySelectorAll(controls)].indexOf(document.activeElement) : -1;
+
+    syncTimerToSettings();
+    render();
+    actions.openSettings();
+
+    const next = $('#overlay-root .overlay-body');
+    if (!next) return;
+    next.scrollTop = scroll;
+    if (index >= 0) [...next.querySelectorAll(controls)][index]?.focus();
+}
 
 function helpContent() {
     const rows = [
@@ -936,14 +1141,28 @@ function onKeydown(event) {
         else engines.speech.cancel();
         return;
     }
-    if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
+    // Nothing below wants repeating, and a leaned-on Space walks the quiz
+    // through several screens at the operating system's key-repeat rate.
+    if (event.repeat) return;
+    // An open dialog owns the keyboard: no shortcut fires through the scrim.
+    if (overlayCloser || typing || event.metaKey || event.ctrlKey || event.altKey) return;
 
-    const phase = game().phase;
+    // Behind the resume banner the saved game still says 'question', but the
+    // host is looking at the setup page: obey the screen, not the state.
+    const phase = offeringResume ? 'setup' : game().phase;
     const key = event.key.toLowerCase();
 
     if (key === ' ' || event.key === 'ArrowRight' || event.key === 'Enter') {
         if (phase === 'setup') return;
+        // Space and Enter are how the browser presses whatever the host has
+        // focused — a mark cell, the answer key, a topbar tool. Only ArrowRight
+        // unambiguously means "get on with it".
+        if (event.key !== 'ArrowRight' && target instanceof HTMLElement
+            && target.closest('button, a[href], summary, [role="button"]')) return;
         event.preventDefault();
+        // A press this soon after a new screen is a double-tap, not a decision,
+        // and half time is a one-way door: it is offered exactly once.
+        if (performance.now() - lastPhaseChangeAt < 350) return;
         primaryAction();
         return;
     }

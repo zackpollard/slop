@@ -8,10 +8,10 @@
  */
 
 import {
-    el, svgEl, icon, ordinal, ordinalWord, plural, fmtTime, listSentence,
+    el, svgEl, icon, ordinal, plural, fmtTime, listSentence,
 } from './dom.js';
 import {
-    standings, roundScore, cycleMark, fillRow, setBonus,
+    standings, roundScore, cycleMark, fillRow, setBonus, getGame, updateGame,
     hasJoker, jokerRound, toggleJoker,
 } from './state.js';
 import { MELODIES } from './audio.js';
@@ -173,9 +173,17 @@ function clipPlayer(ctx) {
             : null);
 }
 
+/**
+ * A tune outlives the button that started it: a re-render mid-play swaps in a
+ * fresh node, so the throb is cleared on whichever button is on screen when the
+ * tune ends rather than on the one that was clicked.
+ */
+let liveMelodyButton = null;
+
 function melodyPlayer(ctx) {
     const { question, engines, actions } = ctx;
     const meta = MELODIES[question.melody] || null;
+    const { roundIndex, questionIndex } = ctx.game;
 
     const button = el('button', {
         class: ['btn btn-melody', engines.audio.playingMelody && 'is-playing'],
@@ -192,13 +200,24 @@ function melodyPlayer(ctx) {
             if (wasRunning) actions.pauseTimer(true);
 
             await engines.audio.unlock();
-            button.classList.add('is-playing');
-            await engines.audio.playMelody(question.melody);
-            button.classList.remove('is-playing');
+            liveMelodyButton?.classList.add('is-playing');
+            try {
+                await engines.audio.playMelody(question.melody);
+            } finally {
+                liveMelodyButton?.classList.remove('is-playing');
+            }
 
-            if (wasRunning) actions.pauseTimer(false);
+            // The tune can finish long after the host has moved on; restarting
+            // the clock then would run a countdown against a question that is
+            // no longer on screen, tick-tock and all.
+            const live = getGame();
+            const stillHere = live.phase === 'question' && !live.revealed
+                && live.roundIndex === roundIndex && live.questionIndex === questionIndex;
+            if (wasRunning && stillHere) actions.pauseTimer(false);
         },
     }, icon('music', 22), el('span', { text: 'Play the tune' }));
+
+    liveMelodyButton = button;
 
     return el('div', { class: 'melody-player' },
         button,
@@ -308,6 +327,17 @@ function questionControls(ctx) {
 
 // ---- marking ----
 
+/**
+ * Mark cells are repainted where they stand: the grid is an internal scroller
+ * the host works in for minutes at a time, and a re-render would throw them
+ * back to the top-left, next to somebody else's row.
+ */
+function paintMark(button, value) {
+    button.className = ['mark-cell', value === 1 && 'is-right', value === 0 && 'is-wrong']
+        .filter(Boolean).join(' ');
+    button.textContent = value === 1 ? '✓' : (value === 0 ? '✗' : '');
+}
+
 export function renderMarking(ctx) {
     const { game, round, actions } = ctx;
     const roundId = round.id;
@@ -334,6 +364,7 @@ export function renderMarking(ctx) {
             ctx.refs.markSummary?.();
         };
 
+        const cellButtons = [];
         const cells = round.questions.map((_, i) => {
             const value = game.marks[roundId]?.[team.id]?.[i] ?? null;
             const button = el('button', {
@@ -341,16 +372,22 @@ export function renderMarking(ctx) {
                 'aria-label': `Question ${i + 1} for ${team.name}`,
                 onClick: () => {
                     const next = cycleMark(roundId, team.id, i);
-                    button.className = ['mark-cell', next === 1 && 'is-right', next === 0 && 'is-wrong']
-                        .filter(Boolean).join(' ');
-                    button.textContent = next === 1 ? '✓' : (next === 0 ? '✗' : '');
-                    ctx.engines.audio.play(next === 1 ? 'correct' : (next === 0 ? 'click' : 'click'));
+                    paintMark(button, next);
+                    ctx.engines.audio.play(next === 1 ? 'correct' : 'click');
                     refresh();
                 },
                 text: value === 1 ? '✓' : (value === 0 ? '✗' : ''),
             });
+            cellButtons.push(button);
             return el('td', { class: 'mark-col' }, button);
         });
+
+        const setRow = (value) => {
+            fillRow(roundId, team.id, value, questionCount);
+            cellButtons.forEach((button) => paintMark(button, value));
+            ctx.engines.audio.play(value === 1 ? 'correct' : 'click');
+            refresh();
+        };
 
         body.appendChild(el('tr', {},
             el('th', { class: 'sticky-col team-cell' },
@@ -359,20 +396,23 @@ export function renderMarking(ctx) {
                 el('span', { class: 'quick' },
                     el('button', {
                         class: 'quick-btn', title: 'Mark all correct',
-                        onClick: () => { fillRow(roundId, team.id, 1, questionCount); actions.render(); },
+                        'aria-label': `Mark every question correct for ${team.name}`,
+                        onClick: () => setRow(1),
                     }, '✓'),
                     el('button', {
                         class: 'quick-btn', title: 'Clear the row',
-                        onClick: () => { fillRow(roundId, team.id, null, questionCount); actions.render(); },
+                        'aria-label': `Clear every mark for ${team.name}`,
+                        onClick: () => setRow(null),
                     }, '–'))),
             ...cells,
             el('td', { class: 'bonus-col' },
                 el('input', {
                     type: 'number', class: 'input input-bonus', value: String(game.bonus[roundId]?.[team.id] ?? 0),
                     min: '-10', max: '20',
+                    'aria-label': `Bonus points for ${team.name}`,
                     onChange: (e) => { setBonus(roundId, team.id, e.target.value); refresh(); },
                 })),
-            ctx.settings.jokersEnabled ? el('td', { class: 'joker-col' }, jokerButton(ctx, roundId, team)) : null,
+            ctx.settings.jokersEnabled ? el('td', { class: 'joker-col' }, jokerButton(ctx, roundId, team, refresh)) : null,
             totalCell));
     }
     table.appendChild(body);
@@ -398,25 +438,37 @@ export function renderMarking(ctx) {
                 icon('check', 18), 'Scores are in')));
 }
 
-function jokerButton(ctx, roundId, team) {
+function jokerButton(ctx, roundId, team, refresh) {
     const playedHere = hasJoker(roundId, team.id);
     const playedElsewhere = jokerRound(team.id) && !playedHere;
     const otherRound = playedElsewhere
         ? ctx.pack.rounds.find((r) => r.id === jokerRound(team.id))
         : null;
+    const label = (played) => (played
+        ? `Joker played for ${team.name} — activate to take it back`
+        : `Play the joker for ${team.name}`);
 
-    return el('button', {
+    // A joker belongs to one team's row, so it restyles itself rather than
+    // redrawing the grid out from under the host.
+    const button = el('button', {
         class: ['joker-btn', playedHere && 'is-played'],
         disabled: Boolean(playedElsewhere),
         title: playedElsewhere
             ? `Joker already played on ${otherRound ? otherRound.name : 'another round'}`
             : 'Double this round for this team',
+        'aria-label': playedElsewhere
+            ? `Joker unavailable for ${team.name} — already played on ${otherRound ? otherRound.name : 'another round'}`
+            : label(playedHere),
         onClick: () => {
             const on = toggleJoker(roundId, team.id);
             ctx.engines.audio.play(on ? 'points' : 'click');
-            ctx.actions.render();
+            button.className = ['joker-btn', on && 'is-played'].filter(Boolean).join(' ');
+            button.textContent = on ? '★ ×2' : '☆';
+            button.setAttribute('aria-label', label(on));
+            refresh();
         },
     }, playedHere ? '★ ×2' : (playedElsewhere ? '–' : '☆'));
+    return button;
 }
 
 // ---- leaderboard ----
@@ -496,14 +548,23 @@ function leaderboardSubtitle(rows, game) {
 // ---- interval ----
 
 export function renderInterval(ctx) {
-    const { actions, refs, settings } = ctx;
-    const text = el('div', { class: 'interval-clock', text: fmtTime(ctx.timer.remaining ?? settings.intervalMinutes * 60) });
+    const { actions, refs, settings, game } = ctx;
+    // The clock is shared with the question timer, and after a reload it is a
+    // dead zero belonging to nothing — only trust it once it is ours.
+    const seconds = ctx.timer.mode === 'interval' && ctx.timer.remaining > 0
+        ? ctx.timer.remaining
+        : settings.intervalMinutes * 60;
+    const text = el('div', { class: 'interval-clock', text: fmtTime(seconds) });
     refs.intervalText = text;
+
+    // The host chooses which round the break follows, so it is only half time
+    // when it genuinely lands in the middle.
+    const midpoint = game.roundIds.length > 0 && (game.roundIndex + 1) * 2 === game.roundIds.length;
 
     return el('div', { class: 'screen stage interval' },
         el('div', { class: 'interval-inner' },
             el('div', { class: 'interval-glyph' }, icon('coffee', 64)),
-            el('h1', { class: 'interval-title', text: 'Half time' }),
+            el('h1', { class: 'interval-title', text: midpoint ? 'Half time' : 'The break' }),
             el('p', { class: 'interval-sub', text: 'Get a drink in, compare notes, accuse each other of cheating.' }),
             text,
             el('p', { class: 'interval-standings', text: intervalStandingsLine(ctx) })),
@@ -542,6 +603,12 @@ export function renderTiebreak(ctx) {
                     const input = el('input', {
                         type: 'number', class: 'input tiebreak-input',
                         value: guess ?? '', placeholder: '0', disabled: resolved,
+                        // Held in the game so a re-render — the host reaching
+                        // for the mute button, say — does not lose guesses that
+                        // have already been read out to the room.
+                        onInput: (e) => updateGame((g) => {
+                            if (g.tiebreak) g.tiebreak.guesses[team.id] = e.target.value;
+                        }),
                     });
                     inputs.set(team.id, input);
                     return el('label', { class: 'tiebreak-entry' },
@@ -587,7 +654,7 @@ export function renderResults(ctx) {
     const { actions } = ctx;
     const rows = standings();
     const podium = rows.slice(0, 3);
-    const winner = rows[0];
+    const leaders = rows.filter((r) => r.position === 1);
 
     const podiumOrder = [podium[1], podium[0], podium[2]].filter(Boolean);
 
@@ -595,9 +662,13 @@ export function renderResults(ctx) {
         el('header', { class: 'screen-head' },
             el('div', { class: 'results-badge' }, icon('trophy', 22), 'Final scores'),
             el('h1', { class: 'results-title' },
-                winner
-                    ? el('span', {}, el('span', { class: 'accent', text: winner.team.name }), ' win the quiz')
-                    : 'That is your lot')),
+                leaders.length > 1
+                    ? el('span', {},
+                        el('span', { class: 'accent', text: listSentence(leaders.map((l) => l.team.name)) }),
+                        ' share the quiz')
+                    : leaders.length
+                        ? el('span', {}, el('span', { class: 'accent', text: leaders[0].team.name }), ' win the quiz')
+                        : 'That is your lot')),
 
         podium.length
             ? el('div', { class: 'podium' },
@@ -631,7 +702,9 @@ function fullTable(ctx, rows) {
     table.appendChild(el('thead', {}, el('tr', {},
         el('th', { text: '' }),
         el('th', { class: 'left', text: 'Team' }),
-        ...rounds.map((r) => el('th', { title: r.name }, r.icon)),
+        ...rounds.map((r) => el('th', { title: r.name },
+            el('span', { 'aria-hidden': 'true', text: r.icon }),
+            el('span', { class: 'visually-hidden', text: r.name }))),
         el('th', { text: 'Total' }))));
 
     const body = el('tbody');
@@ -658,7 +731,7 @@ function fullTable(ctx, rows) {
 /** The words the host actually says, kept next to the screens they belong to. */
 export const script = {
     roundIntro(round, index, total) {
-        const parts = [`Round ${ordinalWord(index + 1) === 'first' ? 'one' : index + 1}.`, `${round.name}.`];
+        const parts = [`Round ${index + 1}.`, `${round.name}.`];
         if (round.intro) parts.push(round.intro);
         if (index + 1 === total) parts.push('This is the last round, so no pressure.');
         return parts.join(' ');
@@ -690,7 +763,7 @@ export const script = {
         const leaders = rows.filter((r) => r.position === 1);
         const parts = [];
         if (leaders.length > 1) {
-            parts.push(`It is all square at the top. ${listSentence(leaders.map((l) => l.team.name))} are tied on ${leaders[0].total} points.`);
+            parts.push(`It is all square at the top. ${listSentence(leaders.map((l) => l.team.name))} are tied on ${plural(leaders[0].total, 'point')}.`);
         } else {
             parts.push(`In the lead, with ${plural(leaders[0].total, 'point')}, ${leaders[0].team.name}.`);
             const second = rows.find((r) => r.position !== 1);
@@ -722,8 +795,13 @@ export const script = {
         return parts.join(' ');
     },
 
-    interval(minutes) {
-        return `That is the half way point. We will break for ${plural(minutes, 'minute')}. Get yourselves a drink, and no looking anything up.`;
+    interval(minutes, roundsDone, roundsTotal) {
+        // The break sits wherever the host put it: claim half time only when it
+        // really is the middle, and fall back to that wording when the caller
+        // cannot say where we are.
+        const midpoint = !roundsDone || roundsDone * 2 === roundsTotal;
+        const opener = midpoint ? 'That is the half way point.' : `That is the end of round ${roundsDone}.`;
+        return `${opener} We will break for ${plural(minutes, 'minute')}. Get yourselves a drink, and no looking anything up.`;
     },
 
     tiebreak(tb) {
