@@ -1,0 +1,203 @@
+/*
+ * play.css — the phone.
+ *
+ * Sized for one thumb, one hand, arm's length, dim room. Targets are large
+ * because the alternative is someone losing a round to a mis-tap; there is
+ * never more than one decision on screen; and nothing here needs to be pretty
+ * at desk distance because nobody will ever look at it that way.
+ *
+ * Palette follows the monorepo's lib/slop-theme.css.
+ */
+
+:root {
+    --bg: #0f0f0c;
+    --surface: #1a1a16;
+    --surface-2: #222218;
+    --border: #2e2e24;
+    --text: #e8e4d4;
+    --muted: #9a9686;
+    --accent: #c4a24e;
+    --accent-dim: rgba(196, 162, 78, 0.15);
+    --up: #4a9e6e;
+    --down: #c45e4e;
+    --mono: 'JetBrains Mono', ui-monospace, Menlo, monospace;
+    --sans: 'Inter', system-ui, -apple-system, sans-serif;
+    color-scheme: dark;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    /* Nothing on this page should ever scroll sideways or bounce. */
+    overscroll-behavior: none;
+    touch-action: manipulation;
+}
+
+body {
+    display: flex;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+#app { flex: 1; display: flex; min-height: 0; }
+.screen { flex: 1; display: flex; flex-direction: column; gap: 18px; padding: 22px 18px 26px; min-height: 0; }
+.screen[hidden] { display: none; }
+
+/* ---- join ---- */
+
+.brand { font-size: 30px; margin: 8px 0 0; letter-spacing: -.02em; }
+.lead { color: var(--muted); margin: 0; font-size: 17px; }
+.status { color: var(--muted); font-size: 15px; margin: 0; min-height: 1.4em; }
+
+#join-form { display: flex; flex-direction: column; gap: 14px; }
+
+.code-input {
+    font-family: var(--mono);
+    font-size: 34px;
+    letter-spacing: .18em;
+    text-align: center;
+    text-transform: uppercase;
+    padding: 18px 12px;
+    border-radius: 12px;
+    background: var(--surface);
+    border: 2px solid var(--border);
+    color: var(--text);
+    width: 100%;
+}
+.code-input:focus { outline: none; border-color: var(--accent); }
+
+.btn {
+    font-family: var(--sans);
+    font-size: 19px;
+    font-weight: 600;
+    padding: 18px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    cursor: pointer;
+}
+.btn-primary { background: var(--accent); border-color: var(--accent); color: #14140f; }
+.btn:disabled { opacity: .45; }
+
+/* ---- team pick ---- */
+
+.team-list { display: flex; flex-direction: column; gap: 12px; }
+.team-btn {
+    font-size: 22px;
+    font-weight: 600;
+    padding: 26px 18px;
+    border-radius: 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    cursor: pointer;
+}
+.team-btn:active { background: var(--surface-2); }
+
+/* ---- play chrome ---- */
+
+.bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.badge {
+    font-family: var(--mono); font-size: 12px; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--accent); background: var(--accent-dim);
+    padding: 6px 10px; border-radius: 6px;
+}
+.conn { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.conn[data-state="disconnected"], .conn[data-state="reconnect-failed"] { color: var(--down); }
+
+#stage { flex: 1; display: flex; min-height: 0; }
+#stage > * { flex: 1; display: flex; flex-direction: column; gap: 16px; min-height: 0; }
+/* A closed question stays legible but visibly inert — no guessing whether it took. */
+#stage.closed { opacity: .5; pointer-events: none; }
+
+.prompt { font-size: 24px; font-weight: 600; margin: 0; line-height: 1.25; text-wrap: balance; }
+.hint, .clues-label, .step, .versus, .bank-hint {
+    color: var(--muted); font-size: 14px; margin: 0;
+}
+.idle { color: var(--muted); font-size: 20px; margin: auto; text-align: center; }
+
+/* ---- The Dial ---- */
+
+.dial-value { display: flex; align-items: baseline; justify-content: center; gap: 8px; }
+.dial-readout {
+    font-family: var(--mono); font-size: clamp(40px, 15vw, 68px); font-weight: 700;
+    color: var(--accent); font-variant-numeric: tabular-nums; line-height: 1;
+}
+.dial-unit { color: var(--muted); font-size: 17px; }
+
+.dial-track {
+    position: relative; height: 64px; border-radius: 12px;
+    background: var(--surface); border: 1px solid var(--border);
+    touch-action: none;   /* the puck owns horizontal drags, not the page */
+}
+.dial-fill { position: absolute; inset: 0 auto 0 0; background: var(--accent-dim); border-radius: 11px 0 0 11px; }
+.dial-puck {
+    position: absolute; top: 50%; width: 34px; height: 52px; margin-left: -17px;
+    transform: translateY(-50%); border-radius: 8px;
+    background: var(--accent); box-shadow: 0 2px 10px rgba(0,0,0,.5);
+}
+
+.nudges { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.nudge {
+    font-family: var(--mono); font-size: 18px; padding: 16px 0;
+    border-radius: 10px; background: var(--surface-2);
+    border: 1px solid var(--border); color: var(--text); cursor: pointer;
+}
+
+.clues { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.clues li {
+    font-size: 15px; padding: 10px 12px; border-radius: 8px;
+    background: var(--surface); border-left: 2px solid var(--accent);
+}
+
+.btn-lock {
+    margin-top: auto;
+    font-size: 20px; font-weight: 700; padding: 22px;
+    border-radius: 14px; background: var(--accent); border: none; color: #14140f;
+    cursor: pointer;
+}
+.btn-lock:disabled { background: var(--surface-2); color: var(--muted); }
+
+/* ---- The Climb ---- */
+
+.w-climb .next { color: var(--accent); }
+.halves { flex: 1; display: grid; grid-template-rows: 1fr 1fr; gap: 12px; min-height: 200px; }
+.half {
+    font-family: var(--sans); font-size: 30px; font-weight: 700; letter-spacing: .04em;
+    border-radius: 16px; border: 2px solid var(--border); cursor: pointer; color: var(--text);
+}
+.half-up { background: rgba(74, 158, 110, .16); border-color: var(--up); }
+.half-down { background: rgba(196, 94, 78, .16); border-color: var(--down); }
+.half:active { filter: brightness(1.35); }
+
+.bank { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.pile { font-family: var(--mono); font-size: 20px; font-weight: 700; color: var(--accent); }
+.bank-slide { flex: 1; min-width: 140px; accent-color: var(--accent); height: 34px; }
+
+/* ---- Nobody Else ---- */
+
+.board { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.tile {
+    font-size: 17px; font-weight: 500; padding: 22px 10px; min-height: 74px;
+    border-radius: 12px; background: var(--surface);
+    border: 2px solid var(--border); color: var(--text); cursor: pointer;
+}
+.tile.on { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+
+/* ---- toast ---- */
+
+.toast {
+    position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%) translateY(14px);
+    background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
+    padding: 12px 18px; border-radius: 10px; font-size: 15px;
+    opacity: 0; pointer-events: none; transition: .18s; z-index: 40;
+    max-width: calc(100vw - 40px);
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }

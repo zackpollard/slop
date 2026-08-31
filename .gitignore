@@ -23,3 +23,8 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+
+# Shared libraries are copied into each project by CI at deploy time
+# (see the copy loop in .github/workflows/deploy.yml). A local copy for
+# testing is expected; committing one would fork the shared source.
+projects/*/lib/
