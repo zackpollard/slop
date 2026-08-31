@@ -29,6 +29,8 @@ lib/                   # Shared code, copied into projects at deploy time
 ├── slopnet/           # PeerJS host/client wrapper (reconnect, heartbeat, queueing) + vitest suite
 ├── sloplobby/         # Lobby layer on SlopNet: clientId, rooms, player tracking, rejoin
 └── slop-theme.css     # Shared theme
+docs/                  # Cross-project documentation
+└── multiplayer-bug-audit.md   # Confirmed bug backlog for the four P2P games
 tofu/                  # OpenTofu infrastructure (Cloudflare Pages + DNS)
 .github/workflows/
 ├── deploy.yml         # Infrastructure (tofu plan/apply) + production deployment
