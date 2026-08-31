@@ -13,12 +13,14 @@
 import { storage, uid } from './dom.js';
 import { normaliseClip, normaliseImage } from './media.js';
 import slopClassic01 from '../quizzes/slop-classic-01.js';
+import slopMixed02 from '../quizzes/slop-mixed-02.js';
 
 // ---- registry ----
 
 /** Built-in packs. Add a new quiz here and it appears in the picker. */
 export const BUILT_IN_PACKS = [
     slopClassic01,
+    slopMixed02,
 ];
 
 const CUSTOM_KEY = 'pubquiz.customPacks.v1';
