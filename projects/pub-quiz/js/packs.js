@@ -12,8 +12,10 @@
 
 import { storage, uid } from './dom.js';
 import { normaliseClip, normaliseImage } from './media.js';
+import { PHONE_FORMATS, validateFormatQuestion } from './formats.js';
 import slopClassic01 from '../quizzes/slop-classic-01.js';
 import slopMixed02 from '../quizzes/slop-mixed-02.js';
+import slopPhones01 from '../quizzes/slop-phones-01.js';
 
 // ---- registry ----
 
@@ -21,6 +23,7 @@ import slopMixed02 from '../quizzes/slop-mixed-02.js';
 export const BUILT_IN_PACKS = [
     slopClassic01,
     slopMixed02,
+    slopPhones01,
 ];
 
 const CUSTOM_KEY = 'pubquiz.customPacks.v1';
@@ -103,6 +106,16 @@ export function validatePack(raw, { source = 'custom' } = {}) {
             return null;
         }
 
+        // A round either is answered on paper (the default, and every round that
+        // shipped before phones existed) or is one of the phone formats, which
+        // are answered by a gesture and scored absolutely.
+        let format = 'written';
+        if (rawRound.format && rawRound.format !== 'written') {
+            if (PHONE_FORMATS.includes(rawRound.format)) format = rawRound.format;
+            else issues.error(`${label} has an unknown format "${rawRound.format}".`);
+        }
+        const isPhone = format !== 'written';
+
         const questions = rawRound.questions.map((q, qi) => {
             const qLabel = `${label} question ${qi + 1}`;
             if (!q || typeof q !== 'object') {
@@ -110,7 +123,13 @@ export function validatePack(raw, { source = 'custom' } = {}) {
                 return null;
             }
             if (!isStr(q.question)) issues.error(`${qLabel} has no "question" text.`);
-            if (!isStr(q.answer)) issues.error(`${qLabel} has no "answer".`);
+            // Only a written question is answered in words. A Dial's answer is a
+            // number and a Climb or a board has no single answer at all — their
+            // shapes are checked by the format validator below instead.
+            if (!isPhone && !isStr(q.answer)) issues.error(`${qLabel} has no "answer".`);
+            if (isPhone) {
+                for (const problem of validateFormatQuestion(format, q, qLabel)) issues.error(problem);
+            }
 
             const difficulty = DIFFICULTIES.includes(q.difficulty) ? q.difficulty : 'medium';
             if (q.difficulty && !DIFFICULTIES.includes(q.difficulty)) {
@@ -154,10 +173,35 @@ export function validatePack(raw, { source = 'custom' } = {}) {
                 }
             }
 
+            // Whatever the format needs, kept verbatim. The whitelist below is
+            // built for prose questions and silently dropped the scale, the
+            // rungs and the tiles, which left a phone round importing clean and
+            // then having nothing to play.
+            const formatFields = {};
+            if (format === 'dial') {
+                Object.assign(formatFields, {
+                    min: Number(q.min), max: Number(q.max),
+                    unit: isStr(q.unit) ? q.unit.trim() : '',
+                    clues: Array.isArray(q.clues) ? q.clues.filter(isStr).map((c) => c.trim()) : [],
+                    multipliers: Array.isArray(q.multipliers) ? q.multipliers.map(Number) : null,
+                });
+            } else if (format === 'climb') {
+                formatFields.rungs = Array.isArray(q.rungs)
+                    ? q.rungs.map((r) => ({ label: String(r?.label || '').trim(), value: Number(r?.value) }))
+                    : [];
+            } else if (format === 'nobody-else') {
+                formatFields.tiles = Array.isArray(q.tiles)
+                    ? q.tiles.map((t) => ({ label: String(t?.label || '').trim(), correct: !!t?.correct }))
+                    : [];
+                formatFields.pick = Number.isFinite(Number(q.pick)) ? Number(q.pick) : 3;
+            }
+
             return {
                 id: isStr(q.id) ? q.id : `${id}-q${qi + 1}`,
                 question: String(q.question || '').trim(),
-                answer: String(q.answer || '').trim(),
+                // A Dial answer must survive as a number, not become "13171".
+                answer: format === 'dial' ? Number(q.answer) : String(q.answer || '').trim(),
+                ...formatFields,
                 acceptable,
                 difficulty,
                 topic: isStr(q.topic) ? q.topic.trim() : '',
@@ -174,6 +218,7 @@ export function validatePack(raw, { source = 'custom' } = {}) {
 
         return {
             id,
+            format,
             name: String(rawRound.name || id).trim(),
             icon: isStr(rawRound.icon) ? rawRound.icon : guessIcon(id, rawRound.name),
             intro: isStr(rawRound.intro) ? rawRound.intro.trim() : '',
