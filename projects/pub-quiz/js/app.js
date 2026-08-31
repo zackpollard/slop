@@ -41,6 +41,11 @@ const engines = {
     clips: new ClipPlayer(),
 };
 
+// Reversed clips are decoded and played through the Web Audio graph, so the clip
+// player needs a context. It borrows the one the audio engine unlocks rather than
+// opening its own, which iOS would refuse outside a gesture.
+engines.clips.useAudioContext(() => engines.audio.context);
+
 // ---- module state ----
 
 let seq = 0;                    // async generation token

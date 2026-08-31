@@ -212,7 +212,7 @@ function clipPlayer(ctx) {
     const button = el('button', {
         class: 'btn btn-melody',
         onClick: () => actions.playClip(),
-    }, icon('play', 22), el('span', { text: 'Play the clip' }));
+    }, icon('play', 22), el('span', { text: clip.reverse ? 'Play it backwards' : 'Play the clip' }));
 
     refs.clipButton = button;
     refs.clipFill = fill;
@@ -226,7 +226,12 @@ function clipPlayer(ctx) {
         el('div', { class: 'clip-controls' },
             button,
             status),
-        el('p', { class: 'melody-hint', text: 'Play it as many times as you like — the clip is thirty seconds.' }),
+        el('p', {
+            class: 'melody-hint',
+            text: clip.reverse
+                ? 'This one is playing backwards. Play it as many times as you like.'
+                : 'Play it as many times as you like — the clip is thirty seconds.',
+        }),
         revealed
             ? el('p', { class: 'melody-meta' },
                 clipCredit(clip),

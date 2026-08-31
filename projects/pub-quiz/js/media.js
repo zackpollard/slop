@@ -54,6 +54,7 @@ export function normaliseClip(raw) {
         return {
             source: 'url',
             src: raw.src.trim(),
+            reverse: raw.reverse === true,
             credit: typeof raw.credit === 'string' ? raw.credit : '',
             artist: typeof raw.artist === 'string' ? raw.artist : '',
             title: typeof raw.title === 'string' ? raw.title : '',
@@ -72,6 +73,7 @@ export function normaliseClip(raw) {
         source: 'itunes',
         trackId: Number.isFinite(trackId) ? trackId : 0,
         previewUrl,
+        reverse: raw.reverse === true,
         artist: typeof raw.artist === 'string' ? raw.artist : '',
         title: typeof raw.title === 'string' ? raw.title : '',
         year: Number.isFinite(raw.year) ? raw.year : 0,
@@ -160,7 +162,10 @@ export function preloadImages(images) {
 /** A stable cache key for a clip. */
 export function clipKey(clip) {
     if (!clip) return '';
-    return clip.source === 'url' ? `url:${clip.src}` : `itunes:${clip.trackId || clip.previewUrl}`;
+    const base = clip.source === 'url' ? `url:${clip.src}` : `itunes:${clip.trackId || clip.previewUrl}`;
+    // A reversed clip is a different sound from the same track played forwards,
+    // and the two are cached separately.
+    return clip.reverse ? `${base}:rev` : base;
 }
 
 /** What the host sees on the reveal — never before it. */
@@ -222,6 +227,198 @@ export async function searchTracks(term, { limit = 8, country = 'GB' } = {}) {
  * Plays one clip at a time. Reuses preloaded elements so a question does not
  * open with the room listening to a buffering spinner.
  */
+/**
+ * An audio element that plays its source BACKWARDS.
+ *
+ * The streaming <audio> path cannot do this: you cannot ask a media element for
+ * negative playback. So a reversed clip takes the other route — fetch the whole
+ * preview, decode it, flip every sample, and play the result through the Web
+ * Audio graph. Apple serves the previews with `access-control-allow-origin: *`,
+ * which is what makes decodeAudioData possible at all.
+ *
+ * It deliberately presents the same small slice of the HTMLAudioElement
+ * interface that ClipPlayer already drives — volume, currentTime, duration,
+ * play, pause, load, and the four events — so the player's timing, fading and
+ * stop logic work on it unchanged.
+ */
+class ReversedAudio {
+    #getContext;
+    #buffer = null;
+    #source = null;
+    #gain = null;
+    #listeners = new Map();
+    #startedAt = 0;      // context time when the current run began
+    #offset = 0;         // where in the buffer that run began
+    #playing = false;
+    #ticker = 0;
+    #volume = 1;
+    #loading = null;
+
+    readyState = 0;
+    preload = 'auto';
+    dataset = { failed: 'false' };
+    #src = '';
+
+    constructor(getContext) {
+        this.#getContext = getContext;
+    }
+
+    get src() { return this.#src; }
+
+    set src(value) {
+        if (value === this.#src) return;
+        this.#src = value;
+        this.#buffer = null;
+        this.#loading = null;
+        this.readyState = 0;
+    }
+
+    get duration() { return this.#buffer ? this.#buffer.duration : 0; }
+
+    get volume() { return this.#volume; }
+
+    set volume(value) {
+        this.#volume = Math.min(1, Math.max(0, Number(value) || 0));
+        if (this.#gain) {
+            // setValueAtTime rather than a ramp: ClipPlayer already runs its own
+            // fade on a rAF loop, and two curves fighting sounds like a wobble.
+            try {
+                this.#gain.gain.setValueAtTime(this.#volume, this.#gain.context.currentTime);
+            } catch {
+                /* a closed context is not worth throwing over */
+            }
+        }
+    }
+
+    get currentTime() {
+        if (!this.#buffer) return 0;
+        if (!this.#playing) return this.#offset;
+        const ctx = this.#getContext();
+        if (!ctx) return this.#offset;
+        return Math.min(this.duration, this.#offset + (ctx.currentTime - this.#startedAt));
+    }
+
+    set currentTime(value) {
+        this.#offset = Math.min(this.duration, Math.max(0, Number(value) || 0));
+    }
+
+    addEventListener(type, handler) {
+        if (!this.#listeners.has(type)) this.#listeners.set(type, new Set());
+        this.#listeners.get(type).add(handler);
+    }
+
+    removeEventListener(type, handler) {
+        this.#listeners.get(type)?.delete(handler);
+    }
+
+    #fire(type) {
+        for (const handler of Array.from(this.#listeners.get(type) || [])) {
+            try {
+                handler({ type, target: this });
+            } catch {
+                /* a listener throwing must not take the quiz down */
+            }
+        }
+    }
+
+    /** Fetch, decode and reverse. Idempotent; concurrent calls share one fetch. */
+    load() {
+        if (this.#buffer) { this.readyState = 4; return; }
+        if (this.#loading) return;
+
+        const ctx = this.#getContext();
+        if (!ctx || !this.#src) { this.#fire('error'); return; }
+
+        this.#loading = (async () => {
+            const response = await fetch(this.#src, { mode: 'cors' });
+            if (!response.ok) throw new Error(`preview fetch failed: ${response.status}`);
+            const bytes = await response.arrayBuffer();
+            // decodeAudioData is callback-style in older Safari; the promise
+            // form is wrapped so both shapes settle the same way.
+            const decoded = await new Promise((resolve, reject) => {
+                const maybe = ctx.decodeAudioData(bytes, resolve, reject);
+                if (maybe && typeof maybe.then === 'function') maybe.then(resolve, reject);
+            });
+            for (let channel = 0; channel < decoded.numberOfChannels; channel += 1) {
+                decoded.getChannelData(channel).reverse();
+            }
+            this.#buffer = decoded;
+            this.readyState = 4;
+            this.#fire('loadeddata');
+            this.#fire('canplaythrough');
+        })().catch(() => {
+            this.#loading = null;
+            this.readyState = 0;
+            this.#fire('error');
+        });
+    }
+
+    async play() {
+        if (!this.#buffer) {
+            this.load();
+            await this.#loading;
+        }
+        const ctx = this.#getContext();
+        if (!this.#buffer || !ctx) throw new Error('reversed clip unavailable');
+
+        this.#stopSource();
+
+        this.#gain = ctx.createGain();
+        this.#gain.gain.setValueAtTime(this.#volume, ctx.currentTime);
+        this.#gain.connect(ctx.destination);
+
+        this.#source = ctx.createBufferSource();
+        this.#source.buffer = this.#buffer;
+        this.#source.connect(this.#gain);
+        this.#source.onended = () => {
+            // pause() detaches this handler first, so reaching here means the
+            // buffer genuinely ran out rather than us stopping it.
+            this.#playing = false;
+            this.#offset = this.duration;
+            this.#stopTicker();
+            this.#fire('ended');
+        };
+
+        this.#startedAt = ctx.currentTime;
+        this.#source.start(0, Math.min(this.#offset, Math.max(0, this.duration - 0.01)));
+        this.#playing = true;
+        this.#startTicker();
+    }
+
+    pause() {
+        const at = this.currentTime;
+        this.#stopSource();
+        this.#offset = at;
+        this.#playing = false;
+        this.#stopTicker();
+    }
+
+    #stopSource() {
+        if (this.#source) {
+            this.#source.onended = null;
+            try { this.#source.stop(); } catch { /* already stopped */ }
+            try { this.#source.disconnect(); } catch { /* ignore */ }
+            this.#source = null;
+        }
+        if (this.#gain) {
+            try { this.#gain.disconnect(); } catch { /* ignore */ }
+            this.#gain = null;
+        }
+    }
+
+    // ClipPlayer watches progress through 'timeupdate', which a media element
+    // fires on its own. Nothing fires it for us, so we do.
+    #startTicker() {
+        this.#stopTicker();
+        this.#ticker = setInterval(() => this.#fire('timeupdate'), 200);
+    }
+
+    #stopTicker() {
+        clearInterval(this.#ticker);
+        this.#ticker = 0;
+    }
+}
+
 export class ClipPlayer {
     #elements = new Map();       // clipKey -> HTMLAudioElement
     #current = null;             // { clip, element, token }
@@ -231,6 +428,17 @@ export class ClipPlayer {
     #stopTimer = 0;
     #listeners = new Set();
     #stopCallbacks = new Map();  // token -> resolve the pending play() as 'stopped'
+    #getContext = () => null;    // supplied by the app; only reversed clips need it
+
+    /**
+     * Give the player access to the app's AudioContext, for reversed clips.
+     * It is passed in rather than created here so that reversed playback rides
+     * on the context the user's first gesture already unlocked — iOS will not
+     * start a second one on its own.
+     */
+    useAudioContext(getContext) {
+        if (typeof getContext === 'function') this.#getContext = getContext;
+    }
 
     get supported() {
         return typeof Audio === 'function';
@@ -288,7 +496,8 @@ export class ClipPlayer {
 
         let src = clip.source === 'url' ? clip.src : clip.previewUrl;
 
-        const element = existing || new Audio();
+        const element = existing
+            || (clip.reverse ? new ReversedAudio(this.#getContext) : new Audio());
         element.preload = 'auto';
         element.volume = this.#volume;
         element.dataset.failed = 'false';

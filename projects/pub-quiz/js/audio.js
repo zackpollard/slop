@@ -517,7 +517,14 @@ export class QuizAudio {
         return !!this.#melody;
     }
 
-    /** The raw AudioContext, or null. Handy for debugging; do not rely on it. */
+    /**
+     * The raw AudioContext, or null before unlock().
+     *
+     * ClipPlayer borrows this to play reversed clips, which have to go through
+     * the Web Audio graph rather than a media element. Sharing this one matters:
+     * it is the context the user's first gesture unlocked, and iOS will not
+     * start a second one unprompted.
+     */
     get context() {
         return this.#ctx;
     }
