@@ -22,8 +22,13 @@
  * is attribution, which the pack carries and the screen renders.
  */
 
-const LOOKUP_URL = 'https://itunes.apple.com/lookup?id=';
-const SEARCH_URL = 'https://itunes.apple.com/search?';
+// The storefront matters. Apple's catalogue is licensed territory by territory,
+// so a track id that resolves in one country returns resultCount: 0 in another —
+// silently, with a 200. Six of this pack's twenty clips are missing from the
+// default (US) storefront and present in GB. This is a British quiz, so ask GB.
+const STOREFRONT = 'GB';
+const LOOKUP_URL = `https://itunes.apple.com/lookup?country=${STOREFRONT}&id=`;
+const SEARCH_URL = `https://itunes.apple.com/search?country=${STOREFRONT}&`;
 
 const FADE_IN = 0.25;      // seconds
 const FADE_OUT = 0.6;
