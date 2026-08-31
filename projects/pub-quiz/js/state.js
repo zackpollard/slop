@@ -266,7 +266,10 @@ export function setMark(roundId, teamId, questionIndex, value) {
 
 export function cycleMark(roundId, teamId, questionIndex) {
     const current = game.marks?.[roundId]?.[teamId]?.[questionIndex] ?? null;
-    const next = current === null ? 1 : (current === 1 ? 0 : null);
+    // blank -> right -> wrong -> blank, unchanged. A part-mark from a phone round
+    // is not part of the cycle: the first tap on one is the host overruling it to
+    // full marks, and from there it behaves like any other cell.
+    const next = current === 1 ? 0 : (current === 0 ? null : 1);
     setMark(roundId, teamId, questionIndex, next);
     return next;
 }
@@ -332,13 +335,19 @@ export function roundScore(roundId, teamId) {
     const row = game.marks?.[roundId]?.[teamId] || [];
     const bonus = game.bonus?.[roundId]?.[teamId] || 0;
 
+    // A mark is the FRACTION of the question a team earned. Hand marking only
+    // ever writes 1 or 0, so this is unchanged for a written round — but a phone
+    // round can score a question part-right (three rungs of five in the right
+    // order, a needle in the second band) and that has to survive to the total.
+    const earned = (mark) => (typeof mark === 'number' && mark > 0 ? mark : 0);
+
     let base;
     if (settings.weightByDifficulty && game.difficulties?.[roundId]?.length) {
-        base = row.reduce((sum, mark, i) => (mark === 1 ? sum + questionValue(roundId, i) : sum), 0);
+        base = row.reduce((sum, mark, i) => sum + earned(mark) * questionValue(roundId, i), 0);
     } else {
         // Flat scoring, and the fallback for a game saved before weighting
         // existed — its difficulties were never recorded.
-        base = row.filter((v) => v === 1).length * settings.pointsPerCorrect;
+        base = row.reduce((sum, mark) => sum + earned(mark) * settings.pointsPerCorrect, 0);
     }
     base += bonus;
     return round2(hasJoker(roundId, teamId) ? base * 2 : base);
