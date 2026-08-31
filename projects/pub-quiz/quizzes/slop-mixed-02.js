@@ -126,7 +126,7 @@ export default {
                     }
                 },
                 {
-                    "question": "Guide Dogs UK says that over 60% of its working guide dogs are a cross between which two retriever breeds?",
+                    "question": "Guide Dogs UK says that over 60% of its working guide dogs are a cross between which two breeds?",
                     "answer": "Labrador Retriever and Golden Retriever",
                     "acceptable": [
                         "Labrador and Golden Retriever",
@@ -191,7 +191,7 @@ export default {
                     }
                 },
                 {
-                    "question": "At Crufts in March 2026, a dog called Bruin took Best in Show — the first win for his breed since 1991. He's a heavy, low-slung white spaniel named after a Nottinghamshire estate. Which breed is he?",
+                    "question": "At Crufts in March 2026, a dog called Bruin took Best in Show — the first win for his breed since 1991. He's a heavy, low-slung white gundog named after a Nottinghamshire estate. Which breed is he?",
                     "answer": "Clumber Spaniel",
                     "acceptable": [
                         "Clumber",
@@ -273,7 +273,7 @@ export default {
                         "Uptown Funk (feat. Bruno Mars)"
                     ],
                     "difficulty": "easy",
-                    "topic": "Funk pop / 2010s",
+                    "topic": "Dance pop / 2010s",
                     "funFact": "It won Record of the Year at the 2016 Grammys and spent seven weeks at UK Number One.",
                     "clip": {
                         "source": "itunes",
@@ -1427,7 +1427,7 @@ export default {
             "intro": "This round belongs to the youngest person in the room. Every question comes from the world of a British eleven-year-old in 2026 — the games actually played at breaktime, the films on repeat, the toys, and the things drilled into you at school. Grown-ups, you are allowed to guess, and you are going to need to. No phones, and nobody is allowed to look at her face while she writes.",
             "questions": [
                 {
-                    "question": "Which Roblox game — where you buy seeds from the shop, plant them, wait for them to grow and then sell your crops — broke the Guinness World Records title in June 2025 for the most people playing one video game at the same time, with 21.6 million?",
+                    "question": "Which Roblox game — where you buy seeds from the shop, plant them, wait until they are ripe and then sell your crops — broke the Guinness World Records title in June 2025 for the most people playing one video game at the same time, with 21.6 million?",
                     "answer": "Grow a Garden",
                     "acceptable": [
                         "Grow a Garden",
@@ -1494,7 +1494,7 @@ export default {
                     }
                 },
                 {
-                    "question": "Which maths website, used in thousands of British schools, has you answering times tables against the clock, earning coins for a rock avatar and climbing from New Artist up to Rock Hero?",
+                    "question": "Which maths website, used in thousands of British schools, has you racing the clock to answer multiplication questions, earning coins to kit out a guitar-playing avatar and climbing the ranks from New Artist to the very top?",
                     "answer": "Times Tables Rock Stars",
                     "acceptable": [
                         "Times Tables Rock Stars",
@@ -1637,7 +1637,7 @@ export default {
                         "Pinnochio"
                     ],
                     "difficulty": "easy",
-                    "topic": "Classic Disney — Pinocchio (1940)",
+                    "topic": "Classic Disney — 1940 features",
                     "funFact": "The woodcarver Geppetto wishes his puppet were a real boy, and a fairy brings the little wooden lad to life.",
                     "source": {
                         "name": "Encyclopaedia Britannica — Pinocchio (1940 film)",
@@ -1682,7 +1682,7 @@ export default {
                         "Snow White and the 7 Dwarfs"
                     ],
                     "difficulty": "medium",
-                    "topic": "Classic Disney — Snow White (1937)",
+                    "topic": "Classic Disney — 1930s milestones",
                     "funFact": "Insiders derisively called it \"Disney's Folly\"; the estimated $250,000 budget ended up near $1.5 million, and Walt mortgaged his house.",
                     "source": {
                         "name": "BFI — The story of Disney in 11 films",
@@ -2500,7 +2500,7 @@ export default {
                     }
                 },
                 {
-                    "question": "Which British mixer brand, launched in the mid-2000s, takes its name from the local nickname for the cinchona tree, whose bark produces quinine?",
+                    "question": "Which British mixer brand, launched in the mid-2000s, takes its name from an old local nickname for cinchona, the plant whose bark produces quinine?",
                     "answer": "Fever-Tree",
                     "acceptable": [
                         "Fever Tree",
@@ -2579,7 +2579,7 @@ export default {
                     }
                 },
                 {
-                    "question": "Clip 2, played backwards. Name this children's singalong — a YouTube phenomenon about a whole family of sharks.",
+                    "question": "Clip 2, played backwards. Name this children's singalong — a YouTube phenomenon about a whole family of toothy sea predators, complete with a hand-clapping dance.",
                     "answer": "Baby Shark",
                     "acceptable": [
                         "Baby Shark Dance",
@@ -3014,7 +3014,7 @@ export default {
                         "Lego Group"
                     ],
                     "difficulty": "easy",
-                    "topic": "Lego",
+                    "topic": "Toy manufacturers",
                     "funFact": "Lego peaked at 381 million tiny rubber tyres in 2010, which is well over a million a day.",
                     "source": {
                         "name": "Guinness World Records",

@@ -89,21 +89,46 @@ Handy keys while you host:
 Questions live in **packs** — one file per quiz — so the site is reusable: new
 quiz, new pack, no code.
 
-The pack that ships with it (`quizzes/slop-classic-01.js`) is seventy questions
-across seven rounds — general knowledge, science, music, sport, animals and a
-kids' round, plus three optional picture-and-sound rounds: **Name That Tune**
-(clips of ten real records from 1969 to 2022), **Guess the Logo** and **Name
-That Car**. Each question was drafted, independently
-fact-checked against a real source, audited as part of the whole pack, and then
-put through a pass for British spelling, vocabulary, units and subject balance.
-Every question carries the URL it was checked against, shown on screen when the
-answer is revealed.
+Two packs ship with it.
 
-There is a tie-breaker too, for when the top of the table finishes level: a
-nearest-wins estimate, checked against the building's own website.
+### The Slop Mixed Bag (`quizzes/slop-mixed-02.js`)
 
-Rounds are chosen on the setup screen, so the audio round is there when you want
-it and out of the way when you do not.
+Eighteen rounds, a hundred and eighty questions, written for a room whose ages
+run from eleven to sixty: dog breeds, music, films of the 2020s, food, logos,
+Formula One, geography, Disney, logic, general knowledge, modern cars,
+cocktails, anatomy, board games, brands, emoji equations, a music round played
+**backwards**, and one aimed squarely at the youngest player — questions she
+should get and the adults should not.
+
+Most questions draw on 2000 onwards. Where one reaches back it goes a long way
+back, to before anyone in the room was born, rather than sitting in the decades
+that only reward being the oldest at the table.
+
+No answer repeats anywhere in the pack. At a thirty-second timer the whole thing
+runs about three hours, so it is a bank to pick rounds from rather than one
+sitting; the running order spaces the two audio rounds and the two picture
+rounds well apart.
+
+### The Slop Classic (`quizzes/slop-classic-01.js`)
+
+Seventy questions across seven rounds — general knowledge, science, music,
+sport, animals and a kids' round — plus three optional picture-and-sound rounds:
+**Name That Tune** (clips of ten real records), **Guess the Logo** and **Name
+That Car**.
+
+### Both packs
+
+Every question was drafted, then independently fact-checked against a fetched
+source, then audited across the pack as a whole, and put through a pass for
+British spelling, vocabulary, units and subject balance. Every question carries
+the URL its answer was checked against, shown on screen when the answer is
+revealed. Each round is ordered easiest first and hardest last, and each pack
+has a tie-breaker for when the top of the table finishes level: a nearest-wins
+numeric estimate.
+
+Rounds are chosen on the setup screen, so a round that needs the internet — or
+one that would not suit the room — is there when you want it and out of the way
+when you do not.
 
 To write your own, press **Export this pack** on the setup screen, edit the
 JSON, and import it back — or drop a module into `quizzes/` and register it in
