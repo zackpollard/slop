@@ -13,6 +13,7 @@ projects/
 ├── homepage/                  # Landing page (serves slop.zackpollard.pro)
 ├── roof-calculator/           # Satellite-based roof measurement tool
 ├── dnd-encounter-generator/   # D&D 2024 combat encounter generator
+├── dnd-banners/               # D&D initiative banner tokens -> printable STL/3MF
 ├── cron/                      # Cron expression translator with timeline
 ├── subnet/                    # IPv4 subnet calculator with binary breakdown
 ├── json/                      # JSON formatter, tree viewer, and diff tool
@@ -38,6 +39,7 @@ tofu/                  # OpenTofu infrastructure (Cloudflare Pages + DNS)
 | homepage | `projects/homepage/` | Static HTML/CSS | Main landing page and project directory |
 | roof-calculator | `projects/roof-calculator/` | Static HTML/CSS/JS, Leaflet.js | Satellite map-based roof area measurement tool |
 | dnd-encounter-generator | `projects/dnd-encounter-generator/` | Static HTML/CSS/JS | D&D 2024 combat encounter generator |
+| dnd-banners | `projects/dnd-banners/` | Static HTML/CSS/JS (ES modules), three.js + ClipperLib + poly2tri + opentype.js + JSZip (CDN) | Generates D&D initiative banner tokens that hook over a DM screen; builds the solid in-browser and exports binary STL / coloured 3MF |
 | cron | `projects/cron/` | Static HTML/CSS/JS | Cron expression translator with timeline visualization |
 | subnet | `projects/subnet/` | Static HTML/CSS/JS | IPv4 subnet calculator with binary breakdown |
 | json | `projects/json/` | Static HTML/CSS/JS | JSON formatter, tree viewer, and diff tool |

@@ -139,6 +139,9 @@ jobs:
           - name: dnd-encounter-generator
             pages-project: slop-dnd-encounter-generator
             directory: projects/dnd-encounter-generator
+          - name: dnd-banners
+            pages-project: slop-dnd-banners
+            directory: projects/dnd-banners
           - name: cron
             pages-project: slop-cron
             directory: projects/cron
