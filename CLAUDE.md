@@ -43,7 +43,7 @@ tofu/                  # OpenTofu infrastructure (Cloudflare Pages + DNS)
 | cron | `projects/cron/` | Static HTML/CSS/JS | Cron expression translator with timeline visualization |
 | subnet | `projects/subnet/` | Static HTML/CSS/JS | IPv4 subnet calculator with binary breakdown |
 | json | `projects/json/` | Static HTML/CSS/JS | JSON formatter, tree viewer, and diff tool |
-| flip-7 | `projects/flip-7/` | Static HTML/CSS/JS | Flip 7 card game scoreboard |
+| flip-7 | `projects/flip-7/` | Static HTML/CSS/JS | Flip 7 card game scoreboard (Classic and With a Vengeance rulesets, incl. Brutal Mode) |
 | uno-no-mercy | `projects/uno-no-mercy/` | Static HTML/CSS/JS | UNO No Mercy scoreboard |
 | exploding-kittens | `projects/exploding-kittens/` | Static HTML/CSS/JS | Exploding Kittens game assistant with card reference and probability calculator |
 | herd-mentality | `projects/herd-mentality/` | Static HTML/CSS/JS | Herd Mentality game companion with question bank and answer collection |
