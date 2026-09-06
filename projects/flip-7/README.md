@@ -9,6 +9,7 @@ A score tracker for the Flip 7 press-your-luck card game. Track players, rounds,
 - Per-round scoring with tap-to-select number cards
 - Automatic Flip 7 bonus detection (+15 for 7 unique cards)
 - Bust tracking
+- Quick actions: **All Bust** (one tap to bust everyone, tap again to undo), **Clear All**, and a per-player **Clear**
 
 ### Classic ruleset
 

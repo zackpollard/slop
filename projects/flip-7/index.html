@@ -351,6 +351,39 @@
             color: var(--color-bust);
         }
 
+        .toggle-btn.clear-btn {
+            margin-left: auto;
+        }
+
+        .toggle-btn.clear-btn:hover {
+            border-color: var(--color-bust);
+            color: var(--color-bust);
+        }
+
+        /* Round quick actions */
+        .round-tools {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .round-tools-label {
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--color-text-muted);
+            margin-right: 0.25rem;
+        }
+
+        .round-tools .btn.active {
+            border-color: var(--color-bust);
+            color: var(--color-bust);
+            background: rgba(196, 94, 78, 0.1);
+        }
+
         .score-breakdown {
             font-family: var(--font-mono);
             font-size: 0.75rem;
@@ -1016,6 +1049,11 @@
                     <h2 id="round-title">Round 1</h2>
                     <div class="round-dealer">Dealer: <strong id="round-dealer"></strong></div>
                 </div>
+                <div class="round-tools hidden" id="round-tools">
+                    <span class="round-tools-label">Quick actions</span>
+                    <button class="btn btn-sm" id="all-bust-btn" title="Mark everyone you're scoring as bust (press again to undo)">All Bust</button>
+                    <button class="btn btn-sm" id="clear-all-btn" title="Clear every card you're scoring this round">Clear All</button>
+                </div>
                 <div id="submission-status" class="submission-status hidden"></div>
                 <div class="scoring-grid" id="scoring-grid"></div>
                 <div id="round-waiting" class="hidden">
@@ -1139,6 +1177,9 @@
         const scoringGrid = document.getElementById('scoring-grid');
         const submitRoundBtn = document.getElementById('submit-round-btn');
         const undoRoundBtn = document.getElementById('undo-round-btn');
+        const roundTools = document.getElementById('round-tools');
+        const allBustBtn = document.getElementById('all-bust-btn');
+        const clearAllBtn = document.getElementById('clear-all-btn');
         const resetGameBtn = document.getElementById('reset-game-btn');
         const winnerBanner = document.getElementById('winner-banner');
         const winnerName = document.getElementById('winner-name');
@@ -2160,16 +2201,34 @@
                 if (!roundState[id]) {
                     roundState[id] = emptyRoundEntry();
                 }
-                const isEditable = gameMode === 'single' || name === myName || hostEditingPlayers.has(name) || localPlayers.has(name);
-                if (isEditable) {
+                if (isEditablePlayer(name)) {
                     updatePlayerRoundDisplay(id);
                 }
             });
+            updateRoundTools();
+        }
+
+        // Is this device currently entering cards for the named player?
+        function isEditablePlayer(name) {
+            if (gameMode === 'peer') return name === myName;
+            return gameMode === 'single' || name === myName || hostEditingPlayers.has(name) || localPlayers.has(name);
+        }
+
+        function editableIds() {
+            return players.filter(isEditablePlayer).map(nameToId).filter(id => roundState[id]);
+        }
+
+        // Quick-action row: only meaningful when this device scores more than its own card
+        function updateRoundTools() {
+            roundTools.classList.toggle('hidden', gameMode === 'peer');
+            const ids = editableIds();
+            allBustBtn.classList.toggle('active', ids.length > 0 && ids.every(id => roundState[id].bust));
         }
 
         function renderScoringForPeer() {
             // Peer only sees their own card
             undoRoundBtn.classList.add('hidden');
+            roundTools.classList.add('hidden');
 
             if (myScoreSubmitted) {
                 scoringGrid.innerHTML = '';
@@ -2217,6 +2276,7 @@
                     <button class="toggle-btn" id="flip7-${id}" onclick="window._toggleFlip7('${id}')">Flip 7 (+15)</button>
                     ${renderFlip7TargetSelect(id, name)}
                     <button class="toggle-btn bust-toggle" id="bust-${id}" onclick="window._toggleBust('${id}')">Bust</button>
+                    <button class="toggle-btn clear-btn" id="clear-${id}" title="Clear this player's cards" onclick="window._clearCard('${id}')">Clear</button>
                 </div>
                 <div class="score-breakdown" id="breakdown-${id}"></div>
             </div>`;
@@ -2479,7 +2539,47 @@
             if (!roundState[id]) return;
             roundState[id].bust = !roundState[id].bust;
             updatePlayerRoundDisplay(id);
+            updateRoundTools();
         };
+
+        window._clearCard = function(id) {
+            if (!roundState[id]) return;
+            roundState[id] = emptyRoundEntry();
+            updatePlayerRoundDisplay(id);
+            updateRoundTools();
+        };
+
+        // Mark everyone this device is scoring as bust; press again to undo.
+        // As host, also take over remote players who haven't sent a score yet
+        // so an all-bust round can be closed in one tap. Scores that peers have
+        // already submitted are left alone.
+        allBustBtn.addEventListener('click', () => {
+            if (gameMode === 'host') {
+                let tookOver = false;
+                players.forEach(name => {
+                    if (!isEditablePlayer(name) && !peerSubmissions[name]) {
+                        hostEditingPlayers.add(name);
+                        tookOver = true;
+                    }
+                });
+                if (tookOver) renderGame();
+            }
+            const ids = editableIds();
+            const allBust = ids.length > 0 && ids.every(id => roundState[id].bust);
+            ids.forEach(id => {
+                roundState[id].bust = !allBust;
+                updatePlayerRoundDisplay(id);
+            });
+            updateRoundTools();
+        });
+
+        clearAllBtn.addEventListener('click', () => {
+            editableIds().forEach(id => {
+                roundState[id] = emptyRoundEntry();
+                updatePlayerRoundDisplay(id);
+            });
+            updateRoundTools();
+        });
 
         function updatePlayerRoundDisplay(id) {
             const state = roundState[id];
