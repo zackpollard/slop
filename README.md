@@ -23,7 +23,7 @@ projects/
 | [cron](projects/cron) | [cron.slop.zackpollard.pro](https://cron.slop.zackpollard.pro) | Cron expression translator with timeline visualization |
 | [subnet](projects/subnet) | [subnet.slop.zackpollard.pro](https://subnet.slop.zackpollard.pro) | IPv4 subnet calculator with binary breakdown |
 | [json](projects/json) | [json.slop.zackpollard.pro](https://json.slop.zackpollard.pro) | JSON formatter, tree viewer, and diff tool |
-| [flip-7](projects/flip-7) | [flip-7.slop.zackpollard.pro](https://flip-7.slop.zackpollard.pro) | Flip 7 card game scoreboard |
+| [flip-7](projects/flip-7) | [flip-7.slop.zackpollard.pro](https://flip-7.slop.zackpollard.pro) | Flip 7 card game scoreboard (Classic + With a Vengeance) |
 | [uno-no-mercy](projects/uno-no-mercy) | [uno-no-mercy.slop.zackpollard.pro](https://uno-no-mercy.slop.zackpollard.pro) | UNO No Mercy scoreboard |
 | [exploding-kittens](projects/exploding-kittens) | [exploding-kittens.slop.zackpollard.pro](https://exploding-kittens.slop.zackpollard.pro) | Exploding Kittens game assistant with card reference and probability calculator |
 | [herd-mentality](projects/herd-mentality) | [herd-mentality.slop.zackpollard.pro](https://herd-mentality.slop.zackpollard.pro) | Herd Mentality game companion with question bank and answer collection |

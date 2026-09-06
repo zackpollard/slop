@@ -653,6 +653,93 @@
             color: var(--color-text-muted);
         }
 
+        /* Ruleset picker */
+        .brutal-toggle {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.6rem;
+            margin-top: 0.75rem;
+            padding: 0.6rem 0.75rem;
+            background: var(--color-bg);
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            font-size: 0.85rem;
+            line-height: 1.5;
+            color: var(--color-text-muted);
+            cursor: pointer;
+            transition: border-color 0.2s;
+        }
+
+        .brutal-toggle:hover { border-color: var(--color-bust); }
+        .brutal-toggle.active { border-color: var(--color-bust); background: rgba(196, 94, 78, 0.08); }
+        .brutal-toggle input { margin-top: 0.3rem; accent-color: var(--color-bust); flex-shrink: 0; }
+        .brutal-toggle strong { color: var(--color-bust); }
+
+        .ruleset-badge {
+            display: inline-block;
+            margin-left: 0.6rem;
+            padding: 0.1rem 0.5rem;
+            border: 1px solid var(--color-accent);
+            border-radius: 4px;
+            font-size: 0.65rem;
+            font-weight: 600;
+            letter-spacing: 0.05em;
+            color: var(--color-accent);
+            vertical-align: middle;
+        }
+
+        .ruleset-badge.brutal {
+            border-color: var(--color-bust);
+            color: var(--color-bust);
+        }
+
+        .lobby-ruleset {
+            margin-top: 0.75rem;
+            font-size: 0.85rem;
+            color: var(--color-text-muted);
+        }
+
+        .lobby-ruleset strong { color: var(--color-accent); }
+
+        /* Vengeance card buttons */
+        .card-btn.special {
+            font-size: 0.75rem;
+            border-style: dashed;
+        }
+
+        .card-btn.special.selected {
+            background: var(--color-accent-dim);
+            border-color: var(--color-accent);
+            border-style: solid;
+            color: var(--color-accent);
+        }
+
+        .card-btn.modifier.neg.selected {
+            background: rgba(196, 94, 78, 0.15);
+            border-color: var(--color-bust);
+            color: var(--color-bust);
+        }
+
+        .flip7-target {
+            font-family: var(--font-body);
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 0.35rem 0.5rem;
+            background: var(--color-surface);
+            border: 1px solid var(--color-accent);
+            border-radius: 6px;
+            color: var(--color-accent);
+            cursor: pointer;
+        }
+
+        .flip7-target:focus { outline: none; border-color: var(--color-text); }
+
+        .standings-table .round-score-chip.negative {
+            color: var(--color-bust);
+            border-color: var(--color-bust);
+            background: rgba(196, 94, 78, 0.1);
+        }
+
         @media (max-width: 600px) {
             .setup-row { flex-direction: column; }
             .setup-row .field { min-width: unset; }
@@ -667,7 +754,7 @@
     <div class="container">
         <header>
             <h1>Flip 7 <span class="accent">Scoreboard</span></h1>
-            <p>Track scores for the press-your-luck card game. First to 200 points wins.</p>
+            <p>Track scores for the press-your-luck card game &mdash; classic Flip 7 or <em>With a Vengeance</em>. First to 200 points wins.</p>
         </header>
 
         <!-- Mode Selection Phase -->
@@ -694,6 +781,11 @@
         <!-- Setup Phase (Single Device) -->
         <div id="setup-phase" class="hidden">
             <div class="section">
+                <h2>Ruleset</h2>
+                <div class="ruleset-picker" id="setup-ruleset"></div>
+            </div>
+
+            <div class="section">
                 <h2>Players</h2>
                 <div class="setup-row">
                     <div class="field">
@@ -712,7 +804,7 @@
             <div class="section">
                 <details>
                     <summary>Quick Rules Reference</summary>
-                    <div class="rules-content">
+                    <div class="rules-content rules-classic">
                         <h3>Goal</h3>
                         <p>Be the first player to reach <strong>200 points</strong>.</p>
 
@@ -739,6 +831,58 @@
                         </ul>
                         <p>Formula: <strong>(Number cards &times; multiplier) + modifiers + Flip 7 bonus</strong></p>
                     </div>
+                    <div class="rules-content rules-vengeance hidden">
+                        <h3>Goal</h3>
+                        <p>Be the first player to reach <strong>200 points</strong>. Same press-your-luck core as Flip 7 &mdash; but this deck is out to get you.</p>
+
+                        <h3>Each Round</h3>
+                        <ul>
+                            <li>Everyone is dealt one card face up. On your turn, <strong>Hit</strong> (draw another card) or <strong>Stay</strong> (turn your leftmost card sideways).</li>
+                            <li>Draw a <strong>duplicate number</strong> and you <strong>bust</strong>: flip your cards face down and score 0 for the round.</li>
+                            <li>Collect <strong>7 different number cards</strong> for a <strong>Flip 7</strong>: the round ends immediately and you get <strong>+15</strong>.</li>
+                            <li>Staying does <em>not</em> make you safe &mdash; Action and Modifier cards can still be played on you until the round ends.</li>
+                        </ul>
+
+                        <h3>Number Cards</h3>
+                        <ul>
+                            <li><strong>1&ndash;13</strong> &mdash; one 1, two 2s &hellip; thirteen 13s. There is no plain 0 and no Second Chance.</li>
+                            <li><strong>The Zero</strong> &mdash; counts as one of your 7 cards, but your round total becomes <strong>0</strong> unless you Flip 7. While you hold it you must keep hitting.</li>
+                            <li><strong>Lucky 13</strong> &mdash; a 13 that lets you hold a <strong>second 13</strong> without busting. Both score 13 and both count toward Flip 7. A third 13 still busts you.</li>
+                            <li><strong>Unlucky 7</strong> &mdash; when it lands in front of you, <strong>discard every other Number and Modifier card</strong> you have and keep only this 7. It can't bust you on arrival, but another 7 later will.</li>
+                        </ul>
+
+                        <h3>Modifier Cards</h3>
+                        <ul>
+                            <li><strong>&minus;2, &minus;4, &minus;6, &minus;8, &minus;10</strong> and <strong>&divide;2</strong>, one of each. When you draw one, keep it or give it to <strong>any player who hasn't busted</strong> &mdash; including players who have already stayed.</li>
+                            <li>Modifiers never bust you and don't count toward Flip 7. They can be swapped, stolen, or discarded like any other card.</li>
+                        </ul>
+
+                        <h3>Action Cards</h3>
+                        <ul>
+                            <li>Resolve immediately: keep it or give it to any player who hasn't busted (even one who has stayed). If you're the only player left, you must keep it.</li>
+                            <li><strong>Just One More</strong> &mdash; the player draws exactly one more card, then must stay.</li>
+                            <li><strong>Flip Four</strong> &mdash; the player draws the next 4 cards one at a time, stopping early only on a bust or Flip 7. Action and Modifier cards drawn are resolved in order afterwards.</li>
+                            <li><strong>Swap</strong> &mdash; swap any two face-up cards on the table: one of yours with an opponent's, or between two other players.</li>
+                            <li><strong>Steal</strong> &mdash; take any face-up card from another player and add it to your line.</li>
+                            <li><strong>Discard</strong> &mdash; choose any player (yourself included) and one of their cards to discard.</li>
+                        </ul>
+
+                        <h3>Scoring</h3>
+                        <ul>
+                            <li>Add up your number cards (The Zero = 0, Lucky 13 = 13, Unlucky 7 = 7).</li>
+                            <li><strong>&divide;2</strong> halves that total, rounding down.</li>
+                            <li>Subtract your <strong>negative modifiers</strong>. A round score can't go below 0.</li>
+                            <li>Add the <strong>Flip 7 bonus (+15)</strong>.</li>
+                        </ul>
+                        <p>Formula: <strong>max(0, &lfloor;Number cards &divide; 2&rfloor; &minus; modifiers) + Flip 7 bonus</strong>. Holding <strong>The Zero</strong> without a Flip 7 scores 0 no matter what else you have. Busted players score 0.</p>
+
+                        <h3>Brutal Mode (optional)</h3>
+                        <ul>
+                            <li>Round scores <strong>can go negative</strong>.</li>
+                            <li>Modifier cards can be given to <strong>busted</strong> players.</li>
+                            <li>A Flip 7 bonus can be <strong>+15 for you</strong> or <strong>&minus;15 to another player</strong> &mdash; your choice.</li>
+                        </ul>
+                    </div>
                 </details>
             </div>
         </div>
@@ -763,6 +907,10 @@
                         <div class="label">Room Code</div>
                         <div class="code" id="room-code-display"></div>
                         <p style="font-size:0.8rem; color:var(--color-text-muted); margin-top:0.5rem;">Share this code with other players</p>
+                    </div>
+                    <div style="margin-top:1.25rem;">
+                        <h2>Ruleset</h2>
+                        <div class="ruleset-picker" id="host-ruleset"></div>
                     </div>
                     <div style="margin-top:1.25rem;">
                         <h2>Add Local Player</h2>
@@ -815,6 +963,7 @@
                     </div>
                     <h2 style="margin-top:0.75rem;">Players in Lobby</h2>
                     <div class="lobby-players" id="join-lobby-players"></div>
+                    <div class="lobby-ruleset" id="join-ruleset"></div>
                 </div>
                 <div class="actions-row" style="margin-top:1.25rem;">
                     <button class="btn" id="join-back-btn">Back</button>
@@ -846,7 +995,7 @@
 
             <!-- Standings -->
             <div class="section" id="standings-section">
-                <h2>Standings</h2>
+                <h2>Standings<span class="ruleset-badge" id="ruleset-badge"></span></h2>
                 <table class="standings-table">
                     <thead>
                         <tr>
@@ -884,7 +1033,7 @@
             <div class="section">
                 <details>
                     <summary>Quick Rules Reference</summary>
-                    <div class="rules-content">
+                    <div class="rules-content rules-classic">
                         <h3>Scoring</h3>
                         <ul>
                             <li>Select the number cards each player has. Sum is calculated automatically.</li>
@@ -892,6 +1041,16 @@
                             <li><strong>+2, +4, +6, +8, +10</strong> are added after the multiplier.</li>
                             <li>Toggle <strong>Flip 7</strong> if a player collected 7 unique number cards (+15 bonus).</li>
                             <li>Toggle <strong>Bust</strong> if a player drew a duplicate (score = 0).</li>
+                        </ul>
+                    </div>
+                    <div class="rules-content rules-vengeance hidden">
+                        <h3>Scoring</h3>
+                        <ul>
+                            <li>Select the number cards each player ends the round with. Tap <strong>0</strong> for The Zero, <strong>U7</strong> for Unlucky 7 and <strong>L13</strong> for Lucky 13 (Lucky 13 can sit alongside a normal 13).</li>
+                            <li><strong>&divide;2</strong> halves the number-card total (rounded down), then <strong>&minus;2 &hellip; &minus;10</strong> are subtracted. Standard scoring never drops below 0.</li>
+                            <li><strong>Flip 7</strong> toggles on automatically at 7 number cards (+15). <strong>The Zero</strong> scores 0 unless its holder Flips 7.</li>
+                            <li>Toggle <strong>Bust</strong> if a player drew a duplicate (score = 0).</li>
+                            <li><strong>Brutal Mode:</strong> scores can go negative, modifiers count even on a bust, and a Flip 7 can instead deal <strong>&minus;15</strong> to a chosen opponent.</li>
                         </ul>
                     </div>
                 </details>
@@ -933,8 +1092,34 @@
         let disconnectedPlayers = new Set(); // players currently disconnected
         let localPlayers = new Set(); // players added locally by host (no device)
 
-        const NUMBER_CARDS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
-        const MODIFIER_CARDS = ['+2', '+4', '+6', '+8', '+10'];
+        // Ruleset: 'classic' (original Flip 7) or 'vengeance' (Flip 7: With a Vengeance).
+        // `brutal` is the optional Brutal Mode variant and only applies under 'vengeance'.
+        let ruleset = 'classic';
+        let brutal = false;
+
+        const TARGET_SCORE = 200;
+        const FLIP7_BONUS = 15;
+
+        const RULESETS = {
+            classic: {
+                label: 'Classic',
+                numberCards: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+                modifierCards: ['+2', '+4', '+6', '+8', '+10'],
+            },
+            vengeance: {
+                label: 'With a Vengeance',
+                numberCards: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+                modifierCards: ['-2', '-4', '-6', '-8', '-10'],
+                // Special number cards. Each is a flag on the round entry; `value` is
+                // what it adds to the number-card total and each counts as one card
+                // toward a Flip 7.
+                specials: {
+                    zero: { label: '0', value: 0, title: 'The Zero: round scores 0 unless you Flip 7' },
+                    unlucky7: { label: 'U7', value: 7, title: 'Unlucky 7: counts as a 7 (discards your other cards when drawn)' },
+                    lucky13: { label: 'L13', value: 13, title: 'Lucky 13: a second 13 that does not bust' },
+                },
+            },
+        };
 
         // =====================================================================
         // DOM REFS
@@ -962,6 +1147,7 @@
         const playAgainBtn = document.getElementById('play-again-btn');
         const roundSection = document.getElementById('round-section');
         const backToModeBtn = document.getElementById('back-to-mode-btn');
+        const rulesetBadge = document.getElementById('ruleset-badge');
 
         // Host lobby
         const hostConnecting = document.getElementById('host-connecting');
@@ -984,6 +1170,7 @@
         const joinWaiting = document.getElementById('join-waiting');
         const joinForm = document.getElementById('join-form');
         const joinLobbyPlayers = document.getElementById('join-lobby-players');
+        const joinRuleset = document.getElementById('join-ruleset');
         const joinBackBtn = document.getElementById('join-back-btn');
 
         // Multiplayer game banner
@@ -1002,6 +1189,11 @@
             return name.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
         }
 
+        // Escape for use inside a double-quoted HTML attribute
+        function attr(str) {
+            return esc(str).replace(/"/g, '&quot;');
+        }
+
         // Room code generation is handled by SlopNet
 
         // =====================================================================
@@ -1009,7 +1201,7 @@
         // =====================================================================
         function saveState() {
             if (gameMode !== 'single') return;
-            const state = { players, rounds, currentRound, gameStarted, gameOver };
+            const state = { players, rounds, currentRound, gameStarted, gameOver, ruleset, brutal };
             localStorage.setItem('flip7-state', JSON.stringify(state));
         }
 
@@ -1023,11 +1215,90 @@
                 currentRound = state.currentRound || 1;
                 gameStarted = state.gameStarted || false;
                 gameOver = state.gameOver || false;
+                if (gameStarted) {
+                    // Saved games from before rulesets existed are classic
+                    ruleset = state.ruleset === 'vengeance' ? 'vengeance' : 'classic';
+                    brutal = !!state.brutal;
+                }
                 return gameStarted;
             } catch (e) {
                 return false;
             }
         }
+
+        // Remember the last ruleset chosen so it's preselected next time
+        function saveRulesetPref() {
+            try {
+                localStorage.setItem('flip7-ruleset', JSON.stringify({ ruleset, brutal }));
+            } catch (e) { /* ignore */ }
+        }
+
+        function loadRulesetPref() {
+            try {
+                const pref = JSON.parse(localStorage.getItem('flip7-ruleset') || 'null');
+                if (pref) {
+                    ruleset = pref.ruleset === 'vengeance' ? 'vengeance' : 'classic';
+                    brutal = !!pref.brutal;
+                }
+            } catch (e) { /* ignore */ }
+        }
+
+        // =====================================================================
+        // RULESET
+        // =====================================================================
+        function isVengeance() {
+            return ruleset === 'vengeance';
+        }
+
+        function isBrutal() {
+            return ruleset === 'vengeance' && brutal;
+        }
+
+        function rulesetLabel() {
+            if (!isVengeance()) return RULESETS.classic.label;
+            return RULESETS.vengeance.label + (brutal ? ' \u00b7 Brutal' : '');
+        }
+
+        function applyRuleset(newRuleset, newBrutal) {
+            ruleset = newRuleset === 'vengeance' ? 'vengeance' : 'classic';
+            brutal = !!newBrutal;
+            renderRulesetUI();
+        }
+
+        function renderRulesetUI() {
+            const html = `
+                <div class="mode-selection">
+                    <button class="mode-btn ${ruleset === 'classic' ? 'active' : ''}" onclick="window._setRuleset('classic')">
+                        <div class="mode-title">Classic</div>
+                        <div class="mode-desc">Original Flip 7 &mdash; +2 to +10, x2, Freeze, Flip Three, Second Chance</div>
+                    </button>
+                    <button class="mode-btn ${ruleset === 'vengeance' ? 'active' : ''}" onclick="window._setRuleset('vengeance')">
+                        <div class="mode-title">With a Vengeance</div>
+                        <div class="mode-desc">Negative modifiers, &divide;2, The Zero, Lucky 13, Unlucky 7 and take-that actions</div>
+                    </button>
+                </div>
+                <label class="brutal-toggle ${brutal ? 'active' : ''} ${ruleset === 'vengeance' ? '' : 'hidden'}">
+                    <input type="checkbox" ${brutal ? 'checked' : ''} onchange="window._setBrutal(this.checked)">
+                    <span><strong>Brutal Mode</strong> &mdash; round scores can go negative, modifiers hit busted players too, and a Flip 7 can deal &minus;15 to an opponent instead of +15.</span>
+                </label>`;
+            document.querySelectorAll('.ruleset-picker').forEach(el => { el.innerHTML = html; });
+            document.querySelectorAll('.rules-classic').forEach(el => el.classList.toggle('hidden', isVengeance()));
+            document.querySelectorAll('.rules-vengeance').forEach(el => el.classList.toggle('hidden', !isVengeance()));
+            rulesetBadge.textContent = rulesetLabel();
+            rulesetBadge.classList.toggle('brutal', isBrutal());
+        }
+
+        window._setRuleset = function(r) {
+            applyRuleset(r, brutal);
+            saveRulesetPref();
+            if (gameMode === 'host' && !gameStarted) broadcastLobbyUpdate();
+        };
+
+        window._setBrutal = function(b) {
+            applyRuleset(ruleset, b);
+            saveRulesetPref();
+            if (gameMode === 'host' && !gameStarted) broadcastLobbyUpdate();
+        };
 
         // =====================================================================
         // MODE SELECTION
@@ -1167,7 +1438,9 @@
                             players: players,
                             rounds: rounds,
                             currentRound: currentRound,
-                            gameOver: gameOver
+                            gameOver: gameOver,
+                            ruleset: ruleset,
+                            brutal: isBrutal()
                         });
 
                         // If host was manually editing this player, stop
@@ -1214,7 +1487,7 @@
             lobbyPlayers.forEach(p => playerList.push({ name: p.name, isHost: false }));
 
             if (lobby) {
-                lobby.broadcast({ type: 'lobby-update', players: playerList });
+                lobby.broadcast({ type: 'lobby-update', players: playerList, ruleset, brutal: isBrutal() });
             }
         }
 
@@ -1333,7 +1606,9 @@
             broadcastToAll({
                 type: 'game-start',
                 players: players,
-                currentRound: currentRound
+                currentRound: currentRound,
+                ruleset: ruleset,
+                brutal: isBrutal()
             });
 
             showPhase(gamePhase);
@@ -1520,6 +1795,7 @@
                 gameOver = data.gameOver;
                 gameStarted = true;
                 myScoreSubmitted = false;
+                applyRuleset(data.ruleset, data.brutal);
                 resetRoundState();
 
                 showPhase(gamePhase);
@@ -1534,6 +1810,7 @@
                 joinForm.classList.remove('hidden');
                 cleanupMultiplayer();
             } else if (data.type === 'lobby-update') {
+                applyRuleset(data.ruleset, data.brutal);
                 renderJoinLobby(data.players);
             } else if (data.type === 'game-start') {
                 players = data.players;
@@ -1541,6 +1818,7 @@
                 rounds = [];
                 gameStarted = true;
                 gameOver = false;
+                applyRuleset(data.ruleset, data.brutal);
                 resetRoundState();
                 myScoreSubmitted = false;
 
@@ -1572,6 +1850,7 @@
                 currentRound = data.currentRound;
                 gameOver = false;
                 myScoreSubmitted = false;
+                if (data.ruleset) applyRuleset(data.ruleset, data.brutal);
                 resetRoundState();
                 winnerBanner.classList.add('hidden');
                 renderGame();
@@ -1587,6 +1866,7 @@
             joinLobbyPlayers.innerHTML = playerList.map(p =>
                 `<span class="lobby-player">${esc(p.name)}${p.isHost ? '<span class="host-badge">(host)</span>' : ''}</span>`
             ).join('');
+            joinRuleset.innerHTML = `Ruleset: <strong>${esc(rulesetLabel())}</strong>`;
         }
 
         joinBackBtn.addEventListener('click', () => {
@@ -1649,13 +1929,108 @@
             return total;
         }
 
+        // A blank round entry for the active ruleset. Classic entries keep the
+        // original shape so old saved games and older peers keep working.
+        function emptyRoundEntry() {
+            if (isVengeance()) {
+                return {
+                    cards: [], zero: false, unlucky7: false, lucky13: false,
+                    modifiers: [], half: false,
+                    flip7: false, flip7Target: null, bust: false, penalty: 0
+                };
+            }
+            return { cards: [], modifiers: [], x2: false, flip7: false, bust: false };
+        }
+
+        // Copy a live round state (or a peer's submission) into a normalised
+        // round entry with its score computed.
+        function snapshotEntry(state) {
+            const entry = emptyRoundEntry();
+            if (state) {
+                Object.keys(entry).forEach(key => {
+                    if (state[key] === undefined) return;
+                    entry[key] = Array.isArray(entry[key]) ? [...(state[key] || [])] : state[key];
+                });
+            }
+            if ('flip7Target' in entry && !entry.flip7) entry.flip7Target = null;
+            entry.score = calculateRoundScore(entry);
+            return entry;
+        }
+
+        // Entry for a player who never submitted a score (treated as a bust)
+        function missingEntry() {
+            return snapshotEntry({ bust: true });
+        }
+
+        function sum(arr) {
+            return (arr || []).reduce((a, b) => a + b, 0);
+        }
+
+        // Total of a player's number cards (specials included)
+        function numberCardTotal(data) {
+            let total = sum(data.cards);
+            if (isVengeance()) {
+                const specials = RULESETS.vengeance.specials;
+                Object.keys(specials).forEach(key => {
+                    if (data[key]) total += specials[key].value;
+                });
+            }
+            return total;
+        }
+
+        // How many number cards count toward a Flip 7
+        function flip7CardCount(data) {
+            let count = (data.cards || []).length;
+            if (isVengeance()) {
+                Object.keys(RULESETS.vengeance.specials).forEach(key => {
+                    if (data[key]) count++;
+                });
+            }
+            return count;
+        }
+
         function calculateRoundScore(data) {
-            if (data.bust) return 0;
-            let numberSum = data.cards.reduce((a, b) => a + b, 0);
-            if (data.x2) numberSum *= 2;
-            let modifierSum = data.modifiers.reduce((a, b) => a + b, 0);
-            let bonus = data.flip7 ? 15 : 0;
-            return numberSum + modifierSum + bonus;
+            if (!isVengeance()) {
+                // Classic: (number cards x2) + modifiers + Flip 7 bonus; bust = 0
+                if (data.bust) return 0;
+                let numberSum = sum(data.cards);
+                if (data.x2) numberSum *= 2;
+                const bonus = data.flip7 ? FLIP7_BONUS : 0;
+                return numberSum + sum(data.modifiers) + bonus;
+            }
+
+            // With a Vengeance:
+            //   1. number cards (The Zero forces this to 0 unless you Flip 7; bust = 0)
+            //   2. ÷2 halves the number-card total, rounding down
+            //   3. subtract the negative modifiers (floor at 0 unless Brutal)
+            //   4. Flip 7 bonus (+15, or in Brutal Mode −15 dealt to an opponent instead)
+            //   Brutal Mode: busted players still take modifiers, and −15 hits land here too.
+            const brutalMode = isBrutal();
+            if (data.bust && !brutalMode) return 0;
+            let total = (data.bust || (data.zero && !data.flip7)) ? 0 : numberCardTotal(data);
+            if (data.half) total = Math.floor(total / 2);
+            total += sum(data.modifiers);
+            if (!brutalMode) total = Math.max(0, total);
+            if (data.flip7 && !data.bust && !(brutalMode && data.flip7Target)) total += FLIP7_BONUS;
+            return total + (data.penalty || 0);
+        }
+
+        // Apply cross-player effects (Brutal Mode −15 hits) and lock in scores
+        function finalizeRound(roundResult) {
+            const entries = Object.keys(roundResult).map(name => roundResult[name]);
+            if (isVengeance()) {
+                entries.forEach(rd => { rd.penalty = 0; });
+                if (isBrutal()) {
+                    Object.keys(roundResult).forEach(name => {
+                        const rd = roundResult[name];
+                        const target = (rd.flip7 && !rd.bust) ? rd.flip7Target : null;
+                        if (target && target !== name && roundResult[target]) {
+                            roundResult[target].penalty -= FLIP7_BONUS;
+                        }
+                    });
+                }
+            }
+            entries.forEach(rd => { rd.score = calculateRoundScore(rd); });
         }
 
         function getDealerIndex() {
@@ -1681,15 +2056,21 @@
                 total: getPlayerTotal(name)
             })).sort((a, b) => b.total - a.total);
 
+            rulesetBadge.textContent = rulesetLabel();
+            rulesetBadge.classList.toggle('brutal', isBrutal());
+
             standingsBody.innerHTML = sorted.map((p, i) => {
-                const pct = Math.min(100, (p.total / 200) * 100);
-                const isWinner = gameOver && p.total >= 200 && i === 0;
+                const pct = Math.max(0, Math.min(100, (p.total / TARGET_SCORE) * 100));
+                const isWinner = gameOver && p.total >= TARGET_SCORE && i === 0;
                 const roundScores = rounds.map((round) => {
                     const rd = round[p.name];
                     if (!rd) return `<span class="round-score-chip">-</span>`;
-                    if (rd.bust) return `<span class="round-score-chip bust">0</span>`;
-                    if (rd.flip7) return `<span class="round-score-chip flip7">${rd.score}</span>`;
-                    return `<span class="round-score-chip">${rd.score}</span>`;
+                    const title = attr(formatScoreBreakdown(rd));
+                    let cls = '';
+                    if (rd.bust) cls = 'bust';
+                    else if (rd.flip7) cls = 'flip7';
+                    else if (rd.score < 0) cls = 'negative';
+                    return `<span class="round-score-chip ${cls}" title="${title}">${rd.score}</span>`;
                 }).join('');
 
                 return `<tr class="${isWinner ? 'winner-row' : ''}">
@@ -1777,7 +2158,7 @@
             players.forEach(name => {
                 const id = nameToId(name);
                 if (!roundState[id]) {
-                    roundState[id] = { cards: [], modifiers: [], x2: false, flip7: false, bust: false };
+                    roundState[id] = emptyRoundEntry();
                 }
                 const isEditable = gameMode === 'single' || name === myName || hostEditingPlayers.has(name) || localPlayers.has(name);
                 if (isEditable) {
@@ -1808,13 +2189,14 @@
 
             const id = nameToId(myName);
             if (!roundState[id]) {
-                roundState[id] = { cards: [], modifiers: [], x2: false, flip7: false, bust: false };
+                roundState[id] = emptyRoundEntry();
             }
             updatePlayerRoundDisplay(id);
         }
 
         function renderEditableCard(name, hostOverride) {
             const id = nameToId(name);
+            const rs = RULESETS[ruleset];
             const isDisconnected = disconnectedPlayers.has(name);
             const showOverrideLabel = hostOverride && gameMode === 'host';
             const prevTotal = getPlayerTotal(name);
@@ -1825,25 +2207,57 @@
                 </div>
                 <div class="card-input-area">
                     <div class="number-cards-grid" id="numbers-${id}">
-                        ${NUMBER_CARDS.map(n =>
+                        ${rs.numberCards.map(n =>
                             `<button class="card-btn" data-player="${id}" data-card="${n}" onclick="window._toggleCard('${id}', ${n})">${n}</button>`
                         ).join('')}
                     </div>
                 </div>
-                <div class="card-input-area" style="margin-top:0.5rem;">
-                    <div class="number-cards-grid">
-                        ${MODIFIER_CARDS.map(m =>
-                            `<button class="card-btn modifier" data-player="${id}" data-mod="${m}" onclick="window._toggleMod('${id}', '${m}')">${m}</button>`
-                        ).join('')}
-                        <button class="card-btn modifier" data-player="${id}" data-special="x2" onclick="window._toggleX2('${id}')">x2</button>
-                    </div>
-                </div>
+                ${renderCardExtras(id)}
                 <div class="score-toggles">
                     <button class="toggle-btn" id="flip7-${id}" onclick="window._toggleFlip7('${id}')">Flip 7 (+15)</button>
+                    ${renderFlip7TargetSelect(id, name)}
                     <button class="toggle-btn bust-toggle" id="bust-${id}" onclick="window._toggleBust('${id}')">Bust</button>
                 </div>
                 <div class="score-breakdown" id="breakdown-${id}"></div>
             </div>`;
+        }
+
+        // Special number cards + modifier row(s) for the active ruleset
+        function renderCardExtras(id) {
+            const rs = RULESETS[ruleset];
+            if (!isVengeance()) {
+                return `<div class="card-input-area" style="margin-top:0.5rem;">
+                    <div class="number-cards-grid">
+                        ${rs.modifierCards.map(m =>
+                            `<button class="card-btn modifier" data-player="${id}" data-mod="${m}" onclick="window._toggleMod('${id}', '${m}')">${m}</button>`
+                        ).join('')}
+                        <button class="card-btn modifier" data-player="${id}" data-special="x2" title="x2: doubles your number-card total" onclick="window._toggleSpecial('${id}', 'x2')">x2</button>
+                    </div>
+                </div>`;
+            }
+            const specials = Object.keys(rs.specials).map(key => {
+                const sp = rs.specials[key];
+                return `<button class="card-btn special" data-player="${id}" data-special="${key}" title="${attr(sp.title)}" onclick="window._toggleSpecial('${id}', '${key}')">${sp.label}</button>`;
+            }).join('');
+            const modifiers = rs.modifierCards.map(m =>
+                `<button class="card-btn modifier neg" data-player="${id}" data-mod="${m}" onclick="window._toggleMod('${id}', '${m}')">${m}</button>`
+            ).join('') + `<button class="card-btn modifier neg" data-player="${id}" data-special="half" title="&divide;2: halves your number-card total, rounded down" onclick="window._toggleSpecial('${id}', 'half')">&divide;2</button>`;
+            return `<div class="card-input-area" style="margin-top:0.5rem;">
+                <div class="number-cards-grid">${specials}</div>
+                <div class="number-cards-grid">${modifiers}</div>
+            </div>`;
+        }
+
+        // Brutal Mode only: choose whether a Flip 7 is +15 for you or −15 to an opponent
+        function renderFlip7TargetSelect(id, name) {
+            if (!isBrutal()) return '';
+            const options = players.map((p, i) =>
+                p === name ? '' : `<option value="${i}">&minus;15 to ${esc(p)}</option>`
+            ).join('');
+            return `<select class="flip7-target hidden" id="f7target-${id}" title="Brutal Mode: take +15 or deal &minus;15 to an opponent" onchange="window._setFlip7Target('${id}', this.value)">
+                <option value="">+15 for me</option>
+                ${options}
+            </select>`;
         }
 
         function renderSubmittedCard(name, scoreData) {
@@ -1855,10 +2269,10 @@
             return `<div class="player-score-card submitted ${isBust ? 'bust' : ''}" id="card-${id}">
                 <div class="player-score-header">
                     <span class="name">${esc(name)}<button class="edit-score-btn" onclick="window._hostEditPlayer('${esc(name)}')">Edit</button>${prevTotal > 0 ? `<span class="running-total" style="margin-left:0.5rem;">Overall: ${projectedTotal}</span>` : (score > 0 ? `<span class="running-total" style="margin-left:0.5rem;">Overall: ${projectedTotal}</span>` : '')}</span>
-                    <span class="round-total ${isBust ? 'bust-text' : ''}">${isBust ? 'BUST' : score}</span>
+                    <span class="round-total ${isBust ? 'bust-text' : ''}">${formatRoundTotal(scoreData, score)}</span>
                 </div>
                 <div class="score-breakdown" style="margin-top:0;">
-                    ${isBust ? 'Bust — 0 points' : formatScoreBreakdown(scoreData)}
+                    ${esc(formatScoreBreakdown(scoreData))}
                 </div>
             </div>`;
         }
@@ -1899,17 +2313,72 @@
             renderGame();
         };
 
+        // Text shown in the big round-total slot
+        function formatRoundTotal(data, score) {
+            if (!data.bust) return String(score);
+            return (isBrutal() && score !== 0) ? `BUST ${score}` : 'BUST';
+        }
+
+        // Plain-text explanation of how a round score was reached
         function formatScoreBreakdown(data) {
+            if (isVengeance()) return formatVengeanceBreakdown(data);
+            if (data.bust) return 'Bust — 0 points';
             const parts = [];
-            const numberSum = data.cards.reduce((a, b) => a + b, 0);
-            if (data.cards.length > 0) {
-                parts.push(`Cards: ${[...data.cards].sort((a,b) => a-b).join('+')}`);
+            const cards = data.cards || [];
+            const numberSum = sum(cards);
+            if (cards.length > 0) {
+                parts.push(`Cards: ${[...cards].sort((a,b) => a-b).join('+')}`);
                 if (data.x2) parts.push(`= ${numberSum} x2 = ${numberSum * 2}`);
             }
-            if (data.modifiers.length > 0) {
-                parts.push(`Mods: +${data.modifiers.reduce((a,b) => a+b, 0)}`);
+            if ((data.modifiers || []).length > 0) {
+                parts.push(`Mods: +${sum(data.modifiers)}`);
             }
             if (data.flip7) parts.push('Flip 7: +15');
+            return parts.join(' | ');
+        }
+
+        function formatVengeanceBreakdown(data) {
+            const brutalMode = isBrutal();
+            const specials = RULESETS.vengeance.specials;
+            const parts = [];
+            let running = 0;
+
+            if (data.bust) {
+                parts.push('Bust — 0 points');
+                if (!brutalMode) return parts[0];
+            } else {
+                const items = (data.cards || []).map(n => ({ value: n, label: String(n) }));
+                Object.keys(specials).forEach(key => {
+                    if (data[key]) items.push({ value: specials[key].value, label: specials[key].label });
+                });
+                items.sort((a, b) => a.value - b.value);
+                const total = numberCardTotal(data);
+                if (items.length > 0) parts.push(`Cards: ${items.map(i => i.label).join('+')} = ${total}`);
+                if (data.zero && !data.flip7) {
+                    parts.push('The Zero → 0');
+                } else {
+                    running = total;
+                }
+            }
+
+            if (data.half) {
+                running = Math.floor(running / 2);
+                parts.push(`÷2 → ${running}`);
+            }
+            if ((data.modifiers || []).length > 0) {
+                const modSum = sum(data.modifiers);
+                running += modSum;
+                parts.push(`Mods: ${modSum} → ${running}`);
+            }
+            if (!brutalMode && running < 0) {
+                running = 0;
+                parts.push('Min 0');
+            }
+            if (data.flip7 && !data.bust) {
+                if (brutalMode && data.flip7Target) parts.push(`Flip 7: −15 to ${data.flip7Target}`);
+                else parts.push('Flip 7: +15');
+            }
+            if (data.penalty) parts.push(`Hit by Flip 7: ${data.penalty}`);
             return parts.join(' | ');
         }
 
@@ -1947,6 +2416,10 @@
         // =====================================================================
         // SCORE INPUT HANDLERS
         // =====================================================================
+        function autoFlip7(state) {
+            state.flip7 = flip7CardCount(state) >= 7;
+        }
+
         window._toggleCard = function(id, num) {
             const state = roundState[id];
             if (!state) return;
@@ -1955,8 +2428,31 @@
                 state.cards.splice(idx, 1);
             } else {
                 state.cards.push(num);
+                // A normal 7 alongside the Unlucky 7 would be a bust, so they're exclusive
+                if (isVengeance() && num === 7) state.unlucky7 = false;
             }
-            state.flip7 = state.cards.length >= 7;
+            autoFlip7(state);
+            updatePlayerRoundDisplay(id);
+        };
+
+        // Boolean card flags: x2 (classic); zero / unlucky7 / lucky13 / half (vengeance)
+        window._toggleSpecial = function(id, key) {
+            const state = roundState[id];
+            if (!state || !(key in state)) return;
+            state[key] = !state[key];
+            if (key === 'unlucky7' && state.unlucky7) {
+                const i = state.cards.indexOf(7);
+                if (i >= 0) state.cards.splice(i, 1);
+            }
+            if (key === 'zero' || key === 'unlucky7' || key === 'lucky13') autoFlip7(state);
+            updatePlayerRoundDisplay(id);
+        };
+
+        window._setFlip7Target = function(id, value) {
+            const state = roundState[id];
+            if (!state) return;
+            const target = value === '' ? null : players[parseInt(value)];
+            state.flip7Target = target || null;
             updatePlayerRoundDisplay(id);
         };
 
@@ -1970,12 +2466,6 @@
             } else {
                 state.modifiers.push(val);
             }
-            updatePlayerRoundDisplay(id);
-        };
-
-        window._toggleX2 = function(id) {
-            if (!roundState[id]) return;
-            roundState[id].x2 = !roundState[id].x2;
             updatePlayerRoundDisplay(id);
         };
 
@@ -1998,7 +2488,7 @@
 
             const totalEl = document.getElementById(`total-${id}`);
             if (totalEl) {
-                totalEl.textContent = state.bust ? 'BUST' : score;
+                totalEl.textContent = formatRoundTotal(state, score);
                 totalEl.classList.toggle('bust-text', state.bust);
             }
 
@@ -2036,8 +2526,16 @@
                     btn.classList.toggle('selected', state.modifiers.includes(parseInt(btn.dataset.mod)));
                 });
 
-                const x2Btn = card.querySelector('.card-btn[data-special="x2"]');
-                if (x2Btn) x2Btn.classList.toggle('selected', state.x2);
+                card.querySelectorAll('.card-btn[data-special]').forEach(btn => {
+                    btn.classList.toggle('selected', !!state[btn.dataset.special]);
+                });
+
+                const targetSelect = document.getElementById(`f7target-${id}`);
+                if (targetSelect) {
+                    targetSelect.classList.toggle('hidden', !state.flip7 || state.bust);
+                    const idx = state.flip7Target ? players.indexOf(state.flip7Target) : -1;
+                    targetSelect.value = idx >= 0 ? String(idx) : '';
+                }
             }
 
             const flip7Btn = document.getElementById(`flip7-${id}`);
@@ -2047,11 +2545,7 @@
             if (bustBtn) bustBtn.classList.toggle('active', state.bust);
 
             const breakdownEl = document.getElementById(`breakdown-${id}`);
-            if (breakdownEl && !state.bust) {
-                breakdownEl.textContent = formatScoreBreakdown(state);
-            } else if (breakdownEl) {
-                breakdownEl.textContent = 'Bust — 0 points';
-            }
+            if (breakdownEl) breakdownEl.textContent = formatScoreBreakdown(state);
         }
 
         // =====================================================================
@@ -2070,18 +2564,9 @@
         function submitRoundSingle() {
             const roundResult = {};
             players.forEach(name => {
-                const id = nameToId(name);
-                const state = roundState[id];
-                const score = calculateRoundScore(state);
-                roundResult[name] = {
-                    cards: [...state.cards],
-                    modifiers: [...state.modifiers],
-                    x2: state.x2,
-                    flip7: state.flip7,
-                    bust: state.bust,
-                    score
-                };
+                roundResult[name] = snapshotEntry(roundState[nameToId(name)]);
             });
+            finalizeRound(roundResult);
 
             rounds.push(roundResult);
             currentRound++;
@@ -2095,18 +2580,9 @@
             const roundResult = {};
 
             // Host's own score
-            const hostId = nameToId(myName);
-            const hostState = roundState[hostId];
+            const hostState = roundState[nameToId(myName)];
             if (hostState) {
-                const score = calculateRoundScore(hostState);
-                roundResult[myName] = {
-                    cards: [...hostState.cards],
-                    modifiers: [...hostState.modifiers],
-                    x2: hostState.x2,
-                    flip7: hostState.flip7,
-                    bust: hostState.bust,
-                    score
-                };
+                roundResult[myName] = snapshotEntry(hostState);
             }
 
             // Peer submissions, local players, and host-edited players
@@ -2114,28 +2590,16 @@
                 if (name === myName) return;
                 if (localPlayers.has(name) || hostEditingPlayers.has(name)) {
                     // Host manually entered this player's score
-                    const id = nameToId(name);
-                    const state = roundState[id];
-                    if (state) {
-                        const score = calculateRoundScore(state);
-                        roundResult[name] = {
-                            cards: [...state.cards],
-                            modifiers: [...state.modifiers],
-                            x2: state.x2,
-                            flip7: state.flip7,
-                            bust: state.bust,
-                            score
-                        };
-                    } else {
-                        roundResult[name] = { cards: [], modifiers: [], x2: false, flip7: false, bust: true, score: 0 };
-                    }
+                    const state = roundState[nameToId(name)];
+                    roundResult[name] = state ? snapshotEntry(state) : missingEntry();
                 } else if (peerSubmissions[name]) {
-                    roundResult[name] = peerSubmissions[name];
+                    roundResult[name] = snapshotEntry(peerSubmissions[name]);
                 } else {
                     // Player didn't submit - give them 0 (bust)
-                    roundResult[name] = { cards: [], modifiers: [], x2: false, flip7: false, bust: true, score: 0 };
+                    roundResult[name] = missingEntry();
                 }
             });
+            finalizeRound(roundResult);
 
             rounds.push(roundResult);
             currentRound++;
@@ -2171,15 +2635,7 @@
             const state = roundState[id];
             if (!state) return;
 
-            const score = calculateRoundScore(state);
-            const scoreData = {
-                cards: [...state.cards],
-                modifiers: [...state.modifiers],
-                x2: state.x2,
-                flip7: state.flip7,
-                bust: state.bust,
-                score
-            };
+            const scoreData = snapshotEntry(state);
 
             // Send to host
             if (lobby) {
@@ -2195,8 +2651,9 @@
         }
 
         function handleScoreSubmission(playerName, scoreData) {
-            // Host receives a peer's score
-            peerSubmissions[playerName] = scoreData;
+            // Host receives a peer's score; normalise it and recompute under our rules
+            if (!scoreData || typeof scoreData !== 'object') return;
+            peerSubmissions[playerName] = snapshotEntry(scoreData);
             renderGame();
         }
 
@@ -2237,7 +2694,7 @@
 
             for (const name of players) {
                 const total = getPlayerTotal(name);
-                if (total >= 200 && lastRound[name] && !lastRound[name].bust) {
+                if (total >= TARGET_SCORE && lastRound[name] && !lastRound[name].bust) {
                     anyReached200 = true;
                 }
             }
@@ -2299,7 +2756,9 @@
                 broadcastToAll({
                     type: 'play-again',
                     players: players,
-                    currentRound: 1
+                    currentRound: 1,
+                    ruleset: ruleset,
+                    brutal: isBrutal()
                 });
             }
 
@@ -2334,11 +2793,14 @@
         // =====================================================================
         // INIT
         // =====================================================================
+        loadRulesetPref();
         if (loadState() && gameStarted) {
             // Restore single-device game in progress
+            renderRulesetUI();
             showPhase(gamePhase);
             renderGame();
         } else {
+            renderRulesetUI();
             showPhase(modePhase);
         }
     })();
