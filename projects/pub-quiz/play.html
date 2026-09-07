@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="theme-color" content="#0f0f0c">
+<meta name="robots" content="noindex">
+<title>Quiz — your table</title>
+<!--
+  The player's page. Deliberately tiny and deliberately stupid: it renders what
+  the host tells it to and reports what a thumb did. It loads none of the quiz
+  app — no packs, no answers, no speech or audio engines — so a phone that gets
+  handed round or poked at holds nothing worth knowing.
+  The contract is in PHONES.md.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap">
+<link rel="stylesheet" href="css/play.css">
+<script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
+<script src="lib/slopnet.js"></script>
+<script src="lib/sloplobby.js"></script>
+</head>
+<body>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<main id="app">
+  <section id="screen-join" class="screen">
+    <h1 class="brand">The Quiz</h1>
+    <p class="lead">Type the code on the big screen.</p>
+    <form id="join-form" autocomplete="off">
+      <input id="room-code" class="code-input" inputmode="latin" autocapitalize="characters"
+             spellcheck="false" maxlength="12" aria-label="Room code" placeholder="CODE">
+      <button id="join-btn" class="btn btn-primary" type="submit">Join</button>
+    </form>
+    <p id="join-status" class="status"></p>
+  </section>
+
+  <section id="screen-team" class="screen" hidden>
+    <p class="lead">Which table are you on?</p>
+    <div id="team-list" class="team-list"></div>
+  </section>
+
+  <section id="screen-play" class="screen" hidden>
+    <header class="bar">
+      <span id="team-badge" class="badge"></span>
+      <span id="conn" class="conn" title="Connection"></span>
+    </header>
+    <div id="stage"></div>
+  </section>
+</main>
+
+<script type="module" src="js/play.js"></script>
+</body>
+</html>

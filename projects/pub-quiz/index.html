@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Pub Quiz</title>
+    <meta name="description" content="A full pub quiz night in a browser tab. Six rounds, sixty checked questions, read aloud by a host voice with music, timers, marking, leaderboards and a fanfare at the end.">
+    <meta name="theme-color" content="#0f120f">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230f120f'/%3E%3Ctext x='32' y='46' font-family='Georgia,serif' font-size='40' font-weight='700' text-anchor='middle' fill='%23c4a24e'%3E%3F%3C/text%3E%3C/svg%3E">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700;9..144,900&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div id="topbar" class="topbar"></div>
+
+    <main id="app" class="app"></main>
+
+    <div id="overlay-root" class="overlay-root" hidden></div>
+
+    <canvas id="confetti" class="confetti-canvas" aria-hidden="true"></canvas>
+
+    <div id="print-root" class="print-root" aria-hidden="true"></div>
+
+    <noscript>
+        <div class="noscript">
+            <h1>The Pub Quiz</h1>
+            <p>This one needs JavaScript — it does the talking, the timing and the scoring.</p>
+        </div>
+    </noscript>
+
+    <script type="module" src="js/app.js"></script>
+</body>
+</html>

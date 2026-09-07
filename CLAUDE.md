@@ -24,7 +24,14 @@ projects/
 ├── texas-holdem/              # Multiplayer Texas Hold'em poker
 ├── cards-against-humanity/    # P2P Cards Against Humanity party game
 ├── waze-beep-sound-pack/      # Beeps-only Waze sound pack generator
+├── pub-quiz/                  # Reusable pub quiz host app
 └── unifi-store/               # Parody UniFi Store with fake checkout
+lib/                   # Shared code, copied into projects at deploy time
+├── slopnet/           # PeerJS host/client wrapper (reconnect, heartbeat, queueing) + vitest suite
+├── sloplobby/         # Lobby layer on SlopNet: clientId, rooms, player tracking, rejoin
+└── slop-theme.css     # Shared theme
+docs/                  # Cross-project documentation
+└── multiplayer-bug-audit.md   # Confirmed bug backlog for the four P2P games
 tofu/                  # OpenTofu infrastructure (Cloudflare Pages + DNS)
 .github/workflows/
 ├── deploy.yml         # Infrastructure (tofu plan/apply) + production deployment
@@ -50,6 +57,7 @@ tofu/                  # OpenTofu infrastructure (Cloudflare Pages + DNS)
 | texas-holdem | `projects/texas-holdem/` | Static HTML/CSS/JS, PeerJS | Multiplayer Texas Hold'em poker with peer-to-peer networking |
 | cards-against-humanity | `projects/cards-against-humanity/` | Static HTML/CSS/JS, PeerJS | P2P Cards Against Humanity party game |
 | waze-beep-sound-pack | `projects/waze-beep-sound-pack/` | Static HTML/CSS/JS, Web Audio API, JSZip (CDN) | Beeps-only Waze sound pack generator with WAV/zip export |
+| pub-quiz | `projects/pub-quiz/` | Static HTML/CSS/JS (ES modules), Web Speech API, Web Audio API, iTunes Search API | Reusable pub quiz host app: JSON/JS quiz packs, spoken questions and answers, synthesised music and sound effects, an audio round that streams 30-second previews of real records from Apple (nothing downloaded or re-hosted) plus synthesised public-domain melodies as the offline fallback, per-question timer, difficulty-weighted scoring, on-screen marking, jokers, leaderboards, tie-breaker, podium and printable answer sheets. Two packs ship: a 7-round classic and an 18-round mixed-age bag (180 questions) that adds picture rounds, a kids-only round and a music round played backwards |
 | unifi-store | `projects/unifi-store/` | Static HTML/CSS/JS (ES modules) | Parody UniFi Store: real scraped catalog (`catalog.json`) + specs (`specs.json`), cart, fake checkout w/ promo codes, daily deals, compare tool, rack builder, order tracking, dopamine dashboard — all in `localStorage` |
 
 **When adding a new project:**
@@ -59,13 +67,23 @@ tofu/                  # OpenTofu infrastructure (Cloudflare Pages + DNS)
 4. Add the project to `tofu/variables.tf` in the `projects` map (with its subdomain)
 5. Add the project to the matrix in `.github/workflows/deploy.yml`
 6. Run `tofu apply` (or merge to `main` to trigger the infra workflow) to create the Cloudflare Pages project and DNS records
+7. **If the project uses SlopNet/SlopLobby**, add its name to the copy loop in *both*
+   `.github/workflows/deploy.yml` and `.github/workflows/preview.yml` — otherwise the
+   shared library 404s once deployed
 
 ## Tech stack & conventions
 
 - **No build step.** All projects are static HTML/CSS/JS served directly. No npm, no bundlers, no package managers.
 - **External libraries via CDN only** (e.g. Leaflet, Google Fonts). No local `node_modules` or vendored dependencies.
 - **Infrastructure as Code:** OpenTofu (v1.8+) with the Cloudflare provider (~> 4.0) manages Pages projects and DNS records. Config lives in `tofu/`.
-- **No test framework or linter** is currently configured.
+- **No linter** is configured. **Tests exist only for `lib/slopnet`** (vitest):
+  `cd lib/slopnet && npm install && npm test`. This is a dev-only dependency — the
+  library ships as a plain script tag and no built output is ever deployed.
+- **Shared libraries live in `lib/`** and are *copied into* each consuming project by
+  CI, not imported across directories. Both `.github/workflows/deploy.yml` and
+  `.github/workflows/preview.yml` carry a **hardcoded list of project names** to copy
+  into — a new project using SlopNet must be added to **both** lists or its
+  `lib/*.js` will 404 in production and preview while working fine locally.
 - **Styling:** Dark themes with accent color `#c4a24e`. Typography uses Inter (body) and JetBrains Mono (monospace) from Google Fonts.
 
 ## Deployment
@@ -106,5 +124,7 @@ When making changes to this repo, check off the applicable items:
 - [ ] If you added a project: updated the projects table in this file, the root `README.md`, homepage `index.html`, `tofu/variables.tf`, and `.github/workflows/deploy.yml` matrix
 - [ ] If you changed the deployment workflow or added new infrastructure: updated the Deployment section above
 - [ ] If you introduced a build step, package manager, test framework, or linter: updated the Tech stack section above
+- [ ] If you changed anything in `lib/`: ran `cd lib/slopnet && npm test`, and checked
+      every consuming project still works — `lib/` is shared by several projects at once
 - [ ] If you changed git conventions or branching strategy: updated the Git conventions section above
 - [ ] If you changed OpenTofu configuration: verified `tofu plan` shows expected changes

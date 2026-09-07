@@ -175,6 +175,9 @@ jobs:
           - name: unifi-store
             pages-project: slop-unifi-store
             directory: projects/unifi-store
+          - name: pub-quiz
+            pages-project: slop-pub-quiz
+            directory: projects/pub-quiz
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -182,7 +185,7 @@ jobs:
       - name: Copy shared libraries
         run: |
           # Copy shared libraries into projects that use PeerJS networking
-          for project in texas-holdem cards-against-humanity herd-mentality flip-7; do
+          for project in texas-holdem cards-against-humanity herd-mentality flip-7 pub-quiz; do
             if [ -d "projects/$project" ]; then
               mkdir -p "projects/$project/lib"
               cp lib/slopnet/slopnet.js "projects/$project/lib/slopnet.js"
