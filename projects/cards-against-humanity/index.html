@@ -277,6 +277,18 @@
         }
 
         .log-entry { padding: 0.15rem 0; }
+
+        /* Connection banner */
+        .conn-banner {
+            background: rgba(196, 162, 78, 0.15);
+            border: 1px solid var(--color-accent);
+            color: var(--color-accent);
+            border-radius: 8px;
+            padding: 0.5rem 0.75rem;
+            margin-bottom: 1rem;
+            font-size: 0.85rem;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
@@ -285,6 +297,9 @@
             <h1>Cards Against <span class="accent">Humanity</span></h1>
             <p>Peer-to-peer party game for horrible people</p>
         </header>
+
+        <!-- Connection banner: shown while the link to the host is down -->
+        <div id="conn-banner" class="conn-banner hidden"></div>
 
         <!-- LOBBY SCREEN -->
         <div id="screen-lobby" class="screen active">
@@ -359,6 +374,15 @@
                 <div class="player-list" id="game-players"></div>
             </div>
 
+            <!-- Host-only escape hatches: a stuck round must never mean reloading the room -->
+            <div class="section hidden" id="host-round-controls">
+                <h2>Host Controls</h2>
+                <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
+                    <button class="btn" id="btn-force-judging">Start judging now</button>
+                    <button class="btn" id="btn-skip-round">Skip round</button>
+                </div>
+            </div>
+
             <div class="section" id="black-card-section">
                 <h2>Black Card</h2>
                 <div class="black-card" id="black-card"></div>
@@ -426,22 +450,45 @@
         myId: '',
         gameCode: '',
         // Game state (authoritative on host)
-        players: [],         // [{ id, name, score }]
+        players: [],         // [{ id, name, score, away, joinedRound }]
+        // Every map below is keyed by a clientId that arrived over the WIRE, so all of them
+        // are prototype-less: a player whose clientId is 'constructor' or '__proto__' would
+        // otherwise read as an existing entry and throw inside the host's join handler.
+        pastPlayers: Object.create(null),  // host: { clientId: { player, hand } } — kept for a late return
+        reboundIds: Object.create(null),   // host: { retiredClientId: theIdItsSeatMovedTo }
+        nameRefused: Object.create(null),  // host: { clientId: theNameItHasBeenTOLD is not its own }
         blackDeck: [],
         whiteDeck: [],
-        hands: {},           // host: { playerId: [card, ...] }
+        hands: Object.create(null),        // host: { playerId: [card, ...] }
         myHand: [],          // client: own hand
         currentBlack: null,
-        czarIndex: 0,
+        // Identity, never a position: the roster grows and shrinks under an index, which is
+        // how the crown used to land on the wrong seat after a single disconnect.
+        czarId: null,
         round: 0,
-        submissions: {},     // { playerId: [cards] }
+        submissions: Object.create(null),  // host: { playerId: [cards] }
+        submissionOrder: [], // host: [playerId]; client: [{ id, cards }]
+        // Judging is anonymous, so the WIRE carries a fresh opaque key per submission rather
+        // than its author's id — otherwise every client (the czar included) could read the
+        // authorship map straight out of the payload it is about to judge.
+        subKeys: Object.create(null),      // host: { key: playerId }
+        subKeyOf: Object.create(null),     // host: { playerId: key }
         scoreLimit: 7,
         phase: 'lobby',      // lobby, playing, judging, result, gameover
         selectedCards: [],
-        submissionOrder: [],
         revealedAuthor: null,
-        nextRoundTimer: null,
+        mySubmitted: false,  // this device has played its cards this round
+        gameOverTimer: null, // the single 4s timer between the last result and the podium
+        linkUp: true,        // client: is the link usable right now
+        terminal: false,     // client: host said no / room is over — stop reacting
+        lastResyncAt: Object.create(null),  // host: { clientId: when we last sent a snapshot }
+        // What every OTHER peer knows a player by. Never their clientId — see wireId().
+        wireIds: Object.create(null),       // host: { playerId: alias }
     };
+
+    // How many departed seats to remember for a late return. A party never has this many;
+    // the cap only stops a long flaky night growing the map forever.
+    const MAX_PAST_PLAYERS = 32;
 
     // ==================== HELPERS ====================
     const { $, esc, toast, showScreen } = SlopLobby;
@@ -467,126 +514,930 @@
         return a;
     }
 
+    // The printed deck is stored as HTML, so its text carries a handful of character
+    // references (&copy;, &#34;) and two harmless tags. Card text reaches us over the WIRE,
+    // so it is escaped first and only these exact sequences are turned back — the result can
+    // contain nothing but those characters and <i>/<br>, never an attribute or a script.
+    const CARD_ENTITIES = {
+        '&amp;copy;': '\u00a9', '&amp;trade;': '\u2122', '&amp;reg;': '\u00ae',
+        '&amp;#174;': '\u00ae', '&amp;#34;': '"', '&amp;#39;': '\u2019',
+        '&amp;middot;': '\u00b7', '&amp;Uuml;': '\u00dc',
+        '&lt;i&gt;': '<i>', '&lt;/i&gt;': '</i>', '&lt;br&gt;': '<br>',
+    };
+    const CARD_ENTITY_RE = /&amp;(?:copy|trade|reg|middot|Uuml|#174|#34|#39);|&lt;\/?i&gt;|&lt;br&gt;/g;
+
+    /** Escape card text for innerHTML, keeping the deck's own typography readable. */
+    function cardText(text) {
+        return esc(text).replace(CARD_ENTITY_RE, m => CARD_ENTITIES[m] || m);
+    }
+
     function formatBlackCard(text) {
-        return text.replace(/_+/g, '<span style="border-bottom: 2px solid #fff; padding: 0 0.5rem;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>');
+        // Escaped BEFORE the blank-line markup is spliced in — the only free HTML here is ours.
+        return cardText(text).replace(/_+/g, '<span style="border-bottom: 2px solid #fff; padding: 0 0.5rem;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>');
+    }
+
+    function sameName(a, b) {
+        return String(a == null ? '' : a).trim().toLowerCase() ===
+               String(b == null ? '' : b).trim().toLowerCase();
+    }
+
+    function cleanName(raw) {
+        return String(raw == null ? '' : raw).trim().slice(0, 20);
+    }
+
+    function clearGameOverTimer() {
+        if (state.gameOverTimer) { clearTimeout(state.gameOverTimer); state.gameOverTimer = null; }
+    }
+
+    /**
+     * Everything one room owns, back to its starting values.
+     *
+     * Create Game / Join Game are reachable AFTER a terminal state (the host ended the room,
+     * we were removed, the link died), and resetToLobby deliberately leaves the game fields
+     * alone so the reason can be read off the screen. Without this the next room inherits the
+     * last one's phase — Start Game stays disabled for ever, every joiner is dealt into a
+     * round from somebody else's game, and nobody is czar.
+     */
+    function resetGameState() {
+        clearGameOverTimer();
+        state.players = [];
+        state.pastPlayers = Object.create(null);
+        state.reboundIds = Object.create(null);
+        state.nameRefused = Object.create(null);
+        state.blackDeck = [];
+        state.whiteDeck = [];
+        state.hands = Object.create(null);
+        state.myHand = [];
+        state.currentBlack = null;
+        state.czarId = null;
+        state.round = 0;
+        state.submissions = Object.create(null);
+        state.submissionOrder = [];
+        state.subKeys = Object.create(null);
+        state.subKeyOf = Object.create(null);
+        state.phase = 'lobby';
+        state.selectedCards = [];
+        state.revealedAuthor = null;
+        state.mySubmitted = false;
+        state.linkUp = true;
+        state.terminal = false;
+        state.lastResyncAt = Object.create(null);
+        state.wireIds = Object.create(null);
+        // A client learns which seat is its own from the host's first snapshot, not from
+        // the clientId it minted: the two are deliberately different things now.
+        state.myId = '';
+        selectedSubmissionId = null;
+        renderedSubmissions = [];
+        pickSent = false;
+        disarmSkip();
+    }
+
+    // One alias per seat, plus the parked ones and the last winner. The cap only stops an
+    // all-night room growing the map forever.
+    const MAX_WIRE_IDS = 128;
+
+    /**
+     * The id every OTHER peer knows this player by.
+     *
+     * A clientId is a bearer token: SlopNet seats whoever presents one, and it deliberately
+     * accepts a token-less claim on a seat whose token was never confirmed — otherwise a
+     * player whose join_ack was lost with their radio is locked out of their own chair. That
+     * leniency is right, and it means the last defence of a seat is that nobody at the table
+     * ever learned its id. So the wire carries an alias the host mints instead, for every
+     * player INCLUDING the host itself, whose id no token defends at all.
+     *
+     * The alias grants nothing: no message the host accepts is addressed by one (the czar
+     * picks by this round's opaque submission key, and every command is attributed to the
+     * connection it arrived on), so reading one off a broadcast buys an attacker nothing.
+     */
+    function wireId(playerId) {
+        if (typeof playerId !== 'string' || !playerId) return null;
+        let alias = state.wireIds[playerId];
+        if (alias) return alias;
+        if (Object.keys(state.wireIds).length >= MAX_WIRE_IDS) pruneWireIds();
+        const taken = new Set(Object.values(state.wireIds));
+        do { alias = 'w' + Math.random().toString(36).slice(2, 10); } while (taken.has(alias));
+        state.wireIds[playerId] = alias;
+        return alias;
+    }
+
+    /**
+     * Forget only the seats nobody can come back to. A LIVE alias must never change: it is
+     * the identity every client renders '(you)' and the crown from, and re-minting one
+     * mid-game would make a player a stranger to the table and to themselves.
+     */
+    function pruneWireIds() {
+        const keep = new Set(state.players.map(p => p.id));
+        Object.keys(state.pastPlayers).forEach(id => keep.add(id));
+        if (state.czarId) keep.add(state.czarId);
+        if (state.revealedAuthor) keep.add(state.revealedAuthor.id);
+        for (const id of Object.keys(state.wireIds)) {
+            if (!keep.has(id)) delete state.wireIds[id];
+        }
+    }
+
+    /** A seat that moved to a new clientId keeps its face on every other screen. */
+    function moveWireId(oldId, newId) {
+        if (!oldId || oldId === newId) return;
+        const alias = state.wireIds[oldId];
+        if (!alias) return;
+        delete state.wireIds[oldId];
+        state.wireIds[newId] = alias;
+    }
+
+    /** What every peer is told about the roster. Away seats are kept, and shown greyed. */
+    function playerPayload() {
+        return state.players.map(p => ({ id: wireId(p.id), name: p.name, score: p.score, away: !!p.away }));
+    }
+
+    // ==================== HOST: WIRE ====================
+    function broadcastPlayerList() {
+        if (!lobby) return;
+        // czarId travels with the roster: a client that only hears 'player-list' must still
+        // be able to re-resolve the crown.
+        lobby.broadcast({ type: 'player-list', players: playerPayload(), czarId: wireId(state.czarId) });
+    }
+
+    /**
+     * A fresh opaque key per submission, minted when judging opens.
+     *
+     * Identity, not position, is what the czar picks — but the identity on the WIRE must not
+     * be the author's own id, or every client can join the judging payload against the roster
+     * it already holds and read who wrote what before the round is decided.
+     */
+    function mintSubKeys() {
+        state.subKeys = Object.create(null);
+        state.subKeyOf = Object.create(null);
+        for (const id of state.submissionOrder) subKeyFor(id);
+    }
+
+    /** This round's key for one submission, minted on demand — never the author's id. */
+    function subKeyFor(playerId) {
+        let key = state.subKeyOf[playerId];
+        if (key) return key;
+        do { key = 's' + Math.random().toString(36).slice(2, 10); } while (state.subKeys[key]);
+        state.subKeys[key] = playerId;
+        state.subKeyOf[playerId] = key;
+        return key;
+    }
+
+    /** The judging pool as every client sees it: opaque keys, never author ids. */
+    function judgingPayload() {
+        return state.submissionOrder
+            .map(id => ({ id: subKeyFor(id), cards: state.submissions[id] }))
+            .filter(e => Array.isArray(e.cards) && e.cards.length);
+    }
+
+    function broadcastJudging() {
+        if (!lobby) return;
+        lobby.broadcast({
+            type: 'judging',
+            round: state.round,
+            czarId: wireId(state.czarId),
+            submissions: judgingPayload(),
+        });
+    }
+
+    /**
+     * Who this round is actually waiting for.
+     *
+     * Present, not the czar — and not a seat that was dealt in DURING this round unless it
+     * has already played. A mid-hand arrival (a spectator friend, a second device under a
+     * fresh name) is welcome and gets a hand, but the moment it counted towards the quorum
+     * one idle tab could hold the whole table on "3 / 4 submitted" with no exit but a host
+     * tap. Their card still counts the instant they play it: the same seat then satisfies
+     * both sides of the comparison.
+     */
+    function eligibleSubmitters() {
+        return state.players.filter(p =>
+            !p.away && p.id !== state.czarId &&
+            (p.joinedRound !== state.round || !!state.submissions[p.id]));
+    }
+
+    /**
+     * One full snapshot, the only thing a joining/returning/reloading client needs.
+     * It replaces the old 'joined' + 'game-start' pair, which carried a phase the client
+     * threw away and left a reloaded player on an empty game screen.
+     */
+    function buildResync(clientId) {
+        const eligible = eligibleSubmitters();
+        const inJudging = state.phase === 'judging' || state.phase === 'result';
+        const done = state.phase === 'result' || state.phase === 'gameover';
+        return {
+            type: 'resync',
+            players: playerPayload(),
+            // Which seat is yours. A client cannot work that out for itself any more, and
+            // that is the point: its own clientId names nobody on the wire.
+            youId: wireId(clientId),
+            czarId: wireId(state.czarId),
+            scoreLimit: state.scoreLimit,
+            phase: state.phase,
+            round: state.round,
+            black: state.currentBlack,
+            hand: state.hands[clientId] || [],
+            submitted: !!state.submissions[clientId],
+            submitCount: eligible.filter(p => state.submissions[p.id]).length,
+            needed: eligible.length,
+            submissions: inJudging ? judgingPayload() : null,
+            result: done && state.revealedAuthor ? {
+                winnerId: wireId(state.revealedAuthor.id),
+                winnerName: state.revealedAuthor.name,
+                winningCards: state.revealedAuthor.cards,
+                gameOver: state.phase === 'gameover',
+            } : null,
+            gameOver: state.phase === 'gameover' && state.revealedAuthor
+                ? { winnerName: state.revealedAuthor.name } : null,
+        };
+    }
+
+    /**
+     * Send one snapshot to one client.
+     *
+     * @param {number} [minGapMs] when given, skip the send if this client had a snapshot
+     *   that recently. A snapshot is the largest message the host builds, and the paths that
+     *   correct a client (a refused or duplicate submit) are exactly the ones a wedged or
+     *   hostile peer can repeat as fast as it likes — one correction is enough for a burst.
+     */
+    function sendResync(clientId, minGapMs) {
+        if (!lobby || clientId === state.myId) return;
+        const now = Date.now();
+        if (minGapMs && now - (state.lastResyncAt[clientId] || 0) < minGapMs) return;
+        // Bounded like every other id-keyed map here: a long flaky night must not grow it.
+        const seen = Object.keys(state.lastResyncAt);
+        if (seen.length >= MAX_PAST_PLAYERS && !(clientId in state.lastResyncAt)) {
+            delete state.lastResyncAt[seen[0]];
+        }
+        state.lastResyncAt[clientId] = now;
+        lobby.send(clientId, buildResync(clientId));
+    }
+
+    // One correction per burst: see sendResync's minGapMs.
+    const RESYNC_MIN_GAP_MS = 250;
+
+    // ==================== HOST: ROSTER ====================
+
+    /**
+     * The next crown-holder, walking FORWARD from a seat index over players who are here.
+     * `index` may be -1 ("start at seat 0"). Never findIndex(...)+1: that returns 0 when the
+     * czar has just been removed, silently restarting the rotation at the host.
+     */
+    function nextCzarFrom(index) {
+        const n = state.players.length;
+        if (n === 0) return null;
+        const from = (typeof index === 'number' && index >= 0) ? index : -1;
+        for (let i = 1; i <= n; i++) {
+            const p = state.players[(from + i) % n];
+            if (p && !p.away) return p.id;
+        }
+        // Everybody is away. Keep the crown moving anyway rather than pinning it.
+        const fallback = state.players[(from + 1) % n];
+        return fallback ? fallback.id : null;
+    }
+
+    function czarIsAway() {
+        if (!state.czarId) return true;
+        const czar = state.players.find(p => p.id === state.czarId);
+        return !czar || !!czar.away;
+    }
+
+    /**
+     * The czar went away (or their seat is gone). Move the crown to the next player who is
+     * actually here, and tell everyone — including the new czar, who needs the pick UI.
+     *
+     * @returns {false|'moved'|'advanced'} 'advanced' means the ROUND moved on, so the caller
+     *   must not advance it a second time — one membership event, one black card.
+     */
+    function repairCzar(fromIndex) {
+        if (!state.isHost) return false;
+        if (state.phase === 'lobby' || state.phase === 'gameover') return false;
+        // A czar who merely blinked keeps the crown while the result is on screen: the round
+        // is already decided, and the host's own Next Round button still advances it. Only a
+        // seat that is GONE has to be replaced here.
+        if (state.phase === 'result' && state.players.some(p => p.id === state.czarId)) return false;
+        if (!czarIsAway()) return false;
+        // `fromIndex` is for a czar who has already been spliced out: findIndex would return
+        // -1 for them and restart the rotation at seat 0.
+        const from = typeof fromIndex === 'number'
+            ? fromIndex
+            : state.players.findIndex(p => p.id === state.czarId);
+        const next = nextCzarFrom(from);
+        if (!next || next === state.czarId) return false;
+        state.czarId = next;
+        const p = state.players.find(x => x.id === next);
+        log('Card Czar is now ' + ((p && p.name) || 'someone else'));
+
+        if (state.phase === 'judging') {
+            // Nobody judges their own card: the new czar may well have played one.
+            const own = state.submissionOrder.indexOf(state.czarId);
+            if (own !== -1) state.submissionOrder.splice(own, 1);
+            if (state.submissionOrder.length === 0) {
+                toast('No answers left to judge — skipping the round');
+                nextRound();
+                return 'advanced';
+            }
+            broadcastPlayerList();
+            broadcastJudging();
+            renderRound();
+            return 'moved';
+        }
+
+        broadcastPlayerList();
+        renderRound();
+        return 'moved';
+    }
+
+    /**
+     * Move a seat (score, hand, submission, crown) onto a new clientId, and RETIRE the old
+     * one: without the forwarding record a rung from the tab the player walked away from
+     * matches nothing and mints a second seat for one human, which inflates the round's
+     * quorum and waits for a chair nobody is sitting in.
+     * @returns {boolean} whether the live judging pool was re-keyed by this move.
+     */
+    function rebindSeat(oldId, newId, name) {
+        if (!oldId || oldId === newId) return false;
+        const p = state.players.find(x => x.id === oldId);
+        if (p) {
+            p.id = newId;
+            if (name) p.name = name;
+            p.away = false;
+        }
+        if (state.hands[oldId]) { state.hands[newId] = state.hands[oldId]; delete state.hands[oldId]; }
+        if (state.submissions[oldId]) { state.submissions[newId] = state.submissions[oldId]; delete state.submissions[oldId]; }
+        let poolChanged = false;
+        const i = state.submissionOrder.indexOf(oldId);
+        if (i !== -1) {
+            state.submissionOrder[i] = newId;
+            poolChanged = true;
+            const key = state.subKeyOf[oldId];
+            if (key) { state.subKeys[key] = newId; state.subKeyOf[newId] = key; delete state.subKeyOf[oldId]; }
+        }
+        if (state.czarId === oldId) { state.czarId = newId; poolChanged = true; }
+        if (state.revealedAuthor && state.revealedAuthor.id === oldId) state.revealedAuthor.id = newId;
+        moveWireId(oldId, newId);
+        noteRebound(oldId, newId);
+        return poolChanged;
+    }
+
+    /** Remember that `oldId` no longer owns a seat — `newId` does. Bounded, and acyclic. */
+    function noteRebound(oldId, newId) {
+        // A seat that comes back to an id it once left would otherwise close a loop
+        // (old -> new -> old) and resolveRebound would walk it for ever. Dropping the
+        // destination's own forwarding edge first makes a cycle impossible.
+        delete state.reboundIds[newId];
+        const ids = Object.keys(state.reboundIds);
+        if (ids.length >= MAX_PAST_PLAYERS) delete state.reboundIds[ids[0]];
+        state.reboundIds[oldId] = newId;
+    }
+
+    /**
+     * Remember that this connection has been TOLD a name is not its own.
+     *
+     * A name is a claim, not a proof: nothing on the wire ties one to a person, so a seat
+     * that moves on a name alone moves to whoever types it. The one piece of evidence the
+     * host does hold is its own earlier refusal — a connection it has already told "somebody
+     * else is playing under that name" is, by definition, not that player, so it may never
+     * be handed their seat afterwards. Bounded, and prototype-less like every other map
+     * keyed by something that arrived over the wire.
+     */
+    function noteNameRefused(clientId, name) {
+        if (typeof clientId !== 'string' || !clientId || !name) return;
+        const ids = Object.keys(state.nameRefused);
+        if (ids.length >= MAX_PAST_PLAYERS) delete state.nameRefused[ids[0]];
+        state.nameRefused[clientId] = String(name).trim().toLowerCase();
+    }
+
+    /** Has this connection already been refused this exact name? */
+    function nameWasRefused(clientId, name) {
+        if (typeof clientId !== 'string' || !clientId || !name) return false;
+        return state.nameRefused[clientId] === String(name).trim().toLowerCase();
+    }
+
+    /** Follow a retired clientId to the seat its owner sits in now. */
+    function resolveRebound(clientId) {
+        let id = clientId;
+        for (let i = 0; i < 8 && state.reboundIds[id]; i++) id = state.reboundIds[id];
+        return id;
+    }
+
+    /**
+     * The seat a retired clientId was rebound onto, IF somebody is sitting in it right now.
+     * Such an arrival is the tab the player walked away from: it must never be seated again.
+     */
+    function liveHeirSeat(clientId) {
+        const heirId = resolveRebound(clientId);
+        if (heirId === clientId) return null;
+        const heir = state.players.find(p => p.id === heirId);
+        return (heir && !heir.away) ? heir : null;
+    }
+
+    function parkPlayer(clientId, player, hand) {
+        const ids = Object.keys(state.pastPlayers);
+        if (ids.length >= MAX_PAST_PLAYERS) delete state.pastPlayers[ids[0]];
+        state.pastPlayers[clientId] = { player, hand: hand || [] };
+    }
+
+    /** Put a parked seat back on the roster under (possibly new) clientId. */
+    function restoreParked(parkedId, clientId, name) {
+        const parked = state.pastPlayers[parkedId];
+        if (!parked) return null;
+        delete state.pastPlayers[parkedId];
+        const player = parked.player;
+        player.id = clientId;
+        player.away = false;
+        if (name) player.name = name;
+        state.players.push(player);
+        if (parked.hand && parked.hand.length) state.hands[clientId] = parked.hand;
+        // Same rule as rebindSeat: the id this seat used to answer to is retired, so a late
+        // rung carrying it cannot mint a second seat for the same human.
+        if (parkedId !== clientId) { moveWireId(parkedId, clientId); noteRebound(parkedId, clientId); }
+        return player;
+    }
+
+    /**
+     * Find the seat this arrival owns: their own (by clientId), the one their old clientId was
+     * rebound onto, their parked one, or — for a player who closed and reopened their tab, and
+     * so arrives under a BRAND NEW clientId — the absent seat that carries their name.
+     * @returns {null|{player, poolChanged}} poolChanged: a live judging pool was re-keyed.
+     */
+    function seatFor(clientId, name) {
+        const mine = state.players.find(p => p.id === clientId);
+        if (mine) return { player: mine, poolChanged: false };
+
+        // A seat this clientId was rebound OFF still belongs to the same human. Callers check
+        // liveHeirSeat() first, so anything found here is absent and free to move back.
+        const heirId = resolveRebound(clientId);
+        if (heirId !== clientId) {
+            const heir = state.players.find(p => p.id === heirId);
+            if (heir) {
+                const poolChanged = rebindSeat(heirId, clientId, name || heir.name);
+                return { player: heir, poolChanged };
+            }
+            if (state.pastPlayers[heirId]) {
+                return { player: restoreParked(heirId, clientId, name), poolChanged: false };
+            }
+        }
+
+        if (state.pastPlayers[clientId]) {
+            return { player: restoreParked(clientId, clientId, name), poolChanged: false };
+        }
+        // A name is the ONLY thing left to go on for a player who came back under a brand new
+        // clientId — and it proves nothing, so it may not be used by a connection this host
+        // has already told the name is not its own (see noteNameRefused). Everything above
+        // this line is a seat the arrival can prove; nothing below it is.
+        if (name && !nameWasRefused(clientId, name)) {
+            // The host's own seat is never reclaimable by name: it is the one seat with no
+            // SlopNet token behind it, and moving it would take the host's hand and authority
+            // with it.
+            const away = state.players.find(p => p.away && p.id !== state.myId && sameName(p.name, name));
+            if (away) return { player: away, poolChanged: rebindSeat(away.id, clientId, name) };
+            const parkedId = Object.keys(state.pastPlayers)
+                .find(id => sameName(state.pastPlayers[id].player.name, name));
+            if (parkedId) {
+                return { player: restoreParked(parkedId, clientId, name), poolChanged: false };
+            }
+        }
+        return null;
+    }
+
+    /** Everything a seated arrival needs, whichever door they came through. */
+    function admitPlayer(clientId, name, poolChanged) {
+        if (lobby && lobby.players && lobby.players.get(clientId)) {
+            // All three layers must agree on the name: sloplobby's record is what its own
+            // left/lost payloads carry back to us.
+            lobby.players.get(clientId).name = name;
+        }
+        // Late joiners are welcome in CAH, so deal them in for the round in progress. Nothing
+        // is dealt once the game is over — there is no round left to play it in.
+        if (state.phase !== 'lobby' && state.phase !== 'gameover' &&
+            !(state.hands[clientId] || []).length) {
+            state.hands[clientId] = dealHand(10);
+        }
+        sendResync(clientId);
+        broadcastPlayerList();
+        renderWaitingPlayers();
+        renderGamePlayers();
+        if (state.phase === 'gameover') { renderFinalScores(); return; }
+        // Only 'playing' needs a full repaint (the counter and the away marks). Repainting
+        // during 'judging' would rebuild the grid and drop the czar's half-made choice — so
+        // it happens ONLY when this arrival actually re-keyed the pool, which would otherwise
+        // leave every other czar's grid pointing at a submission the host no longer knows.
+        if (state.phase === 'playing') renderRound();
+        else if (state.phase === 'judging' && poolChanged) { broadcastJudging(); renderRound(); }
+        maybeStartJudging();
+    }
+
+    /**
+     * A rung from a tab whose seat has moved to another device. It gets no seat, and is told
+     * so in the one message the client already treats as terminal.
+     */
+    function refuseSupersededTab(clientId, reason) {
+        log('Ignored a stale connection for a seat that has moved');
+        if (lobby) lobby.send(clientId, { type: 'join-error', reason });
+    }
+
+    const SUPERSEDED_REASON = 'This game is open on another device';
+    const NAME_CLASH_REASON =
+        'That name is already in the game — if that is you, wait a few seconds and try again';
+
+    function hostPlayerJoined(clientId, metadata) {
+        if (!state.isHost) return;
+        if (typeof clientId !== 'string' || !clientId) return 'Could not seat you — please reload';
+        // The host's own player id rides in every roster payload and is unmistakable, and the
+        // host holds no SlopNet seat for it, so no token defends it. Asserting it used to hand
+        // over the host's own seat AND the authority that goes with it.
+        if (clientId === state.myId) return 'That seat is taken';
+        if (liveHeirSeat(clientId)) return SUPERSEDED_REASON;
+
+        const name = cleanName(metadata && metadata.name);
+        if (!name) return 'Please enter a name';
+        // Only a name held by somebody who is CONNECTED is a duplicate. A matching absent
+        // seat is that player walking back in with a new clientId.
+        const clash = state.players.find(p => !p.away && p.id !== clientId && sameName(p.name, name));
+        if (clash) { noteNameRefused(clientId, name); return NAME_CLASH_REASON; }
+
+        // The retry that refusal asks for ("wait a few seconds and try again") used to be
+        // all it took to walk into the seat the moment its owner's phone locked: the clash
+        // test above only sees CONNECTED players, and an absent seat moves on a name alone.
+        // A connection that has been told this name is not its own does not get a second,
+        // luckier answer to the same question while the seat is still being held.
+        // (A seat this connection can PROVE — its own, or the one its old clientId was
+        // rebound onto — is not a name claim at all, and is never refused here.)
+        const ownSeatId = resolveRebound(clientId);
+        if (nameWasRefused(clientId, name) &&
+            state.players.some(p => p.away && p.id !== clientId && p.id !== ownSeatId &&
+                sameName(p.name, name))) {
+            return NAME_CLASH_REASON;
+        }
+
+        const seat = seatFor(clientId, name);
+        if (seat) {
+            seat.player.away = false;
+            seat.player.name = name;
+            log(name + ' rejoined');
+        } else {
+            // joinedRound stamps the round this seat arrived in: it may play, but the round
+            // in progress never waits for it (see eligibleSubmitters).
+            state.players.push({ id: clientId, name, score: 0, away: false, joinedRound: state.round });
+            log(name + ' joined');
+        }
+        admitPlayer(clientId, name, seat && seat.poolChanged);
+        // Return undefined = accept
+    }
+
+    function hostPlayerRejoined(clientId, metadata) {
+        if (!state.isHost) return;
+        if (typeof clientId !== 'string' || !clientId) return;
+        // sloplobby ignores what this handler returns, so a refusal has to be spoken.
+        if (clientId === state.myId) {
+            if (lobby) lobby.removeClient(clientId, 'That seat is taken');
+            return;
+        }
+        // The same human is already playing on another device — this is the tab they left.
+        if (liveHeirSeat(clientId)) { refuseSupersededTab(clientId, SUPERSEDED_REASON); return; }
+
+        const known = state.players.find(p => p.id === clientId);
+        let name = cleanName(metadata && metadata.name) ||
+            (known && known.name) ||
+            (lobby && lobby.players.get(clientId) && cleanName(lobby.players.get(clientId).name)) ||
+            'Unknown';
+        // A rejoin carries a name straight off the wire, and the join path refuses a name a
+        // connected player already holds. Without the same rule here a rejoin could squat
+        // somebody else's name and lock them out of their own scored seat. Refuse the NAME,
+        // never the player: they keep the one their seat already had.
+        let nameClashed = false;
+        if (state.players.some(p => !p.away && p.id !== clientId && sameName(p.name, name))) {
+            nameClashed = true;
+            // Told, and remembered: this door refuses the name too, so the same connection
+            // may not claim the seat behind it once its holder goes absent.
+            if (cleanName(metadata && metadata.name)) noteNameRefused(clientId, name);
+            name = (known && known.name) || 'Unknown';
+        }
+        const lookup = name === 'Unknown' ? '' : name;
+
+        const seat = seatFor(clientId, lookup);
+        let p;
+        if (seat) {
+            p = seat.player;
+            p.away = false;
+            if (lookup) p.name = lookup;
+        } else {
+            // An arrival that can neither prove a seat nor claim its own name — a player who
+            // is CONNECTED holds it — is the tab somebody walked away from, not somebody new.
+            // The join door refuses exactly this (NAME_CLASH_REASON); this door has to as
+            // well, because seating it deals a live, hand-holding chair to a screen nobody is
+            // watching. Reachable whenever the forwarding record is missing — evicted by the
+            // MAX_PAST_PLAYERS cap on a long flaky night, or past resolveRebound's hop limit.
+            if (nameClashed) { refuseSupersededTab(clientId, NAME_CLASH_REASON); return; }
+            // A 'client-rejoined' the app has no seat for at all is a new player to us.
+            p = { id: clientId, name, score: 0, away: false, joinedRound: state.round };
+            state.players.push(p);
+        }
+        log(p.name + ' reconnected');
+        toast(p.name + ' reconnected');
+        // The crown first: admitPlayer runs the round gate, which must see the repaired czar.
+        repairCzar();
+        admitPlayer(clientId, p.name, seat && seat.poolChanged);
+    }
+
+    /**
+     * TEMPORARY. SlopNet holds the seat for two minutes and the player may walk straight back
+     * in, so nothing is deleted here — marking them away is what keeps their score, their
+     * hand and the card they already played.
+     */
+    function hostPlayerLeft(clientId, meta) {
+        // The host's own seat is not the library's to take away: a departure it did not make
+        // must never mark it away or move the crown off it.
+        if (clientId === state.myId) return;
+        const p = state.players.find(x => x.id === clientId);
+        if (!p) return;
+        p.away = true;
+        log(p.name + ' disconnected');
+        broadcastPlayerList();
+        renderWaitingPlayers();
+        renderGamePlayers();
+        if (state.phase === 'gameover') { renderFinalScores(); return; }
+        // One membership event moves the round on at most once.
+        if (repairCzar() === 'advanced') return;
+        // Their departure may have satisfied the round's quorum: nothing else will look.
+        maybeStartJudging();
+    }
+
+    /** FINAL. The seat is released — park the record so a late return still owns it. */
+    function hostPlayerLost(clientId, meta) {
+        if (clientId === state.myId) return;
+        const idx = state.players.findIndex(x => x.id === clientId);
+        if (idx === -1) return;
+        const player = state.players[idx];
+        const wasCzar = state.czarId === clientId;
+
+        state.players.splice(idx, 1);
+        parkPlayer(clientId, player, state.hands[clientId]);
+        delete state.hands[clientId];
+        delete state.submissions[clientId];
+        const oi = state.submissionOrder.indexOf(clientId);
+        if (oi !== -1) state.submissionOrder.splice(oi, 1);
+        delete state.subKeyOf[clientId];
+        log(player.name + ' left the game');
+
+        // Hand the crown on from where they SAT, not from seat 0. If that repair advanced the
+        // round it has already painted and broadcast everything — going on would burn a
+        // second black card for one departure.
+        if (wasCzar && repairCzar(idx - 1) === 'advanced') return;
+
+        broadcastPlayerList();
+        if (state.phase === 'judging') {
+            if (state.submissionOrder.length === 0) {
+                toast('Everyone who played this round has left — skipping it');
+                nextRound();
+                return;
+            }
+            broadcastJudging();
+        }
+        renderWaitingPlayers();
+        renderGamePlayers();
+        if (state.phase === 'gameover') { renderFinalScores(); return; }
+        if (state.phase !== 'lobby') renderRound();
+        if (repairCzar() === 'advanced') return;
+        maybeStartJudging();
+    }
+
+    /**
+     * Put down whatever lobby this page was holding, before another one takes its place.
+     *
+     * `lobby` is the page's ONE connection to the room, and both doors write to it. Leaving
+     * the old object alive behind the new one leaves it fully wired: its onClientData still
+     * repaints this screen from somebody else's room, and its own failure path later destroys
+     * whatever `lobby` points at by then — the live room this page is actually hosting.
+     * Nulling before destroy() keeps a handler that re-enters from tidying up the new one.
+     */
+    function retireLobby() {
+        if (!lobby) return;
+        const old = lobby;
+        lobby = null;
+        try { old.destroy(); } catch (e) { /* it is going away either way */ }
+    }
+
+    /** One door at a time: both buttons stay on screen for the whole attempt. */
+    function setEntryDoorsEnabled(on) {
+        $('btn-create').disabled = !on;
+        $('btn-join').disabled = !on;
     }
 
     // ==================== HOST LOGIC ====================
     async function createGame() {
-        const name = $('player-name').value.trim();
+        const name = cleanName($('player-name').value);
         if (!name) { toast('Enter your name first'); return; }
 
+        // A join that is still dialling (or a room already made) is retired FIRST — see
+        // retireLobby. Both doors are then shut for the length of this attempt: the lobby
+        // screen keeps Create AND Join visible, and Enter in either field clicks one of them.
+        retireLobby();
+        setEntryDoorsEnabled(false);
+
+        // Create Game is reachable after a terminal state, and the last room's phase/round
+        // would otherwise be inherited whole: Start Game disabled for ever, joiners dealt into
+        // somebody else's round, nobody czar.
+        resetGameState();
         state.myName = name;
         state.isHost = true;
         state.scoreLimit = Math.max(1, Math.min(20, parseInt($('score-limit').value) || 7));
         state.myId = 'host-' + Date.now() + Math.random().toString(36).slice(2, 5);
 
+        // The lobby THIS attempt owns. Anything that resolves after a newer attempt has
+        // taken the page over belongs to nobody, and must not touch `lobby`.
+        let mine = null;
         try {
-            $('btn-create').disabled = true;
-
             lobby = new SlopLobby.SlopLobby({
                 roomPrefix: 'cah-',
                 storageKey: 'cah-client-id',
                 onHostData: (clientId, data) => handleHostMessage(clientId, data),
-                onPlayerJoined: (clientId, metadata) => {
-                    const playerName = (metadata && metadata.name) || 'Unknown';
-                    log(playerName + ' joined');
-
-                    const player = { id: clientId, name: playerName, score: 0 };
-                    state.players.push(player);
-
-                    lobby.send(clientId, { type: 'joined', players: state.players, scoreLimit: state.scoreLimit });
-                    lobby.broadcast({ type: 'player-list', players: state.players });
-                    renderWaitingPlayers();
-
-                    if (state.phase !== 'lobby') {
-                        const hand = dealHand(10);
-                        state.hands[clientId] = hand;
-                        lobby.send(clientId, { type: 'game-start', hand, black: state.currentBlack, czarId: state.players[state.czarIndex].id, round: state.round, phase: state.phase });
+                onPlayerJoined: (clientId, metadata) => hostPlayerJoined(clientId, metadata),
+                onPlayerRejoined: (clientId, metadata) => hostPlayerRejoined(clientId, metadata),
+                onPlayerLeft: (clientId, meta) => hostPlayerLeft(clientId, meta),
+                onPlayerLost: (clientId, meta) => hostPlayerLost(clientId, meta),
+                onStateChange: (status) => {
+                    // The host's own signalling socket. Nobody is evicted by any of these —
+                    // the data channels carry the game — so this is information only.
+                    if (status === 'reconnect-failed') {
+                        toast('Trouble reaching the signalling server — players already in are fine');
                     }
-                    // Return undefined = accept
-                },
-                onPlayerRejoined: (clientId, metadata) => {
-                    const playerName = (metadata && metadata.name) || (lobby.players.get(clientId) && lobby.players.get(clientId).name) || 'Unknown';
-                    log(playerName + ' reconnected');
-                    toast(playerName + ' reconnected');
-
-                    if (!state.players.find(p => p.id === clientId)) {
-                        state.players.push({ id: clientId, name: playerName, score: 0 });
-                    }
-
-                    lobby.send(clientId, { type: 'joined', players: state.players, scoreLimit: state.scoreLimit });
-                    lobby.broadcast({ type: 'player-list', players: state.players });
-                    renderWaitingPlayers();
-                    renderGamePlayers();
-
-                    if (state.phase !== 'lobby') {
-                        const hand = state.hands[clientId] || dealHand(10);
-                        state.hands[clientId] = hand;
-                        lobby.send(clientId, { type: 'game-start', hand, black: state.currentBlack, czarId: state.players[state.czarIndex].id, round: state.round, phase: state.phase });
-                    }
-                },
-                onPlayerLeft: (clientId, meta) => {
-                    const playerName = (meta && meta.name) || 'Unknown';
-                    log(playerName + ' disconnected');
-
-                    state.players = state.players.filter(p => p.id !== clientId);
-                    delete state.hands[clientId];
-                    delete state.submissions[clientId];
-
-                    lobby.broadcast({ type: 'player-list', players: state.players });
-                    renderWaitingPlayers();
-                    renderGamePlayers();
+                    log('Host connection: ' + status);
                 },
             });
+            mine = lobby;
 
-            state.gameCode = await lobby.createRoom(state.myName);
+            const code = await lobby.createRoom(state.myName);
+            // A newer attempt owns the page now: this room is already retired, and its code
+            // is not the one on screen.
+            if (lobby !== mine) return;
+            state.gameCode = code;
             log('Creating game ' + state.gameCode + '...');
 
-            state.players = [{ id: state.myId, name: state.myName, score: 0 }];
+            state.players = [{ id: state.myId, name: state.myName, score: 0, away: false }];
             $('display-code').textContent = state.gameCode;
             showScreen('waiting');
             renderWaitingPlayers();
         } catch (e) {
-            toast(e.message);
-            $('btn-create').disabled = false;
-            if (lobby) { lobby.destroy(); lobby = null; }
+            // 'destroyed' means this attempt was retired on purpose by a newer one — that
+            // one owns the screen now, so there is nothing to report and nothing to tidy.
+            if (e && e.type === 'destroyed') return;
+            toast((e && e.message) || 'Could not create the game');
+            setEntryDoorsEnabled(true);
+            state.isHost = false;
+            // Only ever tidy up OUR OWN lobby: `lobby` may already be a newer, live one.
+            if (mine && lobby === mine) retireLobby();
         }
     }
 
+    /**
+     * The host's own taps. A Symbol cannot survive serialisation, so no message off the wire
+     * can ever claim to be the host — which a plain `senderId === state.myId` comparison
+     * could, because the host's player id rides in every roster payload.
+     */
+    const HOST_SELF = Symbol('host-self');
+
+    /**
+     * Every command from every device — including the host's own taps — arrives here, and
+     * nothing past this point trusts the sender, the phase, the round or the payload shape.
+     */
     function handleHostMessage(senderId, data) {
-        switch (data.type) {
-            case 'submit': {
-                if (state.submissions[senderId]) break;
-                state.submissions[senderId] = data.cards;
+        if (!state.isHost || !lobby) return;
+        if (!data || typeof data !== 'object' || typeof data.type !== 'string') return;
 
-                // Remove played cards from player's hand on host
-                if (state.hands[senderId]) {
-                    state.hands[senderId] = state.hands[senderId].filter(c => !data.cards.includes(c));
-                }
-
-                const needed = state.players.length - 1; // everyone except czar
-                const got = Object.keys(state.submissions).length;
-
-                lobby.broadcast({ type: 'submit-count', count: got, needed });
-
-                if (got >= needed) {
-                    startJudging();
-                }
-                break;
-            }
-            case 'pick-winner': {
-                const czar = state.players[state.czarIndex];
-                if (senderId !== czar.id) break;
-                const winnerId = data.playerId || state.submissionOrder[data.index];
-                if (winnerId) announceWinner(winnerId);
-                break;
-            }
-            case 'next-round': {
-                nextRound();
-                break;
-            }
+        const isSelf = senderId === HOST_SELF;
+        const actorId = isSelf ? state.myId : senderId;
+        if (!isSelf) {
+            if (typeof actorId !== 'string') return;
+            // Nothing off the wire speaks as the host, whatever id it presents.
+            if (actorId === state.myId) return;
+            // Only a seated player may move the game on. Traffic from a connection the host
+            // has forgotten used to be filed under a raw peer id and counted as a submission.
+            if (!state.players.find(p => p.id === actorId)) return;
         }
+
+        switch (data.type) {
+            case 'submit': hostSubmit(actorId, isSelf, data); break;
+            case 'pick-winner': hostPickWinner(actorId, isSelf, data); break;
+            case 'next-round': hostNextRound(actorId, isSelf, data); break;
+            case 'resync-request':
+                // A rejoin already gets a snapshot from the host's own handler, and the
+                // client asks for one as well; answering both costs two full serialisations
+                // per flap. The belt-and-braces request is only honoured if the braces
+                // themselves have not just fired.
+                if (!isSelf && Date.now() - (state.lastResyncAt[actorId] || 0) > 100) {
+                    sendResync(actorId);
+                }
+                break;
+            default: break;   // unknown types are ignored, never guessed at
+        }
+    }
+
+    /**
+     * Answer a refused command. The host's own screen gets the SAME correction a client's
+     * does — a bare toast used to leave the host's optimistic UI ("Cards submitted!", "Pick
+     * Winner / Sending…") standing over a command that never happened.
+     */
+    function replyToSender(senderId, isSelf, message, reason) {
+        if (isSelf) {
+            toast(reason);
+            if (message === 'submit-rejected') {
+                state.mySubmitted = false;
+                state.selectedCards = [];
+                state.myHand = state.hands[state.myId] || state.myHand;
+            }
+            if (message === 'pick-rejected') { selectedSubmissionId = null; pickSent = false; }
+            if (state.phase !== 'lobby') renderRound();
+            return;
+        }
+        lobby.send(senderId, { type: message, reason });
+    }
+
+    function hostSubmit(senderId, isSelf, data) {
+        if (state.phase !== 'playing' || data.round !== state.round) {
+            replyToSender(senderId, isSelf, 'submit-rejected', 'That round has already moved on');
+            sendResync(senderId, RESYNC_MIN_GAP_MS);
+            return;
+        }
+        if (senderId === state.czarId) {
+            // Reachable when the crown moved mid-round: their tap was honest, so say so
+            // rather than leaving them on an optimistic "waiting for others" for ever.
+            replyToSender(senderId, isSelf, 'submit-rejected', 'The Card Czar does not play a card');
+            sendResync(senderId, RESYNC_MIN_GAP_MS);
+            return;
+        }
+        // First submit of the round wins. Their screen may have rewound (a revived seat is
+        // re-rendered before its own queued message is delivered), so send the truth rather
+        // than a rejection that would clear a flag which is genuinely set.
+        if (state.submissions[senderId]) { sendResync(senderId, RESYNC_MIN_GAP_MS); return; }
+
+        const need = (state.currentBlack && state.currentBlack.p) || 1;
+        const cards = data.cards;
+        if (!Array.isArray(cards) || cards.length !== need || !cards.every(c => typeof c === 'string')) {
+            replyToSender(senderId, isSelf, 'submit-rejected', 'Those cards are not a valid play');
+            return;
+        }
+        // Every card must be one we dealt them. This is what stops a client playing cards it
+        // does not hold — and, because the deck is the only source of card text, it is also
+        // what keeps arbitrary markup off every other player's screen.
+        const pool = (state.hands[senderId] || []).slice();
+        for (const card of cards) {
+            const i = pool.indexOf(card);
+            if (i === -1) {
+                replyToSender(senderId, isSelf, 'submit-rejected', 'Those cards are not in your hand');
+                return;
+            }
+            pool.splice(i, 1);
+        }
+
+        state.submissions[senderId] = cards;
+        state.hands[senderId] = pool;
+        if (senderId === state.myId) state.myHand = pool;
+        maybeStartJudging();
+    }
+
+    function hostPickWinner(senderId, isSelf, data) {
+        if (state.phase !== 'judging' || data.round !== state.round) {
+            replyToSender(senderId, isSelf, 'pick-rejected', 'That round has already been judged');
+            return;
+        }
+        // The host may judge for a czar who has gone away — otherwise one absence freezes
+        // the table with no button anywhere that can move it on.
+        const allowed = senderId === state.czarId || (isSelf && czarIsAway());
+        if (!allowed) {
+            replyToSender(senderId, isSelf, 'pick-rejected', 'Only the Card Czar picks the winner');
+            return;
+        }
+        // Clients pick by this round's opaque key and by nothing else: a raw player id off
+        // the wire would let a czar award the point to a PERSON rather than to a card, which
+        // is the one thing the anonymous pool exists to prevent. The host's own grid works in
+        // the player ids it already holds. Either way the id must still be in the live pool.
+        const picked = data.playerId;
+        const winnerId = isSelf
+            ? picked
+            : (typeof picked === 'string' ? state.subKeys[picked] : undefined);
+        if (typeof winnerId !== 'string' ||
+            state.submissionOrder.indexOf(winnerId) === -1 ||
+            !state.submissions[winnerId] ||
+            !state.players.find(p => p.id === winnerId)) {
+            replyToSender(senderId, isSelf, 'pick-rejected', 'That answer is no longer in play');
+            return;
+        }
+        announceWinner(winnerId);
+    }
+
+    function hostNextRound(senderId, isSelf, data) {
+        // 'result' only: in 'gameover' a queued tap would drag the table back into a round
+        // nobody can finish, and in 'playing' it would burn a black card mid-thought.
+        // Every rejection is answered, so a client's "Starting…" button is never orphaned.
+        if (state.phase !== 'result' || data.round !== state.round) {
+            replyToSender(senderId, isSelf, 'next-round-rejected', 'That round has already moved on');
+            return;
+        }
+        if (senderId !== state.czarId && !isSelf) {
+            replyToSender(senderId, isSelf, 'next-round-rejected', 'Only the Card Czar or the host starts the next round');
+            return;
+        }
+        nextRound();
     }
 
     function dealHand(count) {
@@ -608,67 +1459,89 @@
     }
 
     function startGame() {
-        if (state.players.length < 3) { toast('Need at least 3 players'); return; }
+        if (!state.isHost || state.phase !== 'lobby') return;
+        const present = state.players.filter(p => !p.away);
+        if (present.length < 3) { toast('Need at least 3 players'); return; }
 
         state.blackDeck = shuffle(CARD_DATA.black);
         state.whiteDeck = shuffle(CARD_DATA.white);
-        state.czarIndex = 0;
+        state.czarId = null;
         state.round = 0;
-        state.players.forEach(p => p.score = 0);
+        // pastPlayers and reboundIds are the ROOM's memory of who is who, not this game's
+        // state, and they must survive this transition: a player who switched device while
+        // the table was still in the lobby is one human with one seat only because of the
+        // forwarding record that switch wrote. Emptying the maps here blinded liveHeirSeat(),
+        // so the tab that player walked away from came back after Start Game, matched
+        // nothing, could not claim its own name (a connected player holds it) and was dealt a
+        // SECOND seat — which then inflated every later round's quorum and took its turn in
+        // the czar rotation on a screen nobody was watching. resetGameState() clears both when
+        // a genuinely new room is created; that is the one moment the history is stale.
+        // Only the lobby-era GAME payload is dropped, the same reset the live seats get.
+        for (const id of Object.keys(state.pastPlayers)) {
+            const parked = state.pastPlayers[id];
+            if (!parked) continue;
+            if (parked.player) parked.player.score = 0;
+            parked.hand = [];
+        }
+        state.players.forEach(p => { p.score = 0; });
 
-        // Deal hands
-        state.hands = {};
-        state.hands[state.myId] = dealHand(10);
-        state.myHand = state.hands[state.myId];
-
-        state.players.forEach(p => {
-            if (p.id === state.myId) return;
-            const hand = dealHand(10);
-            state.hands[p.id] = hand;
-            lobby.send(p.id, { type: 'game-start', hand, black: null, czarId: null, round: 0 });
-        });
+        // Deal hands. Each player's hand reaches them inside their own 'new-round'.
+        state.hands = Object.create(null);
+        state.players.forEach(p => { state.hands[p.id] = dealHand(10); });
+        state.myHand = state.hands[state.myId] || [];
 
         nextRound();
     }
 
     function nextRound() {
-        if (state.nextRoundTimer) { clearTimeout(state.nextRoundTimer); state.nextRoundTimer = null; }
+        clearGameOverTimer();
+        // The round this confirmation was about is over either way.
+        disarmSkip();
 
         state.round++;
-        if (state.round > 1) {
-            state.czarIndex = (state.czarIndex + 1) % state.players.length;
-        }
-        state.submissions = {};
+        // Round 1 starts at the first player who is here; later rounds walk forward from
+        // whoever wore the crown last.
+        state.czarId = nextCzarFrom(state.players.findIndex(p => p.id === state.czarId));
+        state.submissions = Object.create(null);
+        state.submissionOrder = [];
+        state.subKeys = Object.create(null);
+        state.subKeyOf = Object.create(null);
+        state.revealedAuthor = null;
         state.currentBlack = drawBlack();
         state.phase = 'playing';
         state.selectedCards = [];
+        state.mySubmitted = false;
+        selectedSubmissionId = null;
+        pickSent = false;
 
-        const czarId = state.players[state.czarIndex].id;
-
-        // Replenish hands
-        const pick = state.currentBlack.p || 1;
+        // Replenish hands — away players included, so a returning player finds their cards.
         state.players.forEach(p => {
-            if (p.id === czarId) return;
+            if (p.id === state.czarId) return;
             const hand = state.hands[p.id] || [];
-            const need = 10 - hand.length;
-            for (let i = 0; i < need; i++) {
-                hand.push(dealHand(1)[0]);
-            }
+            while (hand.length < 10) hand.push(dealHand(1)[0]);
             state.hands[p.id] = hand;
         });
 
         state.myHand = state.hands[state.myId] || [];
 
-        // Send round info to all clients
+        // The fresh round's quorum travels with it: without it a client czar keeps last
+        // round's fully-satisfied counter on screen until somebody plays. Last round's late
+        // arrivals are ordinary players now — state.round has already moved past the round
+        // they were stamped with.
+        const needed = eligibleSubmitters().length;
+
+        // Send round info to all clients (queued by SlopNet for anyone momentarily away).
         state.players.forEach(p => {
-            if (p.id === state.myId) return;
+            if (p.id === state.myId || !lobby) return;
             lobby.send(p.id, {
                 type: 'new-round',
                 black: state.currentBlack,
-                czarId,
+                czarId: wireId(state.czarId),
                 round: state.round,
                 hand: state.hands[p.id] || [],
-                players: state.players,
+                players: playerPayload(),
+                submitCount: 0,
+                needed,
             });
         });
 
@@ -677,45 +1550,90 @@
         renderRound();
     }
 
+    /**
+     * The round's completion gate, in ONE place, called from every event that can change
+     * either side of it: a submit, and every membership change.
+     */
+    function maybeStartJudging() {
+        if (!state.isHost || !lobby) return;
+        if (state.phase !== 'playing') return;
+
+        const eligible = eligibleSubmitters();
+        const needed = eligible.length;
+        const got = eligible.filter(p => state.submissions[p.id]).length;
+
+        lobby.broadcast({ type: 'submit-count', count: got, needed });
+        updateHostSubmitCount(got, needed);
+        // The "Start judging now" backstop exists precisely for a present-but-idle player, so
+        // it has to be repainted as submissions arrive — nothing else re-renders the host
+        // during a round that sees no membership event.
+        renderHostRoundControls();
+
+        if (needed === 0) {
+            // Nobody left who could play this black card. startJudging judges whatever WAS
+            // played before they went — throwing those cards away is not the host's to do —
+            // and skips the round only when the pool really is empty.
+            startJudging();
+            return;
+        }
+        if (got >= needed) startJudging();
+    }
+
     function startJudging() {
+        if (state.phase !== 'playing') return;
+
+        // The czar's own card can be in here after the crown moved mid-round; it is never
+        // judgeable by its author.
+        const ids = Object.keys(state.submissions).filter(id =>
+            id !== state.czarId &&
+            Array.isArray(state.submissions[id]) &&
+            state.submissions[id].length);
+
+        if (ids.length === 0) {
+            toast('No submissions — skipping round');
+            nextRound();
+            return;
+        }
+
         state.phase = 'judging';
-
-        // Shuffle submission order for anonymity
-        const playerIds = Object.keys(state.submissions);
-        state.submissionOrder = shuffle(playerIds);
-
-        lobby.broadcast({ type: 'judging', submissions: state.submissionOrder.map(id => ({ cards: state.submissions[id] })) });
-
+        state.submissionOrder = shuffle(ids);   // shuffled for anonymity
+        mintSubKeys();                          // ...and keyed, so the wire is anonymous too
+        broadcastJudging();
         renderRound();
     }
 
     function announceWinner(winnerId) {
+        if (state.phase !== 'judging') return;       // one award per black card, ever
         const winner = state.players.find(p => p.id === winnerId);
         if (!winner) return;
 
         winner.score++;
-        state.phase = 'result';
-        state.revealedAuthor = { id: winnerId, name: winner.name, cards: state.submissions[winnerId] };
-
-        const winData = {
-            type: 'round-winner',
-            winnerId,
-            winnerName: winner.name,
-            winningCards: state.submissions[winnerId],
-            players: state.players,
+        const gameOver = winner.score >= state.scoreLimit;
+        // Decided BEFORE anything is painted, so the result screen knows whether to offer
+        // Next Round at all.
+        state.phase = gameOver ? 'gameover' : 'result';
+        state.revealedAuthor = {
+            id: winnerId,
+            name: winner.name,
+            cards: state.submissions[winnerId] || [],
         };
 
-        if (winner.score >= state.scoreLimit) {
-            winData.gameOver = true;
-        }
-
-        lobby.broadcast(winData);
+        lobby.broadcast({
+            type: 'round-winner',
+            round: state.round,
+            winnerId: wireId(winnerId),
+            winnerName: winner.name,
+            winningCards: state.revealedAuthor.cards,
+            players: playerPayload(),
+            gameOver,
+        });
         renderRound();
 
-        if (winner.score >= state.scoreLimit) {
-            state.phase = 'gameover';
-            setTimeout(() => {
-                lobby.broadcast({ type: 'game-over', players: state.players, winnerName: winner.name });
+        if (gameOver) {
+            clearGameOverTimer();
+            state.gameOverTimer = setTimeout(() => {
+                state.gameOverTimer = null;
+                if (lobby) lobby.broadcast({ type: 'game-over', players: playerPayload(), winnerName: winner.name });
                 showGameOver(winner.name);
             }, 4000);
         }
@@ -723,129 +1641,392 @@
 
     // ==================== CLIENT LOGIC ====================
     async function joinGame() {
-        const name = $('player-name').value.trim();
+        const name = cleanName($('player-name').value);
         const code = $('join-code').value.trim().toUpperCase();
         if (!name) { toast('Enter your name first'); return; }
         if (!code) { toast('Enter a game code'); return; }
 
+        // A room this page had already made — or an earlier join — is retired FIRST, and both
+        // doors are shut for the length of this attempt (see createGame).
+        retireLobby();
+        setEntryDoorsEnabled(false);
+
+        // Join is reachable after a terminal state too, so nothing of the last room survives.
+        resetGameState();
         state.myName = name;
         state.gameCode = code;
         state.isHost = false;
 
+        // The lobby this attempt owns. A second tap of Join retires it inside the
+        // library, and the loser's catch must not tidy up the winner.
+        let mine = null;
         try {
-            $('btn-join').disabled = true;
             log('Connecting to game ' + code + '...');
 
             lobby = new SlopLobby.SlopLobby({
                 roomPrefix: 'cah-',
                 storageKey: 'cah-client-id',
                 onClientData: (data) => handleClientMessage(data),
-                onStateChange: (status) => {
-                    if (status === 'reconnect-failed') {
-                        showScreen('lobby');
-                        $('btn-join').disabled = false;
-                    }
-                },
+                onStateChange: (status, detail) => handleClientState(status, detail),
             });
+            mine = lobby;
 
-            await lobby.joinRoom(code, state.myName);
-            state.myId = lobby.clientId;
+            // state.myId stays empty until the host's first snapshot names our seat: our own
+            // clientId is not an identity anybody else at the table can see.
+            const joining = lobby.joinRoom(code, state.myName);
+            await joining;
+            if (lobby !== mine) return;
+            state.linkUp = true;
             log('Connected to host');
         } catch (e) {
-            toast(e.message);
-            $('btn-join').disabled = false;
-            if (lobby) { lobby.destroy(); lobby = null; }
+            // 'destroyed' means we tore this attempt down on purpose (a newer join, or the
+            // player tapping away) — there is nothing to report.
+            if (e && e.type === 'destroyed') return;
+            toast((e && e.reason) || (e && e.message) || 'Could not connect');
+            setEntryDoorsEnabled(true);
+            // Only ever tidy up OUR OWN lobby: a newer attempt's room is not ours to close.
+            if (mine && lobby === mine) retireLobby();
         }
     }
 
+    /** Back to the join form, for good. Used by every terminal state. */
+    function resetToLobby(message) {
+        if (message) toast(message);
+        state.terminal = true;
+        state.linkUp = false;
+        clearGameOverTimer();
+        hideConnBanner();
+        showScreen('lobby');
+        setEntryDoorsEnabled(true);
+        retireLobby();
+    }
+
+    function handleClientState(status, detail) {
+        switch (status) {
+            case 'connected':
+                // The host answers a first join with a resync of its own; asking again here
+                // only cost every join a second full snapshot.
+                state.linkUp = true;
+                hideConnBanner();
+                setControlsEnabled(true);
+                break;
+            case 'reconnected':
+                state.linkUp = true;
+                hideConnBanner();
+                setControlsEnabled(true);
+                // Belt and braces: the host sends a resync from its own rejoin handler, but
+                // a client revived by a ping alone never goes through that path.
+                if (lobby) lobby.sendToHost({ type: 'resync-request' });
+                break;
+            case 'disconnected':
+                if (state.terminal) break;
+                state.linkUp = false;
+                setControlsEnabled(false);
+                showConnBanner('Connection lost — reconnecting…');
+                break;
+            case 'reconnecting':
+                if (state.terminal) break;
+                state.linkUp = false;
+                setControlsEnabled(false);
+                showConnBanner(detail && detail.attempt
+                    ? `Reconnecting… (attempt ${detail.attempt} of ${detail.max})`
+                    : 'Reconnecting…');
+                break;
+            // The three terminal states end the game as finally as a dead link does. Each is
+            // handled explicitly so the generic 'reconnect-failed' bookend that follows it
+            // cannot overwrite the reason.
+            case 'rejected':
+                resetToLobby(detail || 'The host removed you from the game');
+                break;
+            case 'superseded':
+                resetToLobby('This game is open in another tab');
+                break;
+            case 'room-closed':
+                resetToLobby(detail ? 'Host ended the game: ' + detail : 'Host ended the game');
+                break;
+            case 'reconnect-failed':
+                if (state.terminal) break;
+                resetToLobby('Lost connection to the game');
+                break;
+        }
+    }
+
+    /**
+     * Everything below sanitises what came off the WIRE before the screen is painted from
+     * it. The host is not an adversary in a friendly game, but a queued message from a
+     * previous round, a half-written payload and a peer running a different build all reach
+     * these handlers, and a roster of `undefined`s or a submission with no cards used to
+     * paint '[object Object]' — or throw, which takes the rest of the data listeners with it.
+     */
+
+    /** Only what the roster can paint: {id, name, score, away}. */
+    function sanitizePlayers(list) {
+        if (!Array.isArray(list)) return null;
+        return list
+            .filter(p => p && typeof p.id === 'string' && typeof p.name === 'string')
+            .map(p => ({
+                id: p.id,
+                name: p.name,
+                score: Number.isFinite(p.score) ? p.score : 0,
+                away: !!p.away,
+            }));
+    }
+
+    /** Only what the judging grid can paint: an opaque key and the cards behind it. */
+    function sanitizeSubmissions(list) {
+        if (!Array.isArray(list)) return null;
+        return list
+            .filter(e => e && typeof e.id === 'string' && Array.isArray(e.cards) &&
+                         e.cards.length && e.cards.every(c => typeof c === 'string'))
+            .map(e => ({ id: e.id, cards: e.cards.slice() }));
+    }
+
+    /** A hand is card text and nothing else. */
+    function sanitizeHand(list) {
+        return Array.isArray(list) ? list.filter(c => typeof c === 'string') : [];
+    }
+
+    /** The black card, with a pick count the rest of the UI can count on. */
+    function sanitizeBlack(black) {
+        if (!black || typeof black !== 'object') return null;
+        const p = Math.floor(black.p);
+        return { t: typeof black.t === 'string' ? black.t : '', p: (p >= 1 && p <= 5) ? p : 1 };
+    }
+
+    /** The submitted counter, or nothing at all — never "999 / 1". */
+    function writeSubmitCount(count, needed) {
+        if (!Number.isFinite(count) || !Number.isFinite(needed)) return;
+        const want = Math.max(0, Math.min(99, Math.floor(needed)));
+        const got = Math.max(0, Math.min(want, Math.floor(count)));
+        $('submitted-count').textContent = `${got} / ${want} submitted`;
+    }
+
     function handleClientMessage(data) {
+        if (!data || typeof data !== 'object') return;
         switch (data.type) {
-            case 'joined':
-                state.players = data.players;
-                state.scoreLimit = data.scoreLimit;
-                showScreen('waiting');
+            // The one snapshot: join, rejoin, reload and any resync-request all land here.
+            case 'resync': {
+                clearGameOverTimer();
+                state.players = sanitizePlayers(data.players) || [];
+                // The host names our seat; nothing else on this device can. Kept when a
+                // snapshot omits it so an older host cannot make us a stranger to ourselves.
+                if (typeof data.youId === 'string' && data.youId) state.myId = data.youId;
+                state.czarId = typeof data.czarId === 'string' ? data.czarId : null;
+                if (Number.isFinite(data.scoreLimit)) state.scoreLimit = data.scoreLimit;
+                state.phase = typeof data.phase === 'string' ? data.phase : 'lobby';
+                state.round = Number.isFinite(data.round) ? data.round : 0;
+                state.currentBlack = sanitizeBlack(data.black);
+                state.myHand = sanitizeHand(data.hand);
+                state.mySubmitted = !!data.submitted;
+                state.selectedCards = [];
+                selectedSubmissionId = null;
+                state.submissionOrder = sanitizeSubmissions(data.submissions) || [];
+                state.revealedAuthor = data.result ? {
+                    id: data.result.winnerId,
+                    name: typeof data.result.winnerName === 'string' ? data.result.winnerName : 'Someone',
+                    cards: sanitizeHand(data.result.winningCards),
+                } : null;
+                setControlsEnabled(state.linkUp);
+                writeSubmitCount(data.submitCount, data.needed);
                 $('display-code').textContent = state.gameCode;
-                renderWaitingPlayers();
-                break;
 
-            case 'player-list':
-                state.players = data.players;
-                renderWaitingPlayers();
-                renderGamePlayers();
-                break;
-
-            case 'game-start':
-                state.myHand = data.hand;
-                if (data.phase && data.phase !== 'lobby') {
-                    state.currentBlack = data.black;
-                    state.round = data.round;
+                if (state.phase === 'lobby') {
+                    showScreen('waiting');
+                    renderWaitingPlayers();
+                } else if (state.phase === 'gameover') {
+                    renderGamePlayers();
+                    showGameOver((data.gameOver && data.gameOver.winnerName) ||
+                        (state.revealedAuthor && state.revealedAuthor.name) || 'Someone');
+                } else {
                     showScreen('game');
                     renderRound();
                 }
                 break;
+            }
+
+            case 'player-list': {
+                const previousCzar = state.czarId;
+                state.players = sanitizePlayers(data.players) || state.players;
+                if ('czarId' in data) state.czarId = typeof data.czarId === 'string' ? data.czarId : null;
+                renderWaitingPlayers();
+                renderGamePlayers();
+                // Only a crown that MOVED justifies repainting the round: renderRound would
+                // otherwise rebuild the hand (or the czar's grid) on every roster tick.
+                if (state.czarId !== previousCzar && state.phase !== 'lobby' && state.phase !== 'gameover') {
+                    renderRound();
+                }
+                break;
+            }
 
             case 'new-round':
-                state.currentBlack = data.black;
+                // A round only ever moves FORWARD. A 'new-round' queued during an outage and
+                // flushed after a later snapshot would otherwise deal a stale hand over a
+                // live round — or, once the game is over, drag the table off the podium and
+                // back into a hand nobody can finish.
+                if (!Number.isFinite(data.round) || data.round <= state.round) break;
+                clearGameOverTimer();
+                state.currentBlack = sanitizeBlack(data.black);
                 state.round = data.round;
-                state.myHand = data.hand;
-                state.players = data.players;
+                state.myHand = sanitizeHand(data.hand);
+                state.players = sanitizePlayers(data.players) || state.players;
+                state.czarId = typeof data.czarId === 'string' ? data.czarId : null;
                 state.phase = 'playing';
                 state.selectedCards = [];
-                state.submissions = {};
-                const czarId = data.czarId;
-                state.czarIndex = state.players.findIndex(p => p.id === czarId);
+                state.mySubmitted = false;
+                state.submissionOrder = [];
+                selectedSubmissionId = null;
+                setControlsEnabled(state.linkUp);
                 showScreen('game');
                 renderRound();
+                // After renderRound, which for a client czar writes nothing here: without it
+                // the previous round's satisfied counter stays on screen all round.
+                if (!state.isHost) writeSubmitCount(0, data.needed);
                 break;
 
             case 'submit-count':
-                $('submitted-count').textContent = `${data.count} / ${data.needed} submitted`;
+                writeSubmitCount(data.count, data.needed);
                 break;
 
             case 'judging':
+                // Judging belongs to one round. A replayed one from a round that is over
+                // would put the czar back in front of answers that have already been scored.
+                if (Number.isFinite(data.round) && data.round < state.round) break;
                 state.phase = 'judging';
-                state.submissionOrder = data.submissions;
+                if (Number.isFinite(data.round)) state.round = data.round;
+                if ('czarId' in data) state.czarId = typeof data.czarId === 'string' ? data.czarId : null;
+                state.submissionOrder = sanitizeSubmissions(data.submissions) || [];
+                selectedSubmissionId = null;
+                setControlsEnabled(state.linkUp);
                 renderRound();
                 break;
 
             case 'round-winner':
-                state.phase = 'result';
-                state.players = data.players;
-                state.revealedAuthor = { name: data.winnerName, cards: data.winningCards, id: data.winnerId };
+                // Same rule as 'new-round', the other way up: a result from a round the
+                // table has already left cannot re-open it, and nothing short of a fresh
+                // snapshot takes the game back off the podium.
+                if (Number.isFinite(data.round) && data.round < state.round) break;
+                if (state.phase === 'gameover' && !data.gameOver) break;
+                state.players = sanitizePlayers(data.players) || state.players;
+                state.revealedAuthor = {
+                    id: data.winnerId,
+                    name: typeof data.winnerName === 'string' ? data.winnerName : 'Someone',
+                    cards: sanitizeHand(data.winningCards),
+                };
+                // Phase before paint, so the final result never offers a Next Round button.
+                state.phase = data.gameOver ? 'gameover' : 'result';
                 renderRound();
                 if (data.gameOver) {
-                    setTimeout(() => showGameOver(data.winnerName), 4000);
+                    clearGameOverTimer();
+                    const finalName = state.revealedAuthor.name;
+                    state.gameOverTimer = setTimeout(() => {
+                        state.gameOverTimer = null;
+                        showGameOver(finalName);
+                    }, 4000);
                 }
                 break;
 
             case 'game-over':
-                state.players = data.players;
-                showGameOver(data.winnerName);
+                clearGameOverTimer();
+                state.players = sanitizePlayers(data.players) || state.players;
+                state.phase = 'gameover';
+                showGameOver(typeof data.winnerName === 'string' ? data.winnerName :
+                    (state.revealedAuthor && state.revealedAuthor.name) || 'Someone');
                 break;
+
+            case 'submit-rejected':
+                state.mySubmitted = false;
+                toast(data.reason || 'Your cards were not accepted');
+                // Our optimistic UI already took those cards off the screen. The host sends a
+                // fresh snapshot with every rejection, so there is nothing to ask for.
+                renderRound();
+                break;
+
+            case 'pick-rejected':
+                toast(data.reason || 'That pick was not accepted');
+                selectedSubmissionId = null;
+                pickSent = false;
+                setControlsEnabled(state.linkUp);
+                renderRound();
+                // A pool that has gone stale under us (a returning player re-keyed it) would
+                // otherwise refuse the same tap for ever: re-render from the host's truth.
+                if (lobby) lobby.sendToHost({ type: 'resync-request' });
+                break;
+
+            case 'next-round-rejected':
+                toast(data.reason || 'That round has already moved on');
+                renderRound();
+                break;
+
+            case 'join-error':
+                // The state branch has already painted the host's reason and gone terminal;
+                // repainting a second, vaguer one over it is the only thing this could add.
+                if (state.terminal) break;
+                resetToLobby(data.reason || 'The host would not let you in');
+                break;
+
+            default:
+                break;   // unknown message types are ignored
         }
     }
 
+    /**
+     * @returns {boolean} true when the command is on the wire (or is the host's own).
+     * On the host it is dispatched through handleHostMessage on a MICROTASK, so the host's
+     * taps meet exactly the same guards as everyone else's — and so the caller's optimistic
+     * UI writes land before any re-render the command triggers.
+     */
     function sendToHost(data) {
         if (state.isHost) {
-            // Host handles locally
-            handleHostMessage(state.myId, data);
-        } else if (lobby) {
-            lobby.sendToHost(data);
+            queueMicrotask(() => handleHostMessage(HOST_SELF, data));
+            return true;
         }
+        return lobby ? lobby.sendToHost(data) : false;
     }
 
     // ==================== RENDERING ====================
+    function showConnBanner(text) {
+        const el = $('conn-banner');
+        if (!el) return;
+        el.textContent = text;
+        el.classList.remove('hidden');
+    }
+
+    function hideConnBanner() {
+        const el = $('conn-banner');
+        if (el) el.classList.add('hidden');
+    }
+
+    /** Every control that sends a command is dead while the link is down. */
+    function setControlsEnabled(enabled) {
+        state.linkUp = !!enabled;
+        if (!enabled) {
+            $('btn-submit').disabled = true;
+            $('btn-pick-winner').disabled = true;
+            $('btn-next-round').disabled = true;
+            return;
+        }
+        // The labels go back too: a button revived from a dead link still reading "Sending…"
+        // invites a duplicate tap in the gap before the resync repaints it.
+        $('btn-pick-winner').disabled = false;
+        $('btn-pick-winner').textContent = 'Pick Winner';
+        $('btn-next-round').disabled = false;
+        $('btn-next-round').textContent = 'Next Round';
+        // #btn-submit is owned by renderHand (it depends on the selection).
+    }
+
     function renderWaitingPlayers() {
         const el = $('waiting-players');
         el.innerHTML = state.players.map(p =>
-            `<span class="player-tag">${p.name}${p.id === state.myId ? ' (you)' : ''}</span>`
+            `<span class="player-tag"${p.away ? ' style="opacity:0.5"' : ''}>${esc(p.name)}` +
+            `${p.id === state.myId ? ' (you)' : ''}${p.away ? ' (away)' : ''}</span>`
         ).join('');
 
         if (state.isHost) {
-            $('btn-start').disabled = state.players.length < 3;
-            $('btn-start').textContent = state.players.length < 3
-                ? `Start Game (need ${3 - state.players.length} more)`
-                : `Start Game (${state.players.length} players)`;
+            const present = state.players.filter(p => !p.away).length;
+            $('btn-start').disabled = present < 3 || state.phase !== 'lobby';
+            $('btn-start').textContent = present < 3
+                ? `Start Game (need ${3 - present} more)`
+                : `Start Game (${present} players)`;
             $('host-controls').classList.remove('hidden');
         } else {
             $('host-controls').classList.add('hidden');
@@ -855,24 +2036,54 @@
     function renderGamePlayers() {
         const el = $('game-players');
         if (!el) return;
-        const czarId = state.players[state.czarIndex]?.id;
         el.innerHTML = state.players.map(p => {
-            const isCzar = p.id === czarId;
+            const isCzar = !!state.czarId && p.id === state.czarId;
             const isMe = p.id === state.myId;
-            return `<span class="player-tag${isCzar ? ' is-czar' : ''}">
+            return `<span class="player-tag${isCzar ? ' is-czar' : ''}"${p.away ? ' style="opacity:0.5"' : ''}>
                 ${isCzar ? '<span class="crown">&#9813;</span>' : ''}
-                ${p.name}${isMe ? ' (you)' : ''}
-                <span class="score">${p.score}</span>
+                ${esc(p.name)}${isMe ? ' (you)' : ''}${p.away ? ' (away)' : ''}
+                <span class="score">${esc(p.score)}</span>
             </span>`;
         }).join('');
     }
 
+    /** The host's own submitted counter — the host never receives its own broadcasts. */
+    function updateHostSubmitCount(count, needed) {
+        if (!state.isHost) return;
+        let got = count;
+        let want = needed;
+        if (typeof got !== 'number') {
+            const eligible = eligibleSubmitters();
+            want = eligible.length;
+            got = eligible.filter(p => state.submissions[p.id]).length;
+        }
+        $('submitted-count').textContent = `${got} / ${want} submitted`;
+    }
+
+    /** Host-only escape hatches, so a stuck round is never a reason to reload the room. */
+    function renderHostRoundControls() {
+        const el = $('host-round-controls');
+        if (!el) return;
+        if (!state.isHost || state.phase === 'lobby' || state.phase === 'gameover') {
+            el.classList.add('hidden');
+            return;
+        }
+        el.classList.remove('hidden');
+        const playing = state.phase === 'playing';
+        const played = Object.keys(state.submissions).filter(id => id !== state.czarId).length;
+        $('btn-force-judging').classList.toggle('hidden', !playing);
+        $('btn-force-judging').disabled = !playing || played === 0;
+        $('btn-skip-round').classList.toggle('hidden', !(playing || state.phase === 'judging'));
+        // Any repaint outside the arming window disarms the skip; inside it the label stands,
+        // so the confirmation survives a submit landing between the two taps.
+        if (Date.now() - skipArmedAt > SKIP_ARM_MS) disarmSkip();
+    }
+
     function renderRound() {
-        const czar = state.players[state.czarIndex];
-        if (!czar) return;
-        const isCzar = czar.id === state.myId;
+        const isCzar = !!state.czarId && state.czarId === state.myId;
 
         renderGamePlayers();
+        renderHostRoundControls();
         $('round-info').textContent = `Round ${state.round} · First to ${state.scoreLimit}`;
 
         // Black card
@@ -892,47 +2103,57 @@
             if (isCzar) {
                 $('game-status').textContent = "You're the Card Czar. Wait for submissions...";
                 $('waiting-section').classList.remove('hidden');
-                $('submitted-count').textContent = '';
+                updateHostSubmitCount();
+            } else if (state.mySubmitted) {
+                $('game-status').textContent = 'Cards submitted! Waiting for others...';
+                $('waiting-section').classList.remove('hidden');
+                updateHostSubmitCount();
             } else {
-                const pick = state.currentBlack?.p || 1;
+                const pick = (state.currentBlack && state.currentBlack.p) || 1;
                 $('game-status').textContent = `Pick ${pick} card${pick > 1 ? 's' : ''} to play`;
                 $('pick-hint').textContent = `— select ${pick}`;
                 $('hand-section').classList.remove('hidden');
                 renderHand();
             }
         } else if (state.phase === 'judging') {
-            if (isCzar) {
-                $('game-status').textContent = 'Pick the funniest answer!';
-                $('judging-section').classList.remove('hidden');
+            $('judging-section').classList.remove('hidden');
+            if (canJudge()) {
+                $('game-status').textContent = isCzar
+                    ? 'Pick the funniest answer!'
+                    : 'The Card Czar is away — pick for them';
                 renderSubmissionsForCzar();
             } else {
                 $('game-status').textContent = 'The Card Czar is choosing...';
-                $('judging-section').classList.remove('hidden');
                 renderSubmissionsForPlayer();
             }
-        } else if (state.phase === 'result') {
+        } else if (state.phase === 'result' || state.phase === 'gameover') {
+            // 'gameover' too: otherwise the last four seconds of the game are a blank screen.
             renderResult();
+        } else {
+            // Never leave a screen blank because a phase arrived that we do not know yet.
+            $('game-status').textContent = 'Syncing…';
         }
     }
 
     function renderHand() {
         const el = $('hand');
-        const pick = state.currentBlack?.p || 1;
-        const alreadySubmitted = state.isHost ? !!state.submissions[state.myId] : false;
+        const pick = (state.currentBlack && state.currentBlack.p) || 1;
+        const locked = state.mySubmitted || !state.linkUp;
 
         el.innerHTML = state.myHand.map((card, i) => {
             const selIdx = state.selectedCards.indexOf(i);
             const isSelected = selIdx !== -1;
-            return `<div class="white-card${isSelected ? ' selected' : ''}${alreadySubmitted ? ' disabled' : ''}"
+            return `<div class="white-card${isSelected ? ' selected' : ''}${locked ? ' disabled' : ''}"
                          data-index="${i}" data-order="${selIdx + 1}"
-                         onclick="selectCard(${i})">${card}</div>`;
+                         onclick="selectCard(${i})">${cardText(card)}</div>`;
         }).join('');
 
-        $('btn-submit').disabled = state.selectedCards.length !== pick || alreadySubmitted;
+        $('btn-submit').disabled = state.selectedCards.length !== pick || locked;
     }
 
     function selectCard(index) {
-        const pick = state.currentBlack?.p || 1;
+        if (state.mySubmitted || !state.linkUp) return;
+        const pick = (state.currentBlack && state.currentBlack.p) || 1;
         const pos = state.selectedCards.indexOf(index);
         if (pos !== -1) {
             state.selectedCards.splice(pos, 1);
@@ -943,119 +2164,179 @@
     }
 
     function submitCards() {
-        const cards = state.selectedCards.map(i => state.myHand[i]);
-        sendToHost({ type: 'submit', cards });
+        if (state.phase !== 'playing' || state.mySubmitted) return;
+        const pick = (state.currentBlack && state.currentBlack.p) || 1;
+        if (state.selectedCards.length !== pick) return;
 
-        // Remove from hand locally
+        const cards = state.selectedCards.map(i => state.myHand[i]);
+
+        // Optimistic UI FIRST, send last: on the host the command is dispatched on a
+        // microtask and may repaint the screen (judging), and these writes must not land on
+        // top of the screen its own message produced.
         state.myHand = state.myHand.filter((_, i) => !state.selectedCards.includes(i));
         state.selectedCards = [];
-
-        // Show waiting
+        state.mySubmitted = true;
+        $('btn-submit').disabled = true;
         $('hand-section').classList.add('hidden');
         $('waiting-section').classList.remove('hidden');
         $('game-status').textContent = 'Cards submitted! Waiting for others...';
         toast('Cards submitted!');
+
+        if (sendToHost({ type: 'submit', round: state.round, cards }) === false) {
+            toast('Not connected — will send when reconnected');
+        }
+    }
+
+    // What the grid currently shows, in order — the bridge from a tapped tile to a playerId.
+    let renderedSubmissions = [];
+    let selectedSubmissionId = null;
+    // A pick is on the wire. The grid stays frozen until the host answers it, so a czar who
+    // changes their mind cannot send a second pick that is refused while their FIRST one is
+    // the one that scored.
+    let pickSent = false;
+    // Skipping a round throws away cards the table has already played, so it takes two taps.
+    let skipArmedAt = 0;
+    // ...and the arm expires on a TIMER, not on the next repaint. The round Skip exists for
+    // is the one where nothing is happening — nobody submits, nobody joins, nothing repaints
+    // — so a repaint-only disarm left the button reading 'Tap again to skip' for ever while
+    // the second tap silently re-armed instead of skipping.
+    let skipArmTimer = null;
+    const SKIP_ARM_MS = 3000;
+
+    /** Put the skip confirmation away: no timer left running, and the label says so. */
+    function disarmSkip() {
+        if (skipArmTimer) { clearTimeout(skipArmTimer); skipArmTimer = null; }
+        skipArmedAt = 0;
+        const btn = $('btn-skip-round');
+        if (btn) btn.textContent = 'Skip round';
+    }
+
+    /** Host: ids + the cards behind them. Client: exactly what the 'judging' payload said. */
+    function judgingEntries() {
+        const raw = state.isHost
+            ? state.submissionOrder.map(id => ({ id, cards: state.submissions[id] }))
+            : (state.submissionOrder || []);
+        return raw.filter(e => e && typeof e.id === 'string' && Array.isArray(e.cards) && e.cards.length);
+    }
+
+    function submissionMarkup(entry, idx, clickable) {
+        const cards = entry.cards.map(c => `<div class="sub-card">${cardText(c)}</div>`).join('');
+        const attrs = clickable ? ` data-idx="${idx}" onclick="selectSubmission(${idx})"` : '';
+        return `<div class="submission-group"${attrs}>${cards}</div>`;
+    }
+
+    function resetPickButton() {
+        const b = $('btn-pick-winner');
+        b.classList.add('hidden');
+        b.disabled = false;
+        b.textContent = 'Pick Winner';
     }
 
     function renderSubmissionsForCzar() {
-        const el = $('submissions');
-        let subs;
-        if (state.isHost) {
-            subs = state.submissionOrder.map(id => ({ cards: state.submissions[id], id }));
-        } else {
-            subs = state.submissionOrder;
-        }
-
-        el.innerHTML = subs.map((sub, i) => {
-            const cards = sub.cards || sub;
-            const cardsArr = Array.isArray(cards) ? cards : [cards];
-            return `<div class="submission-group" data-idx="${i}" onclick="selectSubmission(${i})">
-                ${cardsArr.map(c => `<div class="sub-card">${c}</div>`).join('')}
-            </div>`;
-        }).join('');
-
-        $('btn-pick-winner').classList.add('hidden');
+        renderedSubmissions = judgingEntries();
+        // Any re-render (a late submission, a czar change, a resync) invalidates the choice
+        // that was made against the old order.
+        selectedSubmissionId = null;
+        pickSent = false;
+        $('submissions').innerHTML = renderedSubmissions.map((e, i) => submissionMarkup(e, i, true)).join('');
+        resetPickButton();
     }
 
     function renderSubmissionsForPlayer() {
-        const el = $('submissions');
-        const subs = state.isHost
-            ? state.submissionOrder.map(id => ({ cards: state.submissions[id] }))
-            : state.submissionOrder;
-
-        el.innerHTML = subs.map((sub) => {
-            const cards = sub.cards || sub;
-            const cardsArr = Array.isArray(cards) ? cards : [cards];
-            return `<div class="submission-group">
-                ${cardsArr.map(c => `<div class="sub-card">${c}</div>`).join('')}
-            </div>`;
-        }).join('');
+        renderedSubmissions = [];
+        selectedSubmissionId = null;
+        pickSent = false;
+        $('submissions').innerHTML = judgingEntries().map((e, i) => submissionMarkup(e, i, false)).join('');
+        // A host who was czar in an earlier round must not keep a live Pick Winner button.
+        resetPickButton();
     }
 
-    let selectedSubmission = -1;
+    /** Whether this device may award the round: the czar, or the host standing in. */
+    function canJudge() {
+        if (state.phase !== 'judging') return false;
+        if (state.czarId && state.czarId === state.myId) return true;
+        return state.isHost && czarIsAway();
+    }
 
     function selectSubmission(idx) {
-        const czar = state.players[state.czarIndex];
-        if (czar.id !== state.myId) return;
+        if (!canJudge() || pickSent) return;
+        const entry = renderedSubmissions[idx];
+        if (!entry) return;
 
-        selectedSubmission = idx;
+        selectedSubmissionId = entry.id;
         document.querySelectorAll('.submission-group').forEach((el, i) => {
             el.style.borderColor = i === idx ? 'var(--color-accent)' : '';
         });
-        $('btn-pick-winner').classList.remove('hidden');
+        const b = $('btn-pick-winner');
+        b.classList.remove('hidden');
+        b.disabled = !state.linkUp;
+        b.textContent = 'Pick Winner';
     }
 
     function pickWinner() {
-        if (selectedSubmission < 0) return;
-
-        if (state.isHost) {
-            const winnerId = state.submissionOrder[selectedSubmission];
-            announceWinner(winnerId);
-        } else {
-            // Client czar sends index, host resolves via submissionOrder
-            lobby.sendToHost({ type: 'pick-winner', index: selectedSubmission });
+        if (!selectedSubmissionId || !canJudge() || pickSent) return;
+        pickSent = true;
+        const b = $('btn-pick-winner');
+        b.disabled = true;
+        b.textContent = 'Sending…';
+        if (sendToHost({ type: 'pick-winner', round: state.round, playerId: selectedSubmissionId }) === false) {
+            toast('Not connected — will send when reconnected');
         }
     }
 
     function renderResult() {
         $('result-section').classList.remove('hidden');
         $('judging-section').classList.add('hidden');
-        $('game-status').textContent = 'Round over!';
+        $('game-status').textContent = state.phase === 'gameover' ? 'Game over!' : 'Round over!';
 
-        const winnerName = state.revealedAuthor?.name || 'Someone';
-        const winnerCards = state.revealedAuthor?.cards || [];
+        const winnerName = (state.revealedAuthor && state.revealedAuthor.name) || 'Someone';
+        const winnerCards = (state.revealedAuthor && state.revealedAuthor.cards) || [];
 
         $('result-title').textContent = `${winnerName} wins this round!`;
         $('result-cards').innerHTML = (Array.isArray(winnerCards) ? winnerCards : [winnerCards])
-            .map(c => `<div class="sub-card" style="background: var(--color-white-card); color: var(--color-white-card-text); border-radius: 8px; padding: 0.75rem; margin: 0.5rem 0; font-weight: 500;">${c}</div>`)
+            .map(c => `<div class="sub-card" style="background: var(--color-white-card); color: var(--color-white-card-text); border-radius: 8px; padding: 0.75rem; margin: 0.5rem 0; font-weight: 500;">${cardText(c)}</div>`)
             .join('');
 
-        // Host or czar can trigger next round
-        const czar = state.players[state.czarIndex];
-        const isCzar = czar?.id === state.myId;
-        $('btn-next-round').classList.toggle('hidden', !isCzar && !state.isHost);
-    }
-
-    function triggerNextRound() {
-        if (state.isHost) {
-            nextRound();
-        } else {
-            lobby.sendToHost({ type: 'next-round' });
+        // Host or czar can trigger the next round — but never once the game is over.
+        const isCzar = !!state.czarId && state.czarId === state.myId;
+        const mayAdvance = state.phase === 'result' && (isCzar || state.isHost);
+        const b = $('btn-next-round');
+        b.classList.toggle('hidden', !mayAdvance);
+        if (mayAdvance) {
+            b.disabled = !state.linkUp;
+            b.textContent = 'Next Round';
         }
     }
 
+    function triggerNextRound() {
+        if (state.phase !== 'result') return;
+        const b = $('btn-next-round');
+        b.disabled = true;
+        b.textContent = 'Starting…';
+        if (sendToHost({ type: 'next-round', round: state.round }) === false) {
+            toast('Not connected — will send when reconnected');
+        }
+    }
+
+    /** The podium's scoreboard, repainted whenever the roster moves under it. */
+    function renderFinalScores() {
+        const el = $('final-scores');
+        if (!el) return;
+        const sorted = [...state.players].sort((a, b) => b.score - a.score);
+        el.innerHTML = sorted.map((p, i) =>
+            `<span class="player-tag${i === 0 ? ' is-czar' : ''}">
+                ${i === 0 ? '&#127942; ' : ''}${esc(p.name)}
+                <span class="score">${esc(p.score)}</span>
+            </span>`
+        ).join('');
+    }
+
     function showGameOver(winnerName) {
+        clearGameOverTimer();
         showScreen('gameover');
         $('gameover-title').textContent = `${winnerName} wins the game!`;
         $('gameover-subtitle').textContent = `First to ${state.scoreLimit} points`;
-
-        const sorted = [...state.players].sort((a, b) => b.score - a.score);
-        $('final-scores').innerHTML = sorted.map((p, i) =>
-            `<span class="player-tag${i === 0 ? ' is-czar' : ''}">
-                ${i === 0 ? '&#127942; ' : ''}${p.name}
-                <span class="score">${p.score}</span>
-            </span>`
-        ).join('');
+        renderFinalScores();
     }
 
     // ==================== EVENT HANDLERS ====================
@@ -1065,7 +2346,62 @@
     $('btn-submit').addEventListener('click', submitCards);
     $('btn-pick-winner').addEventListener('click', pickWinner);
     $('btn-next-round').addEventListener('click', triggerNextRound);
-    $('btn-new-game').addEventListener('click', () => location.reload());
+
+    // Both escape hatches advance the game on ONE tap, and both are still on screen a moment
+    // later — so a double tap would burn two black cards. A short rate limit (no timer to
+    // leak) makes the second tap of a fumble a no-op without hiding the control.
+    let lastHatchTap = 0;
+    function hatchAllowed() {
+        const now = Date.now();
+        if (now - lastHatchTap < 800) return false;
+        lastHatchTap = now;
+        return true;
+    }
+
+    $('btn-force-judging').addEventListener('click', () => {
+        if (!state.isHost || state.phase !== 'playing') return;
+        if (!hatchAllowed()) return;
+        startJudging();
+    });
+
+    $('btn-skip-round').addEventListener('click', () => {
+        if (!state.isHost) return;
+        if (state.phase !== 'playing' && state.phase !== 'judging') return;
+        // Two taps: this discards a round the table has already played into. The arm puts
+        // itself away after SKIP_ARM_MS whether or not anything else repaints, so the label
+        // never outlives the window it describes.
+        if (!skipArmedAt || Date.now() - skipArmedAt > SKIP_ARM_MS) {
+            if (skipArmTimer) clearTimeout(skipArmTimer);
+            skipArmedAt = Date.now();
+            $('btn-skip-round').textContent = 'Tap again to skip';
+            skipArmTimer = setTimeout(disarmSkip, SKIP_ARM_MS);
+            return;
+        }
+        disarmSkip();
+        nextRound();
+    });
+
+    $('btn-new-game').addEventListener('click', async () => {
+        const btn = $('btn-new-game');
+        // closeRoom holds the room open for a moment on purpose, so the next knock from a
+        // player whose phone is locked is answered with 'the host ended the game' instead of
+        // three minutes of reconnecting. A second tap used to find `lobby` already null, skip
+        // the goodbye entirely and reload straight through that grace.
+        if (btn.disabled) return;
+        btn.disabled = true;
+        btn.textContent = 'Ending game…';
+        const ending = lobby;
+        lobby = null;
+        if (ending) {
+            // Say goodbye properly: without it every player grinds through minutes of
+            // reconnect attempts against a room that no longer exists.
+            try {
+                if (state.isHost) await ending.closeRoom('Game over');
+                else ending.destroy();
+            } catch (e) { /* reloading anyway */ }
+        }
+        location.reload();
+    });
 
     $('btn-copy-code').addEventListener('click', () => {
         navigator.clipboard.writeText(state.gameCode).then(() => toast('Code copied!'));
@@ -1078,6 +2414,14 @@
     $('join-code').addEventListener('keydown', (e) => {
         if (e.key === 'Enter') $('btn-join').click();
     });
+
+    if (typeof window !== 'undefined' && window.addEventListener) {
+        window.addEventListener('beforeunload', () => {
+            // Best effort, no await: the players hear 'room-closed' instead of watching a
+            // dead room for three minutes.
+            if (lobby && state.isHost) { try { lobby.closeRoom('Host left'); } catch (e) {} }
+        });
+    }
 
     </script>
 </body>

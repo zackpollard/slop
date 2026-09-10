@@ -76,9 +76,16 @@ tofu/                  # OpenTofu infrastructure (Cloudflare Pages + DNS)
 - **No build step.** All projects are static HTML/CSS/JS served directly. No npm, no bundlers, no package managers.
 - **External libraries via CDN only** (e.g. Leaflet, Google Fonts). No local `node_modules` or vendored dependencies.
 - **Infrastructure as Code:** OpenTofu (v1.8+) with the Cloudflare provider (~> 4.0) manages Pages projects and DNS records. Config lives in `tofu/`.
-- **No linter** is configured. **Tests exist only for `lib/slopnet`** (vitest):
-  `cd lib/slopnet && npm install && npm test`. This is a dev-only dependency — the
-  library ships as a plain script tag and no built output is ever deployed.
+- **No linter** is configured. **The whole test suite lives in `lib/slopnet/__tests__`**
+  (vitest): `cd lib/slopnet && npm install && npm test`. This is a dev-only dependency —
+  the library ships as a plain script tag and no built output is ever deployed.
+  It is not only library tests: `app-*.test.js` and `attack-*.test.js` load the **real
+  inline `<script>` out of a shipped `projects/*/index.html`** and drive it against the
+  real SlopNet/SlopLobby over `__tests__/mock-peer.js` (a PeerJS fake built to match
+  peerjs 1.5.5 semantics). So the four multiplayer games have real coverage without
+  breaking the no-build-step rule — but it also means **an edit to one of those pages
+  can fail the suite**, and that a harness anchored to the page's structure may need
+  re-anchoring. Run the suite after touching any P2P game, not just after touching `lib/`.
 - **Shared libraries live in `lib/`** and are *copied into* each consuming project by
   CI, not imported across directories. Both `.github/workflows/deploy.yml` and
   `.github/workflows/preview.yml` carry a **hardcoded list of project names** to copy

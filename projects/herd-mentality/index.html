@@ -417,6 +417,15 @@
 
         <div id="error-banner" class="error-banner"></div>
 
+        <!-- Shown when the host's roster no longer contains us: a removed player must
+             never be left sitting on a dead waiting screen with no way back in. -->
+        <div id="removed-banner" class="error-banner">
+            <div id="removed-msg">You are no longer in this game.</div>
+            <div class="btn-row" style="justify-content: center;">
+                <button class="btn" id="btn-rejoin">Rejoin</button>
+            </div>
+        </div>
+
         <!-- Screen: Home -->
         <div id="home-screen" class="screen active">
             <div class="home-options">
@@ -482,6 +491,9 @@
             </div>
             <div id="host-lobby-controls">
                 <button class="btn btn-primary btn-wide" id="btn-start-game" disabled>Start Game</button>
+                <div class="btn-row">
+                    <button class="btn btn-danger btn-wide" id="btn-close-room">Close Room</button>
+                </div>
             </div>
             <div id="player-lobby-msg" style="display: none;">
                 <div class="section">
@@ -531,6 +543,11 @@
                 <h2>Waiting for Answers</h2>
                 <div class="player-tags" id="hw-players"></div>
                 <div class="answer-progress" id="hw-progress" style="text-align: center; margin-top: 0.75rem;"></div>
+                <!-- Escape hatch: a round that cannot reach the threshold (a player who
+                     will never come back) must be closable without reloading. -->
+                <div class="btn-row" style="justify-content: center;">
+                    <button class="btn" id="hw-reveal-btn" disabled>Reveal Answers Now</button>
+                </div>
             </div>
         </div>
 
@@ -541,6 +558,7 @@
                 <div class="merge-hint">Tap two answers to merge them as the same answer, or confirm to continue.</div>
                 <div id="merge-cards"></div>
                 <div class="btn-row" style="margin-top: 1rem;">
+                    <button class="btn" id="merge-back-btn">Back to Answering</button>
                     <button class="btn btn-primary btn-wide" id="merge-confirm-btn">Confirm Results</button>
                 </div>
             </div>
@@ -565,9 +583,9 @@
         <div id="player-waiting-screen" class="screen">
             <div class="section">
                 <div class="status-msg">
-                    <div class="submitted-check">&#10003;</div>
-                    <div class="big">Answer Submitted</div>
-                    <div style="margin-top: 0.75rem;"><span class="spinner"></span> Waiting for other players...</div>
+                    <div class="submitted-check" id="pw-check">&#10003;</div>
+                    <div class="big" id="pw-title">Answer Submitted</div>
+                    <div style="margin-top: 0.75rem;"><span class="spinner"></span> <span id="pw-sub">Waiting for other players...</span></div>
                 </div>
             </div>
         </div>
@@ -702,23 +720,102 @@
         let roomCode = '';
 
         // SlopLobby
-        const { $, esc, toast } = SlopLobby;
+        const { $, esc } = SlopLobby;
         let lobby = null;
 
+        const MAX_NAME_LEN = 20;
+        const MAX_ANSWER_LEN = 60;
+        // A party game, not a broadcast: the cap stops a client opening seats (each of which
+        // the round then waits for) without bound.
+        const MAX_PLAYERS = 16;
+        // A resync costs a full state payload, so one per client per second is plenty.
+        const RESYNC_MIN_INTERVAL_MS = 1000;
+        // A moo that has been sitting in a queue is a nudge about a moment that has passed.
+        const MOO_MAX_AGE_MS = 15000;
+        // How long after a link comes up a message may still be the flushed backlog. The
+        // flush is immediate — the same tick the channel reopens — so this only has to be
+        // longer than delivery and well under the five seconds the host waits before it
+        // sends a moo at all.
+        const MOO_LINK_SETTLE_MS = 1000;
+
         // Host state
-        let disconnectedPlayers = new Set(); // names of disconnected players still in game
+        // Two sets, because "gone for now" and "gone for good" are different games.
+        // awayPlayers: the link dropped but SlopNet is still holding the seat — they are
+        //   still counted as active, so a locked phone cannot close a round without them.
+        // disconnectedPlayers: the reconnect window expired (onPlayerLost) — excluded from
+        //   the active set, so a player who really left cannot block the table forever.
+        let awayPlayers = new Set();
+        let disconnectedPlayers = new Set();
         let players = [];
-        let scores = {};
+        // Null-prototype maps throughout: "constructor" and "__proto__" are ordinary English
+        // words a player can type. On a plain object they read back as inherited members, which
+        // skipped an initialiser and threw inside the host's own data handler mid-round.
+        let scores = Object.create(null);
         let cowHolder = null;
+        // Round identity is MONOTONIC for the life of the ROOM and is never reset when a new
+        // game starts: an answer queued on a phone during the last game must never match a
+        // round of this one. `roundBase` is only the display offset, so each game still counts
+        // "Round 1, 2, 3..." on screen.
+        //
+        // "For the life of the room" is longer than the life of this page. A host tab that is
+        // reloaded — or discarded and restored, which browsers do to backgrounded tabs
+        // routinely — re-adopts the SAME room code, because sloplobby remembers it in
+        // sessionStorage. So the counter is remembered next to the code and resumed from its
+        // high-water mark (see loadRoundHwm); starting it over at 0 there is what let a
+        // queued answer for the old session's round 3 be spent on the new session's round 3.
         let roundNumber = 0;
+        let roundBase = 0;
         let currentQuestion = '';
-        let answers = {};
+        let answers = Object.create(null);
+        // Who was asked THIS round. A latecomer who arrives during merge/results was never
+        // asked, so the round must not wait for them; one who arrives during answering is
+        // sent the question and is added here.
+        let roundParticipants = new Set();
+        // Rounds whose points have already been awarded, so a second confirm re-renders
+        // instead of paying out twice.
+        let scoredRounds = new Set();
+        let lastResults = null;
         let usedQuestionIndices = new Set();
         let activeCategories = new Set(allCategories);
         let mergeGroups = [];
         let mergeSelected = -1;
         let mooTimeout = null;
+        // Last resync-request per clientId, so it cannot be used as a free amplifier.
+        let resyncAt = new Map();
         let gamePhase = 'lobby'; // 'lobby' | 'question' | 'answering' | 'merge' | 'results'
+
+        // Client state
+        // The client is the only end that knows it pressed Submit: the host cannot see a
+        // message still sitting in the outbound queue on the phone.
+        let myAnswer = null;          // { round, answer } — answer is null when only the host's
+                                      // ack told us we had answered (e.g. after a reload)
+        // Whether that answer actually left this device. A queued one is still on its way, so
+        // the host saying "I hold nothing from you" is not news; one we believed we SENT and
+        // the host has not got died in flight and is worth re-sending.
+        let myAnswerSent = false;
+        // Has the host told us it CLOSED or reopened this round? Only then does "I hold no
+        // answer from you" mean our answer was binned rather than simply still in flight —
+        // a progress broadcast crosses an answer on the wire all the time.
+        let roundInterrupted = false;
+        let answerScreenRound = -1;   // the round currently painted on the answer screen
+        let roundLabel = 0;           // what this round is CALLED (identity keeps counting)
+        // Has the host described the game on THIS link yet — a 'joined'/'rejoin' snapshot, or
+        // a question? Until it has, everything we believe about the round is left over from
+        // before the outage.
+        let haveStateForLink = false;
+        // When this link came up, on THIS device's clock and never anyone else's. Slopnet
+        // drains whatever it held for an absent seat the instant the channel reopens — before
+        // it announces the rejoin, and before the host can send anything new — so a message
+        // that lands in the first moments of a link is the backlog, not news.
+        let linkUpAt = 0;
+        // Throttles the "I am behind, resend the snapshot" request (see requestResync).
+        let lastResyncAt = 0;
+        let currentScreen = 'home-screen';
+
+        // Tracked timers (every one of these is cleared before it is re-armed).
+        let errorTimer = null;
+        let focusTimer = null;
+        let audioCtx = null;
 
         // ── DOM helpers ────────────────────────────────────────────
         function showScreen(id) {
@@ -728,54 +825,203 @@
                 el.classList.add('active');
                 el.classList.add('fade-in');
             }
+            // Tracked rather than read back off the DOM: several guards below need to know
+            // which screen the player is looking at.
+            currentScreen = id;
         }
 
         function showError(msg) {
             const el = $('error-banner');
+            if (!el) return;
             el.textContent = msg;
             el.classList.add('visible');
-            setTimeout(() => el.classList.remove('visible'), 5000);
+            // Clear the previous hide timer, or a banner shown 4s after another one is
+            // wiped a second later by the first one's timeout.
+            if (errorTimer) clearTimeout(errorTimer);
+            errorTimer = setTimeout(() => {
+                errorTimer = null;
+                el.classList.remove('visible');
+            }, 5000);
+        }
+
+        function hideError() {
+            if (errorTimer) { clearTimeout(errorTimer); errorTimer = null; }
+            const el = $('error-banner');
+            if (el) el.classList.remove('visible');
+        }
+
+        function showRemovedPrompt(msg) {
+            const el = $('removed-banner');
+            if (!el) return;
+            const m = $('removed-msg');
+            if (m) m.textContent = msg;
+            el.classList.add('visible');
+        }
+
+        function hideRemovedPrompt() {
+            const el = $('removed-banner');
+            if (el) el.classList.remove('visible');
+        }
+
+        function focusSoon(id) {
+            if (focusTimer) clearTimeout(focusTimer);
+            focusTimer = setTimeout(() => {
+                focusTimer = null;
+                const el = $(id);
+                if (el && typeof el.focus === 'function') el.focus();
+            }, 100);
+        }
+
+        function clearMooTimer() {
+            if (mooTimeout) { clearTimeout(mooTimeout); mooTimeout = null; }
         }
 
         // ── clientId <-> name helpers (host only) ────────────────
         function nameForClientId(clientId) {
             const entry = lobby && lobby.players.get(clientId);
-            return entry ? entry.name : null;
+            return entry && typeof entry.name === 'string' ? entry.name : null;
         }
 
-        function clientIdForName(name) {
+        /**
+         * The connection sitting under `name`, ignoring `exceptClientId`.
+         *
+         * The exclusion is not decoration. SlopLobby SEEDS a joiner's record from their wire
+         * metadata BEFORE it calls onPlayerJoined, so for the whole of a join this map holds an
+         * entry for the JOINING clientId under the name they typed. Counting that entry answers
+         * "who is already sitting under this name?" with "you are", which is never what a caller
+         * means — and for the host's name, whose seat has no record of its own in here, that
+         * self-answer is the only answer there is.
+         */
+        function clientIdForName(name, exceptClientId) {
             if (!lobby) return null;
             for (const [cid, info] of lobby.players.entries()) {
-                if (info.name === name) return cid;
+                if (exceptClientId !== undefined && cid === exceptClientId) continue;
+                if (info && info.name === name) return cid;
             }
             return null;
         }
 
+        /** The roster name that matches `name` case-insensitively, or null. */
+        function rosterNameFor(name) {
+            if (!name) return null;
+            const lower = String(name).toLowerCase();
+            return players.find(p => p.toLowerCase() === lower) || null;
+        }
+
+        /** Everyone still expected to answer the CURRENT round. */
+        function roundActivePlayers() {
+            return players.filter(p => roundParticipants.has(p) && !disconnectedPlayers.has(p));
+        }
+
         // ── Moo sound via Web Audio API ──────────────────────────
-        function playMoo() {
+        /**
+         * One context for the page, created lazily and reused. A context per sound leaks
+         * an audio thread each time and dies for good after a handful of them (WebKit caps
+         * hardware contexts at 4); and because a context created outside a user gesture
+         * starts suspended on iOS, this also has to be primed from a real tap.
+         */
+        function getAudioCtx() {
             try {
-                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                // A context the platform closed under us never plays again; drop it so the next
+                // moo builds a fresh one instead of warning for the rest of the session.
+                if (audioCtx && audioCtx.state === 'closed') audioCtx = null;
+                if (!audioCtx) {
+                    const Ctor = (typeof window !== 'undefined') &&
+                        (window.AudioContext || window.webkitAudioContext);
+                    if (!Ctor) return null;
+                    audioCtx = new Ctor();
+                }
+                // 'interrupted' is a non-standard WebKit state after a call or a lock, and
+                // it is just as silent as 'suspended'.
+                if (audioCtx.state !== 'running' && typeof audioCtx.resume === 'function') {
+                    const p = audioCtx.resume();
+                    if (p && typeof p.catch === 'function') p.catch(() => {});
+                }
+                return audioCtx;
+            } catch (e) {
+                console.warn('[herd] audio unavailable', e);
+                return null;
+            }
+        }
+
+        /** Build and schedule one moo. Only ever called on a context that is RUNNING. */
+        function emitMoo(ctx) {
+            try {
+                // Snapshot once: with a long-lived context currentTime advances between
+                // statements, which detunes and mistimes the ramps.
+                const t = ctx.currentTime;
                 const duration = 1.2;
                 const osc1 = ctx.createOscillator();
                 const osc2 = ctx.createOscillator();
                 const gain = ctx.createGain();
                 osc1.type = 'sawtooth';
                 osc2.type = 'sine';
-                osc1.frequency.setValueAtTime(150, ctx.currentTime);
-                osc1.frequency.linearRampToValueAtTime(120, ctx.currentTime + duration);
-                osc2.frequency.setValueAtTime(148, ctx.currentTime);
-                osc2.frequency.linearRampToValueAtTime(118, ctx.currentTime + duration);
-                gain.gain.setValueAtTime(0.3, ctx.currentTime);
-                gain.gain.linearRampToValueAtTime(0.4, ctx.currentTime + 0.15);
-                gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + duration);
+                osc1.frequency.setValueAtTime(150, t);
+                osc1.frequency.linearRampToValueAtTime(120, t + duration);
+                osc2.frequency.setValueAtTime(148, t);
+                osc2.frequency.linearRampToValueAtTime(118, t + duration);
+                gain.gain.setValueAtTime(0.3, t);
+                gain.gain.linearRampToValueAtTime(0.4, t + 0.15);
+                gain.gain.exponentialRampToValueAtTime(0.01, t + duration);
                 osc1.connect(gain);
                 osc2.connect(gain);
                 gain.connect(ctx.destination);
-                osc1.start(ctx.currentTime);
-                osc2.start(ctx.currentTime);
-                osc1.stop(ctx.currentTime + duration);
-                osc2.stop(ctx.currentTime + duration);
-            } catch (e) { /* audio not supported */ }
+                osc1.start(t);
+                osc2.start(t);
+                osc1.stop(t + duration);
+                osc2.stop(t + duration);
+                // The context is long-lived now, so let each moo's graph go when it ends.
+                osc2.onended = () => { try { gain.disconnect(); } catch (e) { /* already gone */ } };
+            } catch (e) {
+                console.warn('[herd] moo failed', e);
+            }
+        }
+
+        /**
+         * Sound the nudge — but never into a context that is not running.
+         *
+         * getAudioCtx() asks a suspended context to resume and returns it at once; resume()
+         * is asynchronous and, without a user activation, on iOS/WebKit it does not start the
+         * context at all. A suspended context's `currentTime` is FROZEN, so a moo scheduled
+         * into one is not merely silent now — it is STORED at time zero, and every stored moo
+         * fires together the instant the player finally taps something. That is the worst of
+         * both worlds for the one player this sound exists for (who by construction has
+         * touched nothing this round): silence when the nudge is meant, then a pile-up of
+         * overlapping moos minutes later, for a round that has long since been scored — the
+         * exact replay the guards on the 'moo' message exist to prevent on the wire.
+         *
+         * So: play it now if the context is running, otherwise wait for it to actually start
+         * and ask the caller whether the moo is still worth making. `stillWanted` is the
+         * caller's own relevance test, re-run at the moment the sound would be heard.
+         */
+        function playMoo(stillWanted) {
+            const ctx = getAudioCtx();          // also fires resume() on a suspended context
+            if (!ctx) return;
+            if (ctx.state === 'running') { emitMoo(ctx); return; }
+            if (typeof ctx.addEventListener !== 'function') return;   // nothing to wait on
+            const deadline = Date.now() + MOO_MAX_AGE_MS;
+            let settled = false;
+            const onStateChange = () => {
+                // 'interrupted' is WebKit's post-call/lock state and is just as silent.
+                if (settled || ctx.state === 'suspended' || ctx.state === 'interrupted') return;
+                settled = true;
+                try { ctx.removeEventListener('statechange', onStateChange); } catch (e) { /* gone */ }
+                if (ctx.state !== 'running') return;                  // 'closed': never coming back
+                if (Date.now() > deadline) return;                    // too late to be a nudge
+                if (typeof stillWanted === 'function' && !stillWanted()) return;
+                emitMoo(ctx);
+            };
+            try { ctx.addEventListener('statechange', onStateChange); } catch (e) { /* dropped */ }
+        }
+
+        // A tab restored by tryAutoRejoin has tapped nothing, so the create/join buttons never
+        // primed anything and on WebKit the first moo would build a suspended context and be
+        // silent — for exactly the player the moo exists for. The first tap or key anywhere in
+        // the document is a user activation; use it once.
+        if (typeof document !== 'undefined' && document.addEventListener) {
+            const primeAudio = () => { getAudioCtx(); };
+            document.addEventListener('pointerdown', primeAudio, { once: true });
+            document.addEventListener('keydown', primeAudio, { once: true });
         }
 
         // ── Session persistence ──────────────────────────────────
@@ -796,6 +1042,57 @@
 
         function clearSession() {
             try { sessionStorage.removeItem('herd-session'); } catch (e) { /* ignore */ }
+        }
+
+        /**
+         * The host's round counter, remembered against the ROOM CODE.
+         *
+         * A host tab that reloads (or is discarded and restored, which is routine for a
+         * backgrounded tab) does not get a new room: sloplobby keeps the code in
+         * sessionStorage and `createRoom()` re-adopts it. Its players' phones therefore walk
+         * back into the same room — and so do any answers still sitting in their outbound
+         * queues, each stamped with the round it was typed for. Those stamps are only safe to
+         * compare against `roundNumber` while the counter never goes backwards, so it is
+         * carried across the reload rather than restarted at 0.
+         *
+         * Keyed by code, and stored in the same place as the code itself: a tab whose storage
+         * throws cannot remember the room code either, so it comes back as a NEW room where no
+         * old answer can be spent — the two facts always have the same lifetime.
+         */
+        function roundHwmKey(code) {
+            return 'herd-round-hwm-' + code;
+        }
+
+        function loadRoundHwm(code) {
+            if (!code) return 0;
+            try {
+                const raw = sessionStorage.getItem(roundHwmKey(code));
+                const n = raw == null ? NaN : parseInt(raw, 10);
+                return Number.isInteger(n) && n > 0 ? n : 0;
+            } catch (e) { return 0; }
+        }
+
+        function saveRoundHwm() {
+            if (role !== 'host' || !roomCode) return;
+            try { sessionStorage.setItem(roundHwmKey(roomCode), String(roundNumber)); } catch (e) { /* ignore */ }
+        }
+
+        function clearRoundHwm(code) {
+            if (!code) return;
+            try { sessionStorage.removeItem(roundHwmKey(code)); } catch (e) { /* ignore */ }
+        }
+
+        // ── Wire payload sanitising (nothing from the wire is trusted) ──
+        function sanitizeNames(list) {
+            if (!Array.isArray(list)) return null;
+            return list.filter(n => typeof n === 'string' && n).slice(0, 64);
+        }
+
+        function adoptScores(raw) {
+            if (!raw || typeof raw !== 'object') return;
+            for (const [k, v] of Object.entries(raw)) {
+                if (typeof v === 'number' && isFinite(v)) scores[k] = v;
+            }
         }
 
         // ── Scoreboard rendering ───────────────────────────────────
@@ -830,8 +1127,9 @@
 
         // ── Create Room ────────────────────────────────────────────
         $('btn-create-go').addEventListener('click', () => {
-            const name = $('host-name-input').value.trim();
+            const name = $('host-name-input').value.trim().slice(0, MAX_NAME_LEN);
             if (!name) { $('host-name-input').focus(); return; }
+            getAudioCtx();          // prime the audio context from a real user gesture
             myName = name;
             role = 'host';
             startHost();
@@ -843,10 +1141,11 @@
 
         // ── Join Room ──────────────────────────────────────────────
         $('btn-join-go').addEventListener('click', () => {
-            const name = $('join-name-input').value.trim();
+            const name = $('join-name-input').value.trim().slice(0, MAX_NAME_LEN);
             const code = $('join-code-input').value.trim().toUpperCase();
             if (!name) { $('join-name-input').focus(); return; }
             if (!code || code.length < 4) { $('join-code-input').focus(); return; }
+            getAudioCtx();          // prime the audio context from a real user gesture
             myName = name;
             roomCode = code;
             role = 'player';
@@ -865,120 +1164,421 @@
             e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
         });
 
+        $('btn-rejoin').addEventListener('click', () => {
+            hideRemovedPrompt();
+            if (role === 'player' && myName && roomCode) startPlayer(true);
+        });
+
         // ════════════════════════════════════════════════════════════
         // HOST LOGIC
         // ════════════════════════════════════════════════════════════
-        async function startHost() {
-            showScreen('connecting-screen');
 
-            lobby = new SlopLobby.SlopLobby({
+        /**
+         * Everything a returning (or late-arriving) client needs to land on the right
+         * screen. Built in one place so every path — rejoin, latecomer, resync request —
+         * sends exactly the same truth.
+         */
+        function rejoinPayload(name) {
+            return {
+                type: 'rejoin',
+                name,
+                players,
+                scores: { ...scores },
+                cowHolder,
+                away: awayNames(),
+                gamePhase,
+                round: roundNumber,
+                // What the round is CALLED; `round` above is its identity.
+                label: roundNumber - roundBase,
+                // Never hand out a question the host is still browsing: during 'question' they
+                // are skipping and typing, and a client polling resync would read it early.
+                question: gamePhase === 'question' ? '' : currentQuestion,
+                hasAnswered: !!answers[name],
+                // Without this a player who reloads during 'results' sees no scores at all
+                // until the next question.
+                results: gamePhase === 'results' ? lastResults : null,
+            };
+        }
+
+        function awayNames() {
+            return [...new Set([...awayPlayers, ...disconnectedPlayers])];
+        }
+
+        /**
+         * Withdraw any refusal SlopNet is still holding against `clientId`.
+         *
+         * Refusing a join here means returning a string from `onPlayerJoined`, and the library
+         * treats every such refusal as a kick that must STICK: it remembers the reason and
+         * spends it on that clientId's next AUTOMATIC reconnect, so a removed player's retry
+         * ladder cannot walk them back in. But most of this app's refusals are not removals at
+         * all — "Name already taken", "That player is reconnecting — try again in a moment" —
+         * they are soft, and they end with the player back on the join form being invited to
+         * try again. A deliberate second attempt carries no `staleMs`, so it is admitted
+         * without spending the hold, and the hold is then left armed against a player who is
+         * sitting in the game: their first ordinary reconnect — a locked phone, a wifi
+         * handover — is refused with the stale words, which is terminal. They land back on the
+         * join screen mid-round, their saved session cleared and their answers going nowhere.
+         *
+         * Admitting the tab is this host's own statement that the earlier refusal is spent, so
+         * it is withdrawn here. There is no public call for "never mind", hence the reach into
+         * the map; it is defensive, and doing nothing is safe if the library ever moves it.
+         */
+        function forgetHeldRejection(clientId) {
+            try {
+                const held = lobby && lobby.host && lobby.host._pendingRejections;
+                if (held && typeof held.delete === 'function') held.delete(clientId);
+            } catch (e) { /* nothing to withdraw */ }
+        }
+
+        /**
+         * Seat a name against a clientId and push it the state for the current phase.
+         * Shared by the join and the rejoin paths: re-admission is a re-seat, never a
+         * whitelist lookup, so a return the host never saw as a departure still works.
+         */
+        function seatPlayer(clientId, name, isRejoin) {
+            // This tab is IN, so no refusal from an earlier attempt may fire at it later.
+            forgetHeldRejection(clientId);
+            awayPlayers.delete(name);
+            disconnectedPlayers.delete(name);
+            if (!players.includes(name)) players.push(name);
+            if (!Object.prototype.hasOwnProperty.call(scores, name)) scores[name] = 0;
+
+            // Merge into whatever sloplobby seeded rather than replacing it.
+            const record = lobby.players.get(clientId) || {};
+            record.name = name;
+            lobby.players.set(clientId, record);
+
+            // A latecomer who arrives mid-answering is asked this round's question too;
+            // one who arrives during merge/results is parked and joins the next round.
+            if (gamePhase === 'answering') roundParticipants.add(name);
+
+            if (!isRejoin) {
+                lobby.send(clientId, { type: 'joined', name, players, scores: { ...scores }, cowHolder, away: awayNames() });
+            }
+            if (isRejoin || gamePhase !== 'lobby') {
+                // 'joined' paints the lobby, so it must come first or it would paint over
+                // the answer screen this payload is about to ask for.
+                lobby.send(clientId, rejoinPayload(name));
+            }
+
+            broadcastLobby();
+            renderHostWaiting();
+            if (gamePhase === 'answering') {
+                broadcastProgress();
+                checkAllAnswered();
+            }
+        }
+
+        /** A display name off the wire: coerced, trimmed, bounded — never trusted as identity. */
+        function wireName(metadata) {
+            const raw = metadata && typeof metadata.name === 'string' ? metadata.name : '';
+            return raw.trim().slice(0, MAX_NAME_LEN);
+        }
+
+        /** Only a string is a name: a number from the wire would become a permanent phantom. */
+        function metaName(meta) {
+            return meta && typeof meta.name === 'string' && meta.name ? meta.name : null;
+        }
+
+        /** The clientIds SlopNet says are actually on the wire right now. */
+        function liveClientIds() {
+            return lobby ? lobby.getConnectedClientIds() : [];
+        }
+
+        /**
+         * A DIFFERENT connection that is live right now and sitting under this name.
+         *
+         * Liveness matters: a name whose only other holder is an absent record is that
+         * player's own seat coming back, while a name somebody is actually sitting in is a
+         * collision whatever the joiner typed.
+         */
+        function heldByAnother(name, clientId) {
+            if (!lobby) return null;
+            for (const cid of liveClientIds()) {
+                if (cid === clientId) continue;
+                const info = lobby.players.get(cid);
+                if (info && info.name === name) return cid;
+            }
+            return null;
+        }
+
+        /**
+         * Re-derive "away" from the seats SlopNet is actually holding.
+         *
+         * Clearing the set wholesale on Start/End Game repainted a phone that is still absent
+         * as present: it then counted towards the three-player minimum and was written into the
+         * next round's participants, so the round waited on a phantom until the seat expired.
+         */
+        function refreshAwayFromSeats() {
+            if (!lobby || !lobby.host) { awayPlayers.clear(); return; }
+            const live = new Set();
+            for (const cid of liveClientIds()) {
+                const n = nameForClientId(cid);
+                if (n) live.add(n);
+            }
+            awayPlayers = new Set(players.filter(
+                p => p !== myName && !live.has(p) && !disconnectedPlayers.has(p)));
+        }
+
+        /**
+         * A brand-new connection asking for a seat. Returns a rejection string, or nothing once
+         * the player is seated.
+         */
+        function admitPlayer(clientId, metadata) {
+            const name = wireName(metadata);
+            if (!name) return 'Name is required';
+
+            const rosterMatch = rosterNameFor(name);
+            if (rosterMatch) {
+                // The host's own seat is never claimable from the wire. Answered from the
+                // ROSTER and answered FIRST: the host is the one player with no record in
+                // lobby.players, so a question put to that map about their name during a join
+                // can only be answered by the joiner's own seeded record — which is how this
+                // guard used to be skipped and a guest seated as the host.
+                if (rosterMatch === myName) return 'Name already taken';
+                // Who ELSE is sitting under it; never the joiner themselves (see above).
+                const holder = clientIdForName(rosterMatch, clientId);
+                // A seat SlopNet has RELEASED — or that nobody holds at all — is the player's
+                // own to walk back into from a new tab or device.
+                if (disconnectedPlayers.has(rosterMatch) || !holder) {
+                    if (holder) lobby.removeClient(holder, 'Your seat was taken over from another device');
+                    seatPlayer(clientId, rosterMatch, false);
+                    return;
+                }
+                // A seat that is merely AWAY is still being held for its owner: it comes back on
+                // its own through the seat token. Handing it to whoever types the name evicts a
+                // player whose phone just locked — and the kick then sticks against their own
+                // retry ladder, locking them out for the life of the room.
+                if (awayPlayers.has(rosterMatch)) return 'That player is reconnecting — try again in a moment';
+                return 'Name already taken';
+            }
+
+            if (name.toLowerCase() === String(myName).toLowerCase()) return 'Name already taken';
+            if (players.length >= MAX_PLAYERS) return 'This game is full';
+            seatPlayer(clientId, name, false);
+        }
+
+        /**
+         * A connection SlopNet recognises. Identity comes from OUR record first: a reconnecting
+         * PeerClient re-sends the metadata it was built with, so a rebuilt record (or a crafted
+         * second join on one channel) would otherwise let it rename its seat — or claim
+         * somebody else's. The wire name is a last resort, and gets the same collision checks a
+         * fresh join does.
+         */
+        function readmitPlayer(clientId, metadata) {
+            const known = nameForClientId(clientId);
+            let name = known || wireName(metadata);
+            name = rosterNameFor(name) || name;
+            if (!name) {
+                // Degenerate: a rejoin cannot return a rejection string, so drop the seat.
+                lobby.removeClient(clientId, 'Name is required');
+                return;
+            }
+            // Even a name that came from "our" record can be one the client chose: sloplobby
+            // REBUILDS a record it no longer holds straight from the wire metadata (its parked
+            // map is smaller than SlopNet's memory of clientIds). So the collision checks run
+            // on every path — a name somebody else is sitting in, and the host's own name, are
+            // refused however the rejoin resolved them.
+            if (name === myName || heldByAnother(name, clientId)) {
+                lobby.removeClient(clientId, 'Name already taken');
+                return;
+            }
+            if (!players.includes(name) && players.length >= MAX_PLAYERS) {
+                lobby.removeClient(clientId, 'This game is full');
+                return;
+            }
+            seatPlayer(clientId, name, true);
+        }
+
+        /**
+         * `isMine` keeps every callback tied to the lobby instance it was built for, so a
+         * late event from a lobby we have already replaced can never act on the live one.
+         */
+        function hostCallbacks(isMine) {
+            return {
                 roomPrefix: 'herdm-',
                 storageKey: 'herd-client-id',
                 onHostData: (clientId, data) => {
+                    if (!isMine()) return;
                     handleHostMessage(clientId, data);
                 },
                 onPlayerJoined: (clientId, metadata) => {
-                    const name = (metadata && metadata.name || '').trim();
-                    if (!name) {
-                        return 'Name is required';
+                    if (!isMine()) return;
+                    try {
+                        return admitPlayer(clientId, metadata);
+                    } catch (e) {
+                        // A throw here is swallowed by the library, and the client has already
+                        // been acked — it would sit on a spinner for ever. Refuse instead.
+                        console.warn('[herd] join failed', e);
+                        return 'Could not join — please try again';
                     }
-
-                    // Check if name is already taken by a connected player
-                    const existingMatch = players.find(p => p.toLowerCase() === name.toLowerCase());
-                    if (existingMatch) {
-                        return 'Name already taken';
-                    }
-
-                    // Also check against host name
-                    if (name.toLowerCase() === myName.toLowerCase()) {
-                        return 'Name already taken';
-                    }
-
-                    // Accept — add to game state
-                    players.push(name);
-                    if (!(name in scores)) scores[name] = 0;
-                    lobby.send(clientId, { type: 'joined', name, players, scores, cowHolder });
-                    broadcastLobby();
                 },
                 onPlayerRejoined: (clientId, metadata) => {
-                    const name = (metadata && metadata.name || '').trim();
-
-                    // Check if this name belongs to a disconnected player
-                    const existingMatch = players.find(p => p.toLowerCase() === name.toLowerCase());
-                    if (existingMatch && disconnectedPlayers.has(existingMatch)) {
-                        // Reconnecting player — restore them
-                        disconnectedPlayers.delete(existingMatch);
-                        lobby.players.set(clientId, { name: existingMatch });
-                        lobby.send(clientId, {
-                            type: 'rejoin',
-                            name: existingMatch, players, scores, cowHolder, gamePhase,
-                            round: roundNumber, question: currentQuestion,
-                            hasAnswered: !!answers[existingMatch]
-                        });
-                        broadcastLobby();
-                    } else {
-                        // Treat as a fresh join (clientId reconnected but name may differ)
-                        const prevName = nameForClientId(clientId);
-                        if (prevName && disconnectedPlayers.has(prevName)) {
-                            disconnectedPlayers.delete(prevName);
-                            lobby.players.set(clientId, { name: prevName });
-                            lobby.send(clientId, {
-                                type: 'rejoin',
-                                name: prevName, players, scores, cowHolder, gamePhase,
-                                round: roundNumber, question: currentQuestion,
-                                hasAnswered: !!answers[prevName]
-                            });
-                            broadcastLobby();
-                        }
+                    if (!isMine()) return;
+                    try {
+                        readmitPlayer(clientId, metadata);
+                    } catch (e) {
+                        console.warn('[herd] rejoin failed', e);
                     }
                 },
-                onPlayerLeft: (clientId, meta) => {
-                    const name = meta ? meta.name : null;
+                onPlayerLeft: (clientId, meta, final) => {
+                    if (!isMine()) return;
+                    const name = metaName(meta) || nameForClientId(clientId);
                     if (!name) return;
+                    // A seat is a NAME to this app and a clientId to the library, and the two
+                    // part company the moment a player comes back on a different connection:
+                    // the abandoned clientId is still in SlopNet's memory and still owes us a
+                    // departure. Spending that departure on the name would unseat the tab
+                    // sitting in it right now. Whoever is actually connected under the name
+                    // keeps it, and the stale record leaves quietly.
+                    if (heldByAnother(name, clientId)) return;
+                    // Defensive: sloplobby only sends final=true when no onPlayerLost is
+                    // defined, but the two must never disagree.
+                    if (final) { handlePlayerLost(name); return; }
 
-                    if (gamePhase === 'lobby') {
-                        // In lobby, fully remove them
-                        players = players.filter(p => p !== name);
-                    } else {
-                        // Mid-game: mark as disconnected, don't remove
-                        disconnectedPlayers.add(name);
-                        // If we're waiting for their answer, check if we can proceed
-                        if (gamePhase === 'answering') {
-                            checkAllAnswered();
-                        }
-                    }
+                    // TEMPORARY. SlopNet is still holding the seat, so nothing structural
+                    // happens: mark them away, repaint, and above all do NOT re-evaluate
+                    // the round — a phone that merely locked must not end it.
+                    awayPlayers.add(name);
                     broadcastLobby();
+                    renderHostWaiting();
                 },
-            });
+                onPlayerLost: (clientId, meta) => {
+                    if (!isMine()) return;
+                    const name = metaName(meta) || nameForClientId(clientId);
+                    if (!name) return;
+                    // Same seat, newer connection: an expiring window for an abandoned
+                    // clientId must not evict the player who is sitting there on another one.
+                    if (heldByAnother(name, clientId)) return;
+                    handlePlayerLost(name);
+                },
+            };
+        }
+
+        /** FINAL departure: the reconnect window expired and the seat is released. */
+        function handlePlayerLost(name) {
+            awayPlayers.delete(name);
+            if (gamePhase === 'lobby') {
+                players = players.filter(p => p !== name);
+                disconnectedPlayers.delete(name);
+                // scores are kept: the same name walking back in keeps its points.
+            } else {
+                disconnectedPlayers.add(name);
+            }
+            broadcastLobby();
+            renderHostWaiting();
+            if (gamePhase === 'answering') {
+                // Somebody gone for good must not hold the round open.
+                broadcastProgress();
+                checkAllAnswered();
+            }
+        }
+
+        async function startHost() {
+            // First teardown this app ever had: two live lobbies share one clientId, and
+            // the abandoned one reconnects into the live tab's seat.
+            if (lobby) { try { lobby.destroy(); } catch (e) { /* already gone */ } lobby = null; }
+            clearMooTimer();
+            showScreen('connecting-screen');
+
+            let mine;
+            mine = new SlopLobby.SlopLobby(hostCallbacks(() => lobby === mine));
+            lobby = mine;
 
             try {
-                roomCode = await lobby.createRoom(myName);
+                roomCode = await mine.createRoom(myName);
             } catch (err) {
-                showError('Connection error: ' + err.message);
+                // Only the live attempt may paint: a rejection from an attempt something else
+                // has already superseded must not bounce the session that replaced it.
+                if (lobby !== mine) return;
+                try { mine.destroy(); } catch (e) { /* already gone */ }
+                lobby = null;
+                showError('Connection error: ' + ((err && err.message) || err));
                 showScreen('home-screen');
                 return;
             }
+            if (lobby !== mine) return;   // superseded while we were awaiting
 
             players = [myName];
-            scores = {};
+            scores = Object.create(null);
             scores[myName] = 0;
             cowHolder = null;
+            awayPlayers.clear();
+            disconnectedPlayers.clear();
+            roundParticipants.clear();
+            scoredRounds.clear();
+            resyncAt.clear();
+            // NOT 0. `createRoom` above may have re-adopted the code this tab was hosting
+            // before it reloaded, and that room's players still hold answers stamped with its
+            // round numbers. Resume the counter from where that session left it so identity
+            // stays monotonic for the life of the ROOM; only the DISPLAY starts at 1 (roundBase).
+            roundNumber = loadRoundHwm(roomCode);
+            roundBase = roundNumber;
+            lastResults = null;
 
             showLobby();
         }
 
         function handleHostMessage(clientId, data) {
+            if (!lobby || !data || typeof data !== 'object') return;
             switch (data.type) {
                 case 'answer': {
                     const name = nameForClientId(clientId);
-                    if (name && !answers[name]) {
-                        answers[name] = data.answer;
-                        broadcastProgress();
-                        checkAllAnswered();
+                    if (!name) return;                                   // unknown seat
+                    // Idempotent FIRST, refusals after. A returning client is told whether we
+                    // hold its answer by a snapshot composed BEFORE the answer it is still
+                    // delivering: slopnet drains a reconnecting tab's outbound queue after it
+                    // announces the rejoin, so `hasAnswered: false` goes out while the answer
+                    // is on the wire, and an honest client resends exactly the answer that
+                    // then arrives. By the time the copy lands the round may well have closed
+                    // on the strength of the original — and refusing it there tells the player
+                    // their answer never arrived while it is sitting in `answers` being
+                    // scored. First write wins; every later copy of it is confirmed.
+                    if (typeof data.round === 'number' && data.round === roundNumber && answers[name]) {
+                        lobby.send(clientId, { type: 'answer-ack', round: roundNumber });
+                        return;
                     }
+                    // Every refusal below is REPORTED. A silent drop leaves a phone showing
+                    // "Answer Submitted" for an answer nobody holds — which one tap on Reveal
+                    // makes an ordinary occurrence, not an edge case.
+                    if (gamePhase !== 'answering') return refuseAnswer(clientId, data);
+                    // The round number never restarts — not between games, and not across a
+                    // reload of the host tab (see loadRoundHwm) — so this also rejects an
+                    // answer queued during a previous GAME, or a previous HOST SESSION, of
+                    // this same room.
+                    if (typeof data.round !== 'number' || data.round !== roundNumber) return refuseAnswer(clientId, data);
+                    // Only the players this round actually asked. A latecomer seated during
+                    // merge was never asked, and the close arithmetic never waits for them.
+                    if (!roundParticipants.has(name)) return refuseAnswer(clientId, data);
+                    if (typeof data.answer !== 'string') return refuseAnswer(clientId, data);
+                    const answer = data.answer.trim().slice(0, MAX_ANSWER_LEN);
+                    if (!answer) return refuseAnswer(clientId, data);
+                    answers[name] = answer;
+                    lobby.send(clientId, { type: 'answer-ack', round: roundNumber });
+                    broadcastProgress();
+                    checkAllAnswered();
+                    break;
+                }
+
+                case 'resync-request': {
+                    // The client reconnected and is asking what it missed. Works whatever
+                    // the host observed, so no rejoin can leave a player on a spinner.
+                    const name = nameForClientId(clientId);
+                    if (!name) return;
+                    const now = Date.now();
+                    if (now - (resyncAt.get(clientId) || 0) < RESYNC_MIN_INTERVAL_MS) return;
+                    resyncAt.set(clientId, now);
+                    lobby.send(clientId, rejoinPayload(name));
                     break;
                 }
             }
+        }
+
+        /** "We did not take that answer." Always paired with a drop in the ingest above. */
+        function refuseAnswer(clientId, data) {
+            if (!lobby) return;
+            const round = typeof data.round === 'number' ? data.round : roundNumber;
+            lobby.send(clientId, { type: 'answer-reject', round });
         }
 
         function broadcast(msg) {
@@ -986,38 +1586,56 @@
         }
 
         function broadcastLobby() {
-            broadcast({ type: 'lobby', players, scores, cowHolder });
+            broadcast({ type: 'lobby', players, scores: { ...scores }, cowHolder, away: awayNames() });
             renderLobby();
         }
 
         function broadcastProgress() {
             const answered = Object.keys(answers);
-            const activePlayers = players.filter(p => !disconnectedPlayers.has(p));
-            broadcast({ type: 'progress', answered, total: activePlayers.length });
+            const active = roundActivePlayers();
+            broadcast({ type: 'progress', answered, total: active.length, round: roundNumber });
             renderHostWaiting();
 
-            // Moo timer: if exactly 1 active player hasn't answered, start 5s timer
-            if (mooTimeout) { clearTimeout(mooTimeout); mooTimeout = null; }
-            const unanswered = activePlayers.filter(p => !answers[p]);
-            if (unanswered.length === 1) {
+            // Moo timer: if exactly 1 active player hasn't answered, start 5s timer.
+            // Re-armed from scratch on every roster or answer change, so it can never be
+            // left aimed at somebody who has since answered, left, or been joined by
+            // another straggler.
+            clearMooTimer();
+            const unanswered = active.filter(p => !answers[p] && !awayPlayers.has(p));
+            if (unanswered.length === 1 && gamePhase === 'answering') {
                 const lastPlayer = unanswered[0];
+                const round = roundNumber;
                 mooTimeout = setTimeout(() => {
-                    // Tell that player to moo
+                    mooTimeout = null;
+                    // The round may have closed (or moved on) during those 5 seconds.
+                    const stillOutstanding = () => gamePhase === 'answering' &&
+                        round === roundNumber &&
+                        !answers[lastPlayer] && !awayPlayers.has(lastPlayer);
+                    if (!stillOutstanding()) return;
                     if (lastPlayer === myName) {
-                        playMoo();
-                    } else {
-                        const cid = clientIdForName(lastPlayer);
-                        if (cid) lobby.send(cid, { type: 'moo' });
+                        // Same test again if the sound has to wait for the audio context to
+                        // start: a moo the host hears after they have answered is noise.
+                        playMoo(stillOutstanding);
+                        return;
                     }
+                    const cid = clientIdForName(lastPlayer);
+                    // Never QUEUE a moo. lobby.send holds it for an absent seat and flushes it
+                    // on their return, so a nudge about this moment would sound minutes later
+                    // for a round that has long since been scored.
+                    if (!cid || !lobby || !liveClientIds().includes(cid)) return;
+                    lobby.send(cid, { type: 'moo', round });
                 }, 5000);
             }
         }
 
         function checkAllAnswered() {
-            const activePlayers = players.filter(p => !disconnectedPlayers.has(p));
-            const answeredCount = activePlayers.filter(p => answers[p]).length;
-            if (answeredCount >= activePlayers.length) {
-                if (mooTimeout) { clearTimeout(mooTimeout); mooTimeout = null; }
+            // The single gate that advances the round, so it is also the backstop: a late
+            // or queued answer must never re-enter the terminal transition from a phase
+            // that has already moved on.
+            if (gamePhase !== 'answering') return;
+            const active = roundActivePlayers();
+            const answeredCount = active.filter(p => answers[p]).length;
+            if (answeredCount >= active.length) {
                 showMergeScreen();
             }
         }
@@ -1025,6 +1643,7 @@
         // ── Lobby ──────────────────────────────────────────────────
         function showLobby() {
             gamePhase = 'lobby';
+            clearMooTimer();
             saveSession();
             $('lobby-room-code').textContent = roomCode;
             renderLobby();
@@ -1040,14 +1659,18 @@
 
         function renderLobby() {
             const el = $('lobby-players');
+            if (!el) return;
             el.innerHTML = players.map(name => {
                 const isMe = name === myName;
                 const hasCow = name === cowHolder;
-                return `<span class="player-tag${hasCow ? ' has-cow' : ''}${isMe ? ' is-you' : ''}">
-                    ${esc(name)}${isMe ? ' <span class="you-badge">(you)</span>' : ''}${hasCow ? ' <span class="cow">🐄</span>' : ''}
+                const away = awayPlayers.has(name) || disconnectedPlayers.has(name);
+                return `<span class="player-tag${hasCow ? ' has-cow' : ''}${isMe ? ' is-you' : ''}${away ? ' disconnected' : ''}">
+                    ${esc(name)}${isMe ? ' <span class="you-badge">(you)</span>' : ''}${hasCow ? ' <span class="cow">🐄</span>' : ''}${away ? ' <span class="you-badge" style="color: var(--color-error)">(away)</span>' : ''}
                 </span>`;
             }).join('');
-            const count = players.length;
+            // Only players who are actually here count towards the minimum — an absent
+            // seat would otherwise let the host start a game with a phantom.
+            const count = players.filter(p => !awayPlayers.has(p) && !disconnectedPlayers.has(p)).length;
             $('lobby-min-msg').textContent = count < 3
                 ? `${count} player${count !== 1 ? 's' : ''} — need at least 3`
                 : `${count} player${count !== 1 ? 's' : ''}`;
@@ -1055,17 +1678,63 @@
         }
 
         $('btn-start-game').addEventListener('click', () => {
-            roundNumber = 0;
+            if (role !== 'host') return;
+            // A new game starts from a clean roster: names nobody is holding a seat for go.
+            players = players.filter(p => !disconnectedPlayers.has(p));
+            disconnectedPlayers.clear();
+            // NOT a blanket clear — a seat SlopNet is still holding is still absent.
+            refreshAwayFromSeats();
+            roundParticipants.clear();
+            scoredRounds.clear();
+            lastResults = null;
+            // roundNumber is deliberately NOT reset: it is the identity every answer is
+            // stamped with, and a phone still holding last game's answer must not be able to
+            // spend it on this game's first round. Only the DISPLAY restarts at 1.
+            roundBase = roundNumber;
             usedQuestionIndices.clear();
             // Reset scores for new game
-            for (const p of players) scores[p] = 0;
+            const freshScores = Object.create(null);
+            for (const p of players) freshScores[p] = 0;
+            scores = freshScores;
             cowHolder = null;
             hostNextRound();
         });
 
+        $('btn-close-room').addEventListener('click', async () => {
+            if (role !== 'host' || !lobby) return;
+            const mine = lobby;
+            // closeRoom tells every player before the channel goes, so nobody is left
+            // reconnecting for minutes against a room that no longer exists.
+            const closingCode = roomCode;
+            try { await mine.closeRoom('Host closed the room'); } catch (e) { console.warn('[herd] closeRoom failed', e); }
+            if (lobby === mine) lobby = null;
+            clearSession();
+            // This room is over and its code is forgotten with it, so its round counter has
+            // nothing left to protect.
+            clearRoundHwm(closingCode);
+            try { location.reload(); } catch (e) { showScreen('home-screen'); }
+        });
+
+        // There is deliberately NO 'beforeunload' goodbye here.
+        //
+        // An unload handler cannot tell a reload from a closed tab, and closeRoom() is
+        // terminal: it tells every player the room is gone, which stops their reconnect
+        // ladders for good and clears their saved sessions. A host tab reloading is the
+        // ordinary case — a discarded background tab, a pulled-to-refresh phone — and the
+        // whole recovery path is built for it: sloplobby keeps the room code in
+        // sessionStorage and createRoom() re-adopts it, loadRoundHwm() resumes the round
+        // counter, and the players' ladders walk straight back into the same room. Saying
+        // goodbye on the way out is what made that recovery impossible.
+        //
+        // Ending the room on purpose is the Close Room button, which is the only place that
+        // can honestly know it was meant.
+
         // ── Host question phase ────────────────────────────────────
         function hostNextRound() {
             roundNumber++;
+            // Recorded BEFORE the round can be played, so a host tab that vanishes mid-round
+            // comes back knowing this number was already spent.
+            saveRoundHwm();
             pickQuestion();
             showHostQuestion();
         }
@@ -1087,8 +1756,9 @@
 
         function showHostQuestion() {
             gamePhase = 'question';
+            clearMooTimer();
             saveSession();
-            $('hq-round').textContent = 'Round ' + roundNumber;
+            $('hq-round').textContent = 'Round ' + (roundNumber - roundBase);
             $('hq-question').textContent = currentQuestion;
             $('hq-custom-input').value = '';
             renderHostCategories();
@@ -1098,7 +1768,7 @@
 
         function renderHostCategories() {
             $('hq-categories').innerHTML = allCategories.map(c => `
-                <button class="category-btn${activeCategories.has(c) ? ' active' : ''}" data-cat="${c}">${c}</button>
+                <button class="category-btn${activeCategories.has(c) ? ' active' : ''}" data-cat="${esc(c)}">${esc(c)}</button>
             `).join('');
         }
 
@@ -1132,16 +1802,23 @@
         });
 
         $('hq-send-btn').addEventListener('click', () => {
-            answers = {};
+            if (role !== 'host') return;
+            answers = Object.create(null);
             gamePhase = 'answering';
+            // Whoever is here now is who this round waits for.
+            roundParticipants = new Set(players.filter(p => !disconnectedPlayers.has(p)));
             saveSession();
-            broadcast({ type: 'question', round: roundNumber, question: currentQuestion });
+            broadcast({
+                type: 'question', round: roundNumber,
+                label: roundNumber - roundBase, question: currentQuestion,
+            });
             showHostAnswering();
+            broadcastProgress();
         });
 
         // ── Host waiting for answers ───────────────────────────────
         function showHostAnswering() {
-            $('hw-round').textContent = 'Round ' + roundNumber;
+            $('hw-round').textContent = 'Round ' + (roundNumber - roundBase);
             $('hw-question').textContent = currentQuestion;
             renderHostWaiting();
             showScreen('host-waiting-screen');
@@ -1152,6 +1829,9 @@
 
         function showHostAnswerPrompt() {
             let existing = $('hw-answer-area');
+            // Submitting replaces this area's contents with a tick, so an area that has lost
+            // its input must be rebuilt rather than focused into nothing.
+            if (existing && !$('hw-answer-input')) { existing.remove(); existing = null; }
             if (!existing) {
                 const area = document.createElement('div');
                 area.id = 'hw-answer-area';
@@ -1174,40 +1854,65 @@
                     if (e.key === 'Enter' && $('hw-answer-input').value.trim()) $('hw-answer-submit').click();
                 });
                 $('hw-answer-submit').addEventListener('click', () => {
-                    const val = $('hw-answer-input').value.trim();
+                    if (gamePhase !== 'answering') return;
+                    const val = $('hw-answer-input').value.trim().slice(0, MAX_ANSWER_LEN);
                     if (!val) return;
+                    if (answers[myName]) return;
                     answers[myName] = val;
                     area.innerHTML = '<div class="status-msg"><div class="submitted-check">&#10003;</div><div>Your answer submitted</div></div>';
                     broadcastProgress();
                     checkAllAnswered();
                 });
             }
-            setTimeout(() => { const inp = $('hw-answer-input'); if (inp) inp.focus(); }, 100);
+            focusSoon('hw-answer-input');
         }
 
         function renderHostWaiting() {
             const el = $('hw-players');
+            if (!el) return;
             const answeredSet = new Set(Object.keys(answers));
-            const activePlayers = players.filter(p => !disconnectedPlayers.has(p));
+            const active = roundActivePlayers();
             el.innerHTML = players.map(name => {
                 const done = answeredSet.has(name);
-                const dc = disconnectedPlayers.has(name);
-                return `<span class="player-tag${done ? ' answered' : ''}${dc ? ' disconnected' : ''}">
-                    ${done ? '&#10003; ' : ''}${dc ? '&#x2715; ' : ''}${esc(name)}${dc ? ' <span style="font-size:0.75rem;color:var(--color-error)">(left)</span>' : ''}
+                const gone = disconnectedPlayers.has(name);
+                const away = !gone && awayPlayers.has(name);
+                const tag = gone ? ' <span style="font-size:0.75rem;color:var(--color-error)">(left)</span>'
+                    : (away ? ' <span style="font-size:0.75rem;color:var(--color-error)">(away)</span>' : '');
+                return `<span class="player-tag${done ? ' answered' : ''}${gone || away ? ' disconnected' : ''}">
+                    ${done ? '&#10003; ' : ''}${gone ? '&#x2715; ' : ''}${esc(name)}${tag}
                 </span>`;
             }).join('');
-            const answeredActive = activePlayers.filter(p => answeredSet.has(p)).length;
-            $('hw-progress').textContent = `${answeredActive} of ${activePlayers.length} answered`;
+            const answeredActive = active.filter(p => answeredSet.has(p)).length;
+            // Name the absent stragglers: otherwise the host has no idea the round is stuck on
+            // a phone that has gone quiet, and no reason to reach for Reveal.
+            const awayOutstanding = active.filter(p => !answeredSet.has(p) && awayPlayers.has(p));
+            $('hw-progress').textContent = `${answeredActive} of ${active.length} answered` +
+                (awayOutstanding.length ? ` — waiting on ${awayOutstanding.join(', ')} (reconnecting)` : '');
+            const reveal = $('hw-reveal-btn');
+            if (reveal) reveal.disabled = gamePhase !== 'answering' || Object.keys(answers).length === 0;
         }
+
+        $('hw-reveal-btn').addEventListener('click', () => {
+            if (role !== 'host' || gamePhase !== 'answering') return;
+            if (Object.keys(answers).length === 0) return;
+            showMergeScreen();
+        });
 
         // ── Merge screen (host only) ──────────────────────────────
         function showMergeScreen() {
+            // The point at which a pending moo is meaningless.
+            clearMooTimer();
             gamePhase = 'merge';
             saveSession();
-            // Build initial groups from answers
-            const groups = {};
+            // Tell the players the round is closed. Without this a straggler keeps typing into
+            // a box whose answer is binned on arrival — routine now that the host can reveal.
+            broadcast({ type: 'round-closed', round: roundNumber });
+            // Build initial groups from answers. Null-prototype: "constructor" and "__proto__"
+            // are ordinary answers, and on a plain object they are inherited truthy members —
+            // which skipped the initialiser and threw, stranding the host mid-transition.
+            const groups = Object.create(null);
             for (const [player, answer] of Object.entries(answers)) {
-                const key = answer.toLowerCase().trim();
+                const key = String(answer).toLowerCase().trim();
                 if (!groups[key]) groups[key] = { answer, players: [] };
                 groups[key].players.push(player);
             }
@@ -1219,6 +1924,7 @@
 
         function renderMergeCards() {
             const el = $('merge-cards');
+            if (!el) return;
             el.innerHTML = mergeGroups.map((g, i) => `
                 <div class="merge-card${mergeSelected === i ? ' selected' : ''}" data-idx="${i}">
                     <div>
@@ -1252,37 +1958,62 @@
             renderMergeCards();
         });
 
+        $('merge-back-btn').addEventListener('click', () => {
+            if (role !== 'host' || gamePhase !== 'merge') return;
+            gamePhase = 'answering';
+            saveSession();
+            // Only the players this round asked, and each one is told whether the host already
+            // holds their answer — so nobody is handed a blank box for an answer that is in,
+            // and nobody is left on a waiting screen for one that never arrived.
+            for (const name of roundParticipants) {
+                if (name === myName) continue;
+                const cid = clientIdForName(name);
+                if (cid) lobby.send(cid, { type: 'reopen', round: roundNumber, hasAnswered: !!answers[name] });
+            }
+            showHostAnswering();
+            broadcastProgress();
+        });
+
         $('merge-confirm-btn').addEventListener('click', () => {
+            if (role !== 'host') return;
             computeAndShowResults(mergeGroups);
         });
 
         // ── Results computation ────────────────────────────────────
-        function computeAndShowResults(sorted) {
-            sorted.sort((a, b) => b.players.length - a.players.length);
+        function computeAndShowResults(groups) {
+            const sorted = (groups || []).slice().sort((a, b) => b.players.length - a.players.length);
+            // Idempotent per round: a second confirm (or a re-entered merge screen)
+            // re-renders the round, it does not pay for it again.
+            const award = !scoredRounds.has(roundNumber);
+            let hasHerd = false;
 
-            const herdSize = sorted[0].players.length;
-            const topGroups = sorted.filter(g => g.players.length === herdSize);
-            const hasHerd = topGroups.length === 1 && herdSize > 1;
+            if (sorted.length > 0) {
+                const herdSize = sorted[0].players.length;
+                const topGroups = sorted.filter(g => g.players.length === herdSize);
+                hasHerd = topGroups.length === 1 && herdSize > 1;
 
-            // Award points to herd members
-            if (hasHerd) {
-                for (const name of sorted[0].players) {
-                    scores[name] = (scores[name] || 0) + 1;
+                if (award) {
+                    if (hasHerd) {
+                        for (const name of sorted[0].players) {
+                            scores[name] = (scores[name] || 0) + 1;
+                        }
+                    }
+                    // Pink cow: if exactly one player wrote an answer that nobody
+                    // else wrote (group of 1), they're the odd one out and get the cow.
+                    // If zero or 2+ players had unique answers, cow doesn't transfer.
+                    const uniqueAnswerPlayers = sorted
+                        .filter(g => g.players.length === 1)
+                        .flatMap(g => g.players);
+                    if (uniqueAnswerPlayers.length === 1) {
+                        cowHolder = uniqueAnswerPlayers[0];
+                    }
                 }
             }
-
-            // Pink cow: if exactly one player wrote an answer that nobody
-            // else wrote (group of 1), they're the odd one out and get the cow.
-            // If zero or 2+ players had unique answers, cow doesn't transfer.
-            const uniqueAnswerPlayers = sorted
-                .filter(g => g.players.length === 1)
-                .flatMap(g => g.players);
-            if (uniqueAnswerPlayers.length === 1) {
-                cowHolder = uniqueAnswerPlayers[0];
-            }
+            scoredRounds.add(roundNumber);
 
             const resultsData = {
                 type: 'results',
+                round: roundNumber,
                 sorted: sorted.map(g => ({ answer: g.answer, players: g.players })),
                 hasHerd,
                 scores: { ...scores },
@@ -1290,25 +2021,29 @@
             };
 
             gamePhase = 'results';
+            clearMooTimer();
+            lastResults = resultsData;
             saveSession();
             broadcast(resultsData);
             renderResults(resultsData);
         }
 
         function renderResults(data) {
-            const { sorted, hasHerd, scores: sc, cowHolder: cow } = data;
+            if (!data) return;
+            const sorted = Array.isArray(data.sorted) ? data.sorted : [];
+            const hasHerd = !!data.hasHerd;
 
             // Update local state from data (for players)
-            if (sc) {
-                for (const [k, v] of Object.entries(sc)) scores[k] = v;
-            }
-            if (cow !== undefined) cowHolder = cow;
+            adoptScores(data.scores);
+            if (data.cowHolder !== undefined) cowHolder = data.cowHolder;
 
             // Scoreboard
             renderScoreboard('rs-scoreboard');
 
             // Summary
-            if (hasHerd) {
+            if (sorted.length === 0) {
+                $('rs-summary').innerHTML = `<span style="color: var(--color-text-muted)">No answers this round.</span>`;
+            } else if (hasHerd) {
                 $('rs-summary').innerHTML = `The herd said: <span class="herd-label">"${esc(sorted[0].answer)}"</span>`;
             } else {
                 $('rs-summary').innerHTML = `<span style="color: var(--color-pink)">No herd! Everyone thinks differently.</span>`;
@@ -1316,17 +2051,18 @@
 
             // Groups
             $('rs-groups').innerHTML = sorted.map((g, i) => {
+                const names = Array.isArray(g.players) ? g.players : [];
                 const isHerdGroup = hasHerd && i === 0;
                 const isOddGroup = !isHerdGroup && hasHerd;
                 return `
                     <div class="answer-group${isHerdGroup ? ' is-herd' : ''}${isOddGroup ? ' is-odd' : ''}">
-                        <span class="answer-count">${g.players.length} player${g.players.length !== 1 ? 's' : ''}</span>
+                        <span class="answer-count">${names.length} player${names.length !== 1 ? 's' : ''}</span>
                         <div class="answer-text">
                             "${esc(g.answer)}"
                             ${isHerdGroup ? '<span class="badge badge-herd">Herd</span>' : ''}
                             ${isOddGroup ? '<span class="badge badge-cow">Odd one out</span>' : ''}
                         </div>
-                        <div class="answer-players">${g.players.map(esc).join(', ')}</div>
+                        <div class="answer-players">${names.map(esc).join(', ')}</div>
                     </div>
                 `;
             }).join('');
@@ -1343,152 +2079,622 @@
         }
 
         $('rs-next-btn').addEventListener('click', () => {
+            if (role !== 'host') return;
             const hwArea = $('hw-answer-area');
             if (hwArea) hwArea.remove();
-            broadcast({ type: 'next-round' });
+            // Stamped with the round it ENDS. Without that stamp a copy of this message
+            // delivered late (a queue flushed on somebody's reconnect) reads as "the round
+            // you are on is over" whatever round that now is, and bins a live answer.
+            broadcast({ type: 'next-round', round: roundNumber });
             hostNextRound();
         });
 
         $('rs-end-btn').addEventListener('click', () => {
-            broadcast({ type: 'end' });
+            if (role !== 'host') return;
+            // Same stamp, same reason: a replayed 'end' must not be able to abandon the
+            // round a later game is in the middle of.
+            broadcast({ type: 'end', round: roundNumber });
             const hwArea = $('hw-answer-area');
             if (hwArea) hwArea.remove();
+            // Back to the lobby with a roster of people who are actually here.
+            players = players.filter(p => !disconnectedPlayers.has(p));
+            disconnectedPlayers.clear();
+            // Derived, not wiped: a player whose seat is still being held is still away.
+            refreshAwayFromSeats();
+            roundParticipants.clear();
+            scoredRounds.clear();
+            lastResults = null;
+            answers = Object.create(null);
             showLobby();
+            broadcastLobby();
         });
 
         // ════════════════════════════════════════════════════════════
         // PLAYER LOGIC
         // ════════════════════════════════════════════════════════════
         async function startPlayer(isRejoin) {
+            if (lobby) { try { lobby.destroy(); } catch (e) { /* already gone */ } lobby = null; }
+            clearMooTimer();
             showScreen('connecting-screen');
+            hideRemovedPrompt();
+            // A fresh client has an empty outbound queue, so nothing we thought we had
+            // sent is still in flight.
+            clearMyAnswer();
+            roundInterrupted = false;
+            answerScreenRound = -1;
+            haveStateForLink = false;
+            linkUpAt = Date.now();
+            if (!isRejoin) {
+                // A code typed on the join screen may be a DIFFERENT room, and round numbers
+                // are only comparable inside one room: a counter left over from the last one
+                // reads the new host's snapshot as a replay ("never go backwards") and
+                // discards the one message that could paint a screen, leaving the player on
+                // the connecting spinner for good. A REJOIN is by construction the same room,
+                // and there the counter is exactly what stops a flushed queue of old messages
+                // rewinding a live round — so it is kept.
+                roundNumber = 0;
+                roundLabel = 0;
+                currentQuestion = '';
+                gamePhase = 'lobby';
+            }
 
-            lobby = new SlopLobby.SlopLobby({
+            // Captured, so a message or state change from an instance we have since
+            // replaced can never act on the live one.
+            const mine = new SlopLobby.SlopLobby({
                 roomPrefix: 'herdm-',
                 storageKey: 'herd-client-id',
-                onClientData: (data) => handlePlayerMessage(data),
-                onStateChange: (status) => {
-                    if (status === 'disconnected') {
-                        showError('Disconnected from host — attempting to reconnect...');
-                    }
-                    if (status === 'reconnected') {
-                        // SlopLobby auto-reconnected; host will send rejoin state
-                    }
-                    if (status === 'reconnect-failed') {
-                        showError('Lost connection to host');
-                        showScreen('home-screen');
-                    }
-                },
+                onClientData: (data) => { if (lobby === mine) handlePlayerMessage(data); },
+                onStateChange: (state, detail) => { if (lobby === mine) handlePlayerState(state, detail, mine); },
             });
+            lobby = mine;
 
             try {
-                await lobby.joinRoom(roomCode, myName);
+                await mine.joinRoom(roomCode, myName);
             } catch (err) {
-                showError('Could not connect — check the room code');
-                if (isRejoin) {
+                const type = err && err.type;
+                if (type === 'destroyed') return;          // a newer join took over
+                if (lobby !== mine) return;                // superseded while we were awaiting
+                try { mine.destroy(); } catch (e) { /* already gone */ }
+                lobby = null;
+                if (type === 'rejected') {
+                    // Refused at the door: the host's own words, not a generic guess.
+                    showError((err && err.reason) || 'The host would not let you in');
+                    clearSession();
+                    showScreen('join-screen');
+                    return;
+                }
+                if (type === 'room-closed') {
+                    showError('Host ended the game');
                     clearSession();
                     showScreen('home-screen');
+                    return;
+                }
+                if (type === 'superseded') {
+                    showError('This game is open in another tab');
+                    clearSession();
+                    showScreen('home-screen');
+                    return;
+                }
+                if (isRejoin) {
+                    // Transient: the host is reloading, or the tunnel is not over yet. The
+                    // session that offered this Rejoin was kept ON PURPOSE (see the
+                    // 'reconnect-failed' handler), and throwing it away on the first failed
+                    // attempt strands the player — no button, and no auto-rejoin on reload —
+                    // while their seat is still being held for them. Offer the retry again.
+                    showRemovedPrompt('Could not reconnect — tap Rejoin to try again');
+                    showScreen('home-screen');
                 } else {
+                    showError('Could not connect — check the room code');
                     showScreen('join-screen');
                 }
-                return;
             }
         }
 
+        /**
+         * Terminal for this tab: nothing is coming, so stop and say why.
+         * `opts.keepSession` leaves the saved session in place (a reload can then auto-rejoin)
+         * and `opts.offerRejoin` puts the Rejoin button in front of the player — a link that
+         * merely ran out of ladder is not the same as being thrown out of the game.
+         */
+        function endPlayerSession(msg, mine, screen, opts) {
+            const o = opts || {};
+            showError(msg);
+            if (lobby === mine) { try { mine.destroy(); } catch (e) { /* already gone */ } lobby = null; }
+            if (!o.keepSession) clearSession();
+            clearMyAnswer();
+            if (o.offerRejoin) showRemovedPrompt(msg); else hideRemovedPrompt();
+            showScreen(screen || 'home-screen');
+        }
+
+        function handlePlayerState(state, detail, mine) {
+            switch (state) {
+                case 'connected':
+                    haveStateForLink = false;
+                    linkUpAt = Date.now();
+                    break;
+                case 'disconnected':
+                    showError('Disconnected from host — attempting to reconnect...');
+                    break;
+                case 'reconnecting': {
+                    const d = detail || {};
+                    showError(`Reconnecting… (attempt ${d.attempt || 1} of ${d.max || 1})`);
+                    break;
+                }
+                case 'reconnected':
+                    // Both set BEFORE anything the host flushes for this seat is processed:
+                    // slopnet drains the backlog ahead of the fresh snapshot, so every message
+                    // that arrives next is describing a game we cannot see yet.
+                    haveStateForLink = false;
+                    linkUpAt = Date.now();
+                    hideError();
+                    // Ask for the state rather than waiting to be told: the host may never
+                    // have noticed we were gone, and then it sends nothing at all.
+                    if (lobby === mine) lobby.sendToHost({ type: 'resync-request' });
+                    break;
+                case 'rejected':
+                    // Terminal, and handled HERE so the 'reconnect-failed' bookend that
+                    // follows cannot overwrite the reason with a generic one.
+                    endPlayerSession(
+                        (typeof detail === 'string' && detail) || 'The host removed you from the game',
+                        mine, 'join-screen');
+                    break;
+                case 'superseded':
+                    endPlayerSession('This game is open in another tab', mine, 'home-screen');
+                    break;
+                case 'room-closed':
+                    endPlayerSession(detail ? 'Host ended the game: ' + detail : 'Host ended the game',
+                        mine, 'home-screen');
+                    break;
+                case 'reconnect-failed':
+                    // A tunnel, not a refusal: keep the saved session so a reload gets back in,
+                    // and offer the Rejoin button rather than making them retype the code.
+                    endPlayerSession('Lost connection to host', mine, 'home-screen',
+                        { keepSession: true, offerRejoin: true });
+                    break;
+            }
+        }
+
+        /** Are we still on the roster the host just sent? */
+        function checkSelfPresent(list) {
+            if (role !== 'player' || !Array.isArray(list)) return;
+            if (list.includes(myName)) hideRemovedPrompt();
+            else showRemovedPrompt('You are no longer in this game.');
+        }
+
+        function adoptRoster(data) {
+            const names = sanitizeNames(data.players);
+            if (names) players = names;
+            adoptScores(data.scores);
+            if (data.cowHolder !== undefined) cowHolder = typeof data.cowHolder === 'string' ? data.cowHolder : null;
+            const away = sanitizeNames(data.away);
+            // The client keeps the host's away list in one set: it only paints with it.
+            if (away) awayPlayers = new Set(away);
+        }
+
+        /** Our own record of THIS round's answer, or null if it belongs to an older one. */
+        function myAnswerForRound() {
+            return (myAnswer && myAnswer.round === roundNumber) ? myAnswer : null;
+        }
+
+        function setMyAnswer(answer, sent) {
+            myAnswer = { round: roundNumber, answer: answer === undefined ? null : answer };
+            myAnswerSent = !!sent;
+        }
+
+        function clearMyAnswer() {
+            myAnswer = null;
+            myAnswerSent = false;
+        }
+
+        /**
+         * Where a stamped message sits relative to the round we are on. Round identity only
+         * ever counts UP for the life of a room, which makes this a complete classification:
+         *
+         *   'unstamped' — no usable round on it. `Number.isInteger` and not just `typeof`,
+         *                 because NaN compares false against everything: it is neither older
+         *                 nor newer than our round, so a looser test reads it as the CURRENT
+         *                 one and a single NaN then poisons the counter every later guard is
+         *                 measured against.
+         *   'stale'     — a REPLAY: a host->client queue flushed on somebody's reconnect, or a
+         *                 copy from the game before. Acting on one rewinds a live round onto a
+         *                 finished one — stale results painted over the question we are
+         *                 answering, a 'next-round' that bins the answer being typed, an 'end'
+         *                 that abandons a round mid-game.
+         *   'current'   — about the round we are on.
+         *   'ahead'     — about a round we have never heard of. Only 'question' and the
+         *                 'rejoin' snapshot carry a round's CONTENT with them, so only those
+         *                 two may move us forward; every other message would set the counter
+         *                 from a payload that cannot say what that round even was, leaving
+         *                 every later check measured against a number we invented. Ask the
+         *                 host for the snapshot instead of guessing.
+         *
+         * The one place the host's round legitimately goes backwards is a host that restarted
+         * and re-adopted its room code; that arrives as a fresh seat ('joined'), which forgets
+         * everything we knew about rounds, so this rule cannot strand us there.
+         */
+        function roundSide(data) {
+            if (!Number.isInteger(data.round)) return 'unstamped';
+            if (data.round < roundNumber) return 'stale';
+            if (data.round > roundNumber) return 'ahead';
+            return 'current';
+        }
+
+        /** Is this message about the round we are on? Round numbers never repeat in a room. */
+        function isCurrentRound(data) {
+            return roundSide(data) === 'current';
+        }
+
+        /**
+         * "I am behind — tell me where the game actually is."
+         *
+         * Throttled, because the trigger is a message we could not place and a host that keeps
+         * sending them would otherwise get one request per message. The host rate-limits its
+         * own side too; this is so we never even ask that often.
+         */
+        function requestResync() {
+            const now = Date.now();
+            if (now - lastResyncAt < RESYNC_MIN_INTERVAL_MS) return;
+            lastResyncAt = now;
+            if (lobby) lobby.sendToHost({ type: 'resync-request' });
+        }
+
+        /** The host holds our answer for this round — converge, whatever told us so. */
+        function noteHostHasMyAnswer() {
+            // One function for both signals (the ack and the progress broadcast) so the two
+            // can never leave the client in two different states depending on which lands
+            // first: they mean exactly the same thing.
+            if (!myAnswerForRound()) setMyAnswer(null, true);
+            myAnswerSent = true;
+            // And the host holding it is the last word on the interruption that came before:
+            // whatever it said it had then, it has ours now.
+            roundInterrupted = false;
+        }
+
         function handlePlayerMessage(data) {
+            if (!data || typeof data !== 'object') return;
             switch (data.type) {
                 case 'joined':
-                    players = data.players;
-                    if (data.scores) for (const [k, v] of Object.entries(data.scores)) scores[k] = v;
-                    cowHolder = data.cowHolder;
+                    // Adopt the name the host actually seated us under, or the next
+                    // auto-rejoin sends the wrong one.
+                    if (typeof data.name === 'string' && data.name) myName = data.name;
+                    adoptRoster(data);
+                    gamePhase = 'lobby';
+                    clearMyAnswer();
+                    // A brand-new seat: this host holds nothing for us and its round counter
+                    // is its own. Forgetting our round here is what lets the "never go
+                    // backwards" rule below be safe when a host restarts and re-adopts its
+                    // room code — its round 1 would otherwise look like a replay for ever.
+                    roundNumber = 0;
+                    roundLabel = 0;
+                    currentQuestion = '';
+                    answerScreenRound = -1;
+                    roundInterrupted = false;
+                    haveStateForLink = true;
+                    hideRemovedPrompt();
                     saveSession();
                     showLobby();
                     break;
 
                 case 'rejoin': {
-                    // Restore state and show the right screen
-                    players = data.players;
-                    if (data.scores) for (const [k, v] of Object.entries(data.scores)) scores[k] = v;
-                    cowHolder = data.cowHolder;
-                    roundNumber = data.round;
-                    currentQuestion = data.question;
+                    // The whole-state snapshot, and the second of the two messages that may
+                    // move us forward: it carries the phase, the question, the roster, the
+                    // scores and whether the host holds our answer, so a round we have never
+                    // heard of arrives fully explained. A snapshot older than what we already
+                    // know is a replay, and is not news.
+                    if (roundSide(data) === 'stale') break;
+                    if (typeof data.name === 'string' && data.name) myName = data.name;
+                    adoptRoster(data);
+                    if (Number.isInteger(data.round)) roundNumber = data.round;
+                    roundLabel = Number.isInteger(data.label) ? data.label : roundNumber;
+                    currentQuestion = typeof data.question === 'string' ? data.question : '';
+                    const phase = typeof data.gamePhase === 'string' ? data.gamePhase : 'lobby';
+                    gamePhase = phase;
                     saveSession();
-                    const phase = data.gamePhase;
-                    if (phase === 'lobby') {
-                        showLobby();
-                    } else if (phase === 'question') {
-                        // Host is still picking a question
-                        showScreen('player-waiting-screen');
-                    } else if (phase === 'answering') {
+                    haveStateForLink = true;
+                    checkSelfPresent(players);
+                    // Anything recorded for an older round is not about this one. Round numbers
+                    // keep counting for the life of the room, so this also drops an answer left
+                    // over from a previous GAME.
+                    if (myAnswer && myAnswer.round !== roundNumber) clearMyAnswer();
+                    // A fresh snapshot supersedes whatever we inferred from the old one.
+                    roundInterrupted = false;
+
+                    if (phase === 'answering') {
                         if (data.hasAnswered) {
-                            showScreen('player-waiting-screen');
-                        } else {
+                            // The host holds it, even if this tab has forgotten it (a reload).
+                            if (!myAnswerForRound()) setMyAnswer(null, true);
+                            showPlayerWaiting();
+                        } else if (myAnswerForRound() && myAnswer.answer && myAnswerSent) {
+                            // We put it on the wire and the host has not got it: it died with
+                            // the link. Nothing was queued for a send that reported success, so
+                            // send it again rather than repainting a tick for a lost answer.
+                            if (lobby) lobby.sendToHost({ type: 'answer', answer: myAnswer.answer, round: roundNumber });
+                            showPlayerWaiting();
+                        } else if (myAnswerForRound() && myAnswer.answer) {
+                            // Still in the library's outbound queue; it flushes on reconnect.
+                            // The host physically cannot know about it yet.
+                            showPlayerWaiting();
+                        } else if (myAnswerForRound()) {
+                            // All we knew was that we had been acked once, and the host now
+                            // says it holds nothing. It is authoritative about its own state.
+                            clearMyAnswer();
+                            showPlayerAnswer();
+                        } else if (!(currentScreen === 'player-answer-screen' && answerScreenRound === roundNumber)) {
+                            // Only repaint if we are not already on this round's box —
+                            // showPlayerAnswer() clears the input and would bin a draft.
                             showPlayerAnswer();
                         }
-                    } else if (phase === 'merge') {
-                        // Host is reviewing, just wait
-                        showScreen('player-waiting-screen');
-                    } else if (phase === 'results') {
-                        showScreen('player-waiting-screen');
-                    } else {
+                    } else if (phase === 'results' && data.results) {
+                        renderResults(data.results);
+                    } else if (phase === 'lobby') {
                         showLobby();
+                    } else {
+                        showPlayerWaiting();
                     }
                     break;
                 }
 
                 case 'lobby':
-                    players = data.players;
-                    if (data.scores) for (const [k, v] of Object.entries(data.scores)) scores[k] = v;
-                    cowHolder = data.cowHolder;
+                    adoptRoster(data);
+                    checkSelfPresent(players);
                     renderLobby();
                     break;
 
-                case 'question':
+                case 'question': {
+                    // The message that DEFINES a round, and one of only two that may move us
+                    // forward (the 'rejoin' snapshot is the other). It is safe to follow into a
+                    // round we have never heard of precisely because it brings that round's
+                    // question and label with it — there is nothing left for us to invent, and
+                    // the answer we send back is stamped with the same number, so the host's
+                    // own ingest guard keeps the two ends in step whatever we adopt here.
+                    const side = roundSide(data);
+                    if (side === 'unstamped' || side === 'stale') break;
+                    if (side === 'current') {
+                        // A copy of the question for the round we are already on, flushed out of
+                        // a queue on somebody's reconnect. There is nothing to learn from it,
+                        // and repainting would clear an answer that is already in — or bin the
+                        // draft being typed right now.
+                        if (myAnswerForRound()) break;
+                        if (currentScreen === 'player-answer-screen' && answerScreenRound === roundNumber) break;
+                    }
                     roundNumber = data.round;
-                    currentQuestion = data.question;
+                    roundLabel = Number.isInteger(data.label) ? data.label : roundNumber;
+                    currentQuestion = typeof data.question === 'string' ? data.question : '';
+                    gamePhase = 'answering';
+                    clearMyAnswer();          // a genuinely new round
+                    roundInterrupted = false;
+                    haveStateForLink = true;
+                    saveSession();
                     showPlayerAnswer();
                     break;
+                }
 
-                case 'progress':
+                case 'round-closed':
+                    // The host stopped taking answers (everyone in, or they revealed early).
+                    // Take the box away rather than letting somebody type into a dead round.
+                    if (!isCurrentRound(data)) break;
+                    gamePhase = 'merge';
+                    roundInterrupted = true;
+                    showPlayerWaiting();
                     break;
 
-                case 'moo':
-                    playMoo();
+                case 'reopen':
+                    // The host reopened the round they had already closed.
+                    if (!isCurrentRound(data)) break;
+                    // ...which is only meaningful from a round that was still open or had just
+                    // closed. Arriving in any other phase it is a message we cannot place, and
+                    // acting on it would put an answer box back over a results screen.
+                    if (gamePhase !== 'answering' && gamePhase !== 'merge') break;
+                    gamePhase = 'answering';
+                    roundInterrupted = true;
+                    if (data.hasAnswered === true) {
+                        // The host holds ours; nothing to type.
+                        if (!myAnswerForRound()) setMyAnswer(null, true);
+                        showPlayerWaiting();
+                    } else if (data.hasAnswered === false) {
+                        // The host does NOT hold ours, whatever this tab believed. Give the box
+                        // back with the text still in it.
+                        const text = myAnswerForRound() ? myAnswer.answer : null;
+                        clearMyAnswer();
+                        showPlayerAnswer(text);
+                    } else if (!myAnswerForRound()) {
+                        showPlayerAnswer();
+                    }
                     break;
 
-                case 'results':
-                    if (data.scores) for (const [k, v] of Object.entries(data.scores)) scores[k] = v;
-                    cowHolder = data.cowHolder;
+                case 'answer-ack':
+                    // The host holds our answer for this round; converge whatever order
+                    // the messages arrived in. The progress broadcast the host sends in the
+                    // same breath says the same thing through the same helper, so whichever
+                    // of the two is processed first leaves the client in one state.
+                    if (gamePhase !== 'answering' || !isCurrentRound(data)) break;
+                    noteHostHasMyAnswer();
+                    showPlayerWaiting();
+                    break;
+
+                case 'answer-reject': {
+                    // The host refused it — wrong phase, wrong round, or the round had closed.
+                    // Say so at once instead of leaving a tick up for an answer nobody holds.
+                    if (!isCurrentRound(data)) break;
+                    const text = myAnswerForRound() ? myAnswer.answer : null;
+                    clearMyAnswer();
+                    if (gamePhase !== 'answering') {
+                        // The round is with the host now (merge, or already scored). Say so and
+                        // drop the tick where the player is already looking — but never
+                        // navigate: painting the waiting screen from here would take away the
+                        // results they are reading.
+                        showError('The host closed the round before your answer arrived');
+                        if (currentScreen === 'player-waiting-screen') showPlayerWaiting();
+                        break;
+                    }
+                    showError('That answer did not reach the host — try again');
+                    showPlayerAnswer(text);
+                    break;
+                }
+
+                case 'progress': {
+                    // Free convergence signal in BOTH directions: this names everyone the host
+                    // holds an answer for, for this exact round.
+                    if (gamePhase !== 'answering' || !isCurrentRound(data)) break;
+                    if (!Array.isArray(data.answered)) break;
+                    if (data.answered.includes(myName)) {
+                        // It may CONFIRM an answer this tab knows it made; it may never invent
+                        // one. A roster of names is not evidence about a device it cannot see,
+                        // and treating it as such locks a player who has typed nothing onto the
+                        // waiting screen — throwing away the draft they were mid-way through —
+                        // with no way back until the round ends. A tab that genuinely forgot
+                        // its own answer (a reload) is told by the 'rejoin' snapshot instead,
+                        // which is the message that carries the whole truth.
+                        if (!myAnswerForRound()) break;
+                        noteHostHasMyAnswer();
+                        if (currentScreen === 'player-answer-screen') showPlayerWaiting();
+                    } else if (myAnswerForRound() && myAnswerSent && roundInterrupted) {
+                        // The host closed or reopened this round and now says it holds nothing
+                        // from us: our answer was binned. Give the box back with the text in it.
+                        // Only for an answer we believed had LEFT (a queued one has not reached
+                        // the host yet), and only after an interruption — otherwise an ordinary
+                        // progress broadcast that crossed our answer on the wire would snatch
+                        // the tick away and put the box back for the length of one round trip.
+                        const text = myAnswer.answer;
+                        clearMyAnswer();
+                        showPlayerAnswer(text);
+                    }
+                    break;
+                }
+
+                case 'moo': {
+                    // Only for the round we are still answering, and only while the box is
+                    // actually up: a moo queued for a frozen tab must not play for a round
+                    // that finished minutes ago.
+                    //
+                    // One predicate, evaluated twice: now, and again if the sound has to wait
+                    // for a suspended audio context to start (see playMoo). The player this
+                    // nudge is aimed at is by definition the one who has tapped nothing, so on
+                    // iOS the context is very often still asleep at this moment — and a moo
+                    // that arrives once they finally do tap must be re-tested against the game
+                    // as it is THEN, not as it was when the message landed.
+                    const stillNudgeworthy = () => {
+                        if (!isCurrentRound(data)) return false;
+                        if (gamePhase !== 'answering' || currentScreen !== 'player-answer-screen') return false;
+                        if (myAnswerForRound()) return false;
+                        // A moo this tab cannot place: nothing has described the game on this
+                        // link yet, AND it arrived in the moments the channel reopened — which
+                        // is when a backlog held for an absent seat is flushed. The round it
+                        // names is being measured against a `roundNumber` we have not checked
+                        // with the host since the outage, so it may be about a round that was
+                        // scored minutes ago. Either signal on its own is enough to trust it:
+                        // a snapshot means we know where the game is, and time on the link
+                        // means the flush is long past.
+                        //
+                        // Both are read off THIS device's clock. The host used to stamp the
+                        // moo with its own, and on two phones whose clocks differ by a minute
+                        // — which is ordinary, and which nothing here can detect — comparing
+                        // across them either binned every honest nudge or let the replayed one
+                        // straight through, depending on which way the skew ran.
+                        if (!haveStateForLink && Date.now() - linkUpAt < MOO_LINK_SETTLE_MS) return false;
+                        return true;
+                    };
+                    if (!stillNudgeworthy()) break;
+                    playMoo(stillNudgeworthy);
+                    break;
+                }
+
+                case 'results': {
+                    // Results are about ONE round, and it must be the round we are on. A
+                    // replayed payload would paint a finished round's scores over the question
+                    // we are answering; one for a round we have never seen would move the
+                    // counter to a number this payload cannot explain, and every later guard
+                    // is measured against that number. Being behind is recoverable — ask.
+                    const side = roundSide(data);
+                    if (side === 'ahead') { requestResync(); break; }
+                    if (side !== 'current') break;
+                    gamePhase = 'results';
+                    saveSession();
                     renderResults(data);
                     break;
+                }
 
-                case 'next-round':
-                    showScreen('player-waiting-screen');
+                case 'next-round': {
+                    // Stamped with the round it ENDS, so it can only ever be about the round we
+                    // are on: a replay would bin the answer being typed right now, and one for
+                    // a round ahead of us is a desync to repair, not an instruction to obey.
+                    const side = roundSide(data);
+                    if (side === 'ahead') { requestResync(); break; }
+                    if (side !== 'current') break;
+                    gamePhase = 'question';
+                    clearMyAnswer();
+                    roundInterrupted = false;
+                    saveSession();
+                    showPlayerWaiting();
                     break;
+                }
 
-                case 'end':
+                case 'end': {
+                    // Same rule, and the stakes are the same: a goodbye from an earlier game
+                    // must not end a live round, and neither may one stamped with a round that
+                    // has never been played here.
+                    const side = roundSide(data);
+                    if (side === 'ahead') { requestResync(); break; }
+                    if (side !== 'current') break;
+                    gamePhase = 'lobby';
+                    clearMyAnswer();
+                    roundInterrupted = false;
                     showLobby();
                     break;
+                }
 
                 case 'join-error':
                     showError(data.reason || 'Could not join room');
+                    if (lobby) { try { lobby.destroy(); } catch (e) { /* already gone */ } lobby = null; }
+                    clearSession();
                     showScreen('join-screen');
                     break;
 
                 case 'error':
-                    showError(data.message);
+                    showError(data.message || 'Something went wrong');
+                    if (lobby) { try { lobby.destroy(); } catch (e) { /* already gone */ } lobby = null; }
+                    clearSession();
                     showScreen('join-screen');
                     break;
             }
         }
 
         // ── Player answer screen ───────────────────────────────────
-        function showPlayerAnswer() {
-            $('pa-round').textContent = 'Round ' + roundNumber;
+        function showPlayerAnswer(prefill) {
+            $('pa-round').textContent = 'Round ' + roundLabel;
             $('pa-question').textContent = currentQuestion;
-            $('pa-input').value = '';
-            $('pa-submit-btn').disabled = true;
+            // `prefill` is the text of an answer the host turned out not to have: hand it back
+            // rather than making the player remember what they typed.
+            const text = typeof prefill === 'string' ? prefill : '';
+            const input = $('pa-input');
+            if (input) input.value = text;
+            $('pa-submit-btn').disabled = !text;
+            answerScreenRound = roundNumber;
             showScreen('player-answer-screen');
-            setTimeout(() => $('pa-input').focus(), 100);
+            focusSoon('pa-input');
+        }
+
+        /**
+         * The waiting screen tells the truth about whether we actually answered — and, when the
+         * answer is still sitting in the outbound queue, says THAT rather than showing a tick
+         * next to an error banner reading "Saved — will send when you reconnect".
+         */
+        function showPlayerWaiting() {
+            const submitted = !!myAnswerForRound();
+            const queued = submitted && !myAnswerSent;
+            const check = $('pw-check');
+            if (check) check.style.display = (submitted && !queued) ? '' : 'none';
+            const title = $('pw-title');
+            if (title) {
+                title.textContent = queued ? 'Answer Saved'
+                    : (submitted ? 'Answer Submitted' : 'Waiting for the host…');
+            }
+            const sub = $('pw-sub');
+            if (sub) {
+                sub.textContent = queued ? 'It will send as soon as you reconnect...'
+                    : (submitted ? 'Waiting for other players...' : 'The round is with the host…');
+            }
+            showScreen('player-waiting-screen');
         }
 
         $('pa-input').addEventListener('input', () => {
@@ -1500,10 +2706,22 @@
         });
 
         $('pa-submit-btn').addEventListener('click', () => {
-            const answer = $('pa-input').value.trim();
+            const answer = $('pa-input').value.trim().slice(0, MAX_ANSWER_LEN);
             if (!answer) return;
-            lobby.sendToHost({ type: 'answer', answer });
-            showScreen('player-waiting-screen');
+            getAudioCtx();   // a tab restored by tryAutoRejoin has tapped nothing else yet
+            // Recorded BEFORE the send: if it goes into the outbound queue, this is the
+            // only record that it happened at all.
+            setMyAnswer(answer, false);
+            // Whatever the host last said about this round, it was said before this answer
+            // existed. Leaving the flag latched is what lets an ordinary progress broadcast —
+            // one composed while this answer was still on the wire — be read as "your answer
+            // was binned" for the rest of a reopened round, snatching the tick away and
+            // handing the box back for the length of a round trip, over and over.
+            roundInterrupted = false;
+            const sent = lobby ? lobby.sendToHost({ type: 'answer', answer, round: roundNumber }) : false;
+            myAnswerSent = sent;
+            if (!sent) showError('Saved — will send when you reconnect');
+            showPlayerWaiting();
         });
 
         // ── Auto-rejoin on page load ─────────────────────────────

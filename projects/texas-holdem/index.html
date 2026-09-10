@@ -164,7 +164,11 @@
 
         .game-info {
             display: flex;
-            gap: 0.75rem;
+            /* Three pills (blinds, pot, turn clock) plus the Menu button do not fit on a
+               320px phone in one row — let them wrap rather than clip. */
+            flex-wrap: wrap;
+            gap: 0.35rem 0.75rem;
+            min-width: 0;
             font-size: 0.8rem;
             font-family: var(--font-mono);
         }
@@ -175,6 +179,7 @@
             padding: 0.25rem 0.5rem;
         }
         .game-info .pot-display { color: var(--color-accent); }
+        .game-info .turn-timer { color: var(--color-text-muted); }
 
         .menu-btn {
             background: var(--color-surface);
@@ -519,6 +524,26 @@
         }
         .game-menu-overlay.show { display: flex; }
         .game-menu-overlay .btn { min-width: 200px; }
+        .game-menu-overlay .menu-hint {
+            font-size: 0.8rem;
+            color: var(--color-text-muted);
+            text-align: center;
+        }
+        .game-menu-overlay .menu-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.4rem;
+            align-items: center;
+            margin-top: 0.4rem;
+            max-height: 30vh;
+            overflow-y: auto;
+        }
+        #host-controls {
+            display: flex;
+            flex-direction: column;
+            gap: 0.3rem;
+            align-items: center;
+        }
 
         /* Scrollable for many opponents */
         @media (max-height: 600px) {
@@ -554,6 +579,8 @@
             <input type="text" id="join-name" placeholder="Name" maxlength="12">
             <label for="room-code">Room Code</label>
             <input type="text" id="room-code" placeholder="Enter code" maxlength="6" style="text-transform:uppercase;">
+            <label for="rejoin-code">Seat Code <span style="color:var(--color-text-muted);font-weight:400;">(only if you are coming back)</span></label>
+            <input type="text" id="rejoin-code" placeholder="Optional" maxlength="4" style="text-transform:uppercase;">
             <button class="btn btn-primary btn-full" id="btn-join">Join Table</button>
         </div>
     </div>
@@ -578,6 +605,7 @@
             <div class="game-info">
                 <span>Blinds <span id="blinds-display"></span></span>
                 <span class="pot-display">Pot <span id="pot-display">0</span></span>
+                <span class="turn-timer" id="turn-timer" style="display:none;"></span>
             </div>
             <button class="menu-btn" id="btn-menu">Menu</button>
         </div>
@@ -620,6 +648,12 @@
     <!-- Game Menu Overlay -->
     <div class="game-menu-overlay" id="game-menu">
         <button class="btn" id="btn-menu-close">Resume</button>
+        <p class="menu-hint" id="menu-seat-codes"></p>
+        <div id="host-controls" style="display:none;">
+            <p class="menu-hint">Table controls</p>
+            <div id="menu-fold-current" class="menu-group"></div>
+            <div id="menu-remove-list" class="menu-group"></div>
+        </div>
         <button class="btn btn-danger" id="btn-leave">Leave Table</button>
     </div>
 
@@ -700,7 +734,10 @@
        ══════════════════════════════════════════════════════════════ */
     function evaluateBestHand(holeCards, communityCards) {
         const all = [...holeCards, ...communityCards];
-        if (all.length < 5) return { rank: -1, value: [], name: 'Incomplete' };
+        // Hard cap on the input: this is C(n,5) work, and the client runs it on
+        // arrays that arrived over the wire. Seven cards is 21 combinations; sixty
+        // would be 5.4 million and would wedge the tab on every repaint.
+        if (all.length < 5 || all.length > 7) return { rank: -1, value: [], name: 'Incomplete' };
         const combos = combinations(all, 5);
         let best = null;
         for (const combo of combos) {
@@ -810,7 +847,17 @@
             this.buyIn = config.buyIn;
             this.smallBlind = config.smallBlind;
             this.bigBlind = config.bigBlind;
-            this.players = []; // { id, name, chips, holeCards, folded, allIn, currentBet, disconnected, seatIndex, totalBetThisHand }
+            // How long a seat may sit on its decision before the table acts for it.
+            // Without a clock, one unattended-but-connected tab freezes every other
+            // player at the table with no way out but reloading the host.
+            this.turnTimeoutMs = config.turnTimeoutMs != null ? config.turnTimeoutMs : 45000;
+            // Pace of the automatic run-out when nobody has a decision left.
+            this.runOutStepMs = config.runOutStepMs != null ? config.runOutStepMs : 500;
+            // { id, name, chips, holeCards, folded, allIn, currentBet, disconnected,
+            //   seatIndex, totalBetThisHand, busted, leaving, removed }
+            // `leaving` is reversible (a reconnect window that expired); `removed` is
+            // not (the host removed them, or they left on purpose).
+            this.players = [];
             this.dealerIndex = -1;
             this.phase = PHASE.WAITING;
             this.communityCards = [];
@@ -823,29 +870,189 @@
             this.minRaise = 0;
             this.handNum = 0;
             this.onStateChange = null;
+            this.onGameOver = null;
+            this.onPlayersBusted = null;
             this.roundActed = new Set();
             this.handResults = null;
+
+            // Identity for the turn: bumped every time currentPlayerIndex is assigned
+            // (including to -1). An action carries the pair it was drawn for, so a
+            // second tap — or a tap replayed out of a reconnect queue — cannot be
+            // applied to a decision the player never saw.
+            this.turnSeq = 0;
+            // The hand ended without a showdown, so nobody's cards may be revealed.
+            // PHASE.SHOWDOWN alone means three different things; this splits "a
+            // showdown was reached" off from "the hand is over".
+            this.uncontested = false;
+            // Terminal: a finished table never deals again.
+            this.ended = false;
+            // Absolute deadline of the current turn (host clock). Shipped to clients as
+            // a REMAINING duration, because the two clocks are never the same clock.
+            this.turnDeadline = null;
+
+            // Every timer this class arms lives in a field and is cleared before it is
+            // replaced. Three fire-and-forget setTimeouts used to drive the phase
+            // machine with no way to cancel them, which is the whole of the
+            // double-payout bug: one ordinary tap forked the chain in two.
+            this._runOutTimer = null;
+            this._nextHandTimer = null;
+            this._turnClock = null;
         }
+
+        /* ── Timers ────────────────────────────────────────────────── */
+
+        _clearRunOut() {
+            if (this._runOutTimer) { clearTimeout(this._runOutTimer); this._runOutTimer = null; }
+        }
+
+        _clearNextHand() {
+            if (this._nextHandTimer) { clearTimeout(this._nextHandTimer); this._nextHandTimer = null; }
+        }
+
+        _clearTurnClock() {
+            if (this._turnClock) { clearTimeout(this._turnClock); this._turnClock = null; }
+            this.turnDeadline = null;
+        }
+
+        _clearAllTimers() {
+            this._clearRunOut();
+            this._clearNextHand();
+            this._clearTurnClock();
+        }
+
+        /**
+         * Stop for good: the app calls this when the host leaves, so nothing this
+         * object armed can fire into a torn-down page.
+         */
+        destroy() {
+            this.ended = true;
+            this._clearAllTimers();
+            this.onStateChange = null;
+            this.onGameOver = null;
+            this.onPlayersBusted = null;
+        }
+
+        /* ── Roster ────────────────────────────────────────────────── */
 
         addPlayer(id, name) {
             if (this.players.find(p => p.id === id)) return false;
-            if (this.players.length >= 8) return false;
+            // The table is eight SEATS. Busted players keep their row so their own
+            // panel keeps updating (they are spectators, not players), so counting the
+            // raw array length would shrink the table every time somebody went broke.
+            if (this.players.filter(p => !p.busted && !p.leaving).length >= 8) return false;
+            // ...but the array itself still has to be bounded.
+            if (this.players.length >= 12) return false;
             this.players.push({
                 id, name, chips: this.buyIn, holeCards: [],
                 folded: false, allIn: false, currentBet: 0,
                 disconnected: false, seatIndex: this.players.length,
-                totalBetThisHand: 0
+                totalBetThisHand: 0, busted: false, leaving: false, removed: false
             });
             return true;
         }
 
-        removePlayer(id) {
-            this.players = this.players.filter(p => p.id !== id);
+        /**
+         * A deliberate departure. The seat is NOT spliced out here: the array index is
+         * the identity of the dealer, the turn and every entry in roundActed, and
+         * _calculateSidePots pays out by walking this.players — so removing a
+         * contributor mid-hand loses their chips out of the pots. Mark them, fold them
+         * out of the live hand, and let startHand do the physical removal between hands.
+         */
+        removePlayer(id, permanent = true) {
+            const player = this.players.find(p => p.id === id);
+            if (!player) return false;
+            player.leaving = true;
+            player.disconnected = true;
+            // DELIBERATE, and therefore not reversible. `leaving` alone means two
+            // different things — "their reconnect window expired, they may still come
+            // back" (setLeaving) and "they left, or the host removed them" — and
+            // setPresent clears it. Without this second flag a seat the host removed
+            // was un-removed by its own player's next reconnect.
+            //
+            // `permanent: false` is for releasing a seat nobody decided against — a
+            // player who dropped in the waiting room and whose window ran out. They
+            // may walk back in and take a seat again; a removed player may not.
+            if (permanent) player.removed = true;
+
+            const idx = this.players.indexOf(player);
+            const handLive = this.phase !== PHASE.WAITING && this.phase !== PHASE.SHOWDOWN;
+            if (handLive && !player.folded) {
+                if (idx === this.currentPlayerIndex) {
+                    // Their turn: fold through the normal path so the turn moves on.
+                    this.handleAction(player.id, 'fold');
+                } else {
+                    player.folded = true;
+                    if (this.playersInHand().length === 1) this._awardPotToLastPlayer();
+                    else if (this._isBettingRoundDone()) this._endBettingRound();
+                    else this._broadcast();
+                }
+            } else if (this.phase === PHASE.WAITING) {
+                // Between hands there is no index to disturb: they can go now.
+                this._evictLeavers();
+            }
+            return true;
+        }
+
+        /** Gone for good (their reconnect window expired). Dealt out from the next hand. */
+        setLeaving(id) {
+            const p = this.players.find(x => x.id === id);
+            if (!p) return false;
+            p.leaving = true;
+            p.disconnected = true;
+            return true;
         }
 
         setDisconnected(id, disc) {
             const p = this.players.find(p => p.id === id);
             if (p) p.disconnected = disc;
+        }
+
+        /**
+         * They are back: present, and no longer on their way out of the table. A seat
+         * that was REMOVED on purpose stays removed — only a window that merely expired
+         * is reversible.
+         */
+        setPresent(id) {
+            const p = this.players.find(x => x.id === id);
+            if (!p) return false;
+            if (p.removed) return false;
+            p.disconnected = false;
+            p.leaving = false;
+            return true;
+        }
+
+        /**
+         * Physically remove the seats that asked to leave. Only ever called between
+         * hands. dealerIndex is remapped BY IDENTITY, because the array shifts under
+         * it — the old code compacted the array and left the button pointing at
+         * whoever happened to slide into that slot.
+         */
+        _evictLeavers() {
+            const leaving = this.players.filter(p => p.leaving);
+            if (!leaving.length) return [];
+
+            const removedIds = leaving.map(p => p.id);
+            const kept = this.players.filter(p => !p.leaving);
+            let newDealer = -1;
+            if (this.dealerIndex >= 0 && this.players.length) {
+                const dealer = this.players[this.dealerIndex];
+                newDealer = kept.indexOf(dealer);
+                if (newDealer === -1) {
+                    // The dealer themselves left: walk back to the nearest survivor so
+                    // _advanceDealer still hands the button to the seat after them.
+                    for (let step = 1; step <= this.players.length && newDealer === -1; step++) {
+                        const cand = this.players[(this.dealerIndex - step + this.players.length) % this.players.length];
+                        newDealer = kept.indexOf(cand);
+                    }
+                }
+            }
+
+            this.players = kept;
+            this.dealerIndex = kept.length ? Math.min(Math.max(newDealer, -1), kept.length - 1) : -1;
+            kept.forEach((p, i) => { p.seatIndex = i; });
+            // Never called mid-hand, so there is no turn to preserve.
+            this.currentPlayerIndex = -1;
+            return removedIds;
         }
 
         activePlayers() {
@@ -860,13 +1067,52 @@
             return this.players.filter(p => !p.folded);
         }
 
-        startHand() {
-            if (this.players.length < 2) return;
+        /** Seats that still have chips and have not left: the ones a game needs two of. */
+        livePlayers() {
+            return this.players.filter(p => !p.busted && !p.leaving);
+        }
 
-            // Remove busted players
-            this.players = this.players.filter(p => p.chips > 0 || p.disconnected);
-            if (this.players.filter(p => p.chips > 0).length < 2) {
-                this._gameOver();
+        /** The seat holding the most chips, or null if nobody has any. */
+        _chipLeader() {
+            let best = null;
+            for (const p of this.players) {
+                if (p.chips <= 0) continue;
+                if (!best || p.chips > best.chips) best = p;
+            }
+            return best;
+        }
+
+        /* ── Hand lifecycle ────────────────────────────────────────── */
+
+        startHand() {
+            // A new hand supersedes everything the last one left armed.
+            this._clearAllTimers();
+            if (this.ended) return;
+
+            // Captured BEFORE the eviction below, because the chip leader may be the
+            // very player who left: the game-over overlay still has to be able to name
+            // somebody rather than reading a bare "Game Over".
+            const leaderBeforeEviction = this._chipLeader();
+
+            // Seats that left (or were lost for good) go now — between hands, where
+            // removing them cannot shift an index a live hand is using.
+            this._evictLeavers();
+
+            // Chips-out players KEEP their seat: they are dealt out of every later
+            // hand, but they still receive states addressed to themselves, so their own
+            // panel keeps updating and they can watch. Filtering them out of the array
+            // is what froze a busted player's screen with no explanation.
+            const newlyBusted = [];
+            for (const p of this.players) {
+                if (p.chips <= 0 && !p.busted) { p.busted = true; newlyBusted.push(p.id); }
+            }
+            if (newlyBusted.length && this.onPlayersBusted) this.onPlayersBusted(newlyBusted);
+
+            // Game over is decided BEFORE the "not enough players" return: a table that
+            // has shrunk to one seat must end the game, not sit on the last showdown
+            // overlay for ever.
+            if (this.livePlayers().length < 2) {
+                this._gameOver(leaderBeforeEviction);
                 return;
             }
 
@@ -877,11 +1123,12 @@
             this.pots = [];
             this.currentBet = 0;
             this.handResults = null;
+            this.uncontested = false;
 
             // Reset player states
             for (const p of this.players) {
                 p.holeCards = [];
-                p.folded = p.chips <= 0;
+                p.folded = p.busted;   // busted seats sit the hand out
                 p.allIn = false;
                 p.currentBet = 0;
                 p.totalBetThisHand = 0;
@@ -917,8 +1164,19 @@
             // First to act preflop: player after BB
             const bbIdx = this.players.indexOf(bbPlayer);
             this.currentPlayerIndex = this._seatAfter(bbIdx);
+            this.turnSeq++;
             this.lastRaiserIndex = bbIdx; // BB is the "last raiser" initially
 
+            const first = this.players[this.currentPlayerIndex];
+            if (!first || first.folded || first.allIn) {
+                // The blinds put everyone all in: nobody has a decision to make, so go
+                // straight to the run-out rather than parking the turn on a seat that
+                // can never act.
+                this._advanceTurn();
+                return;
+            }
+
+            this._armTurnClock();
             this._broadcast();
             this._checkAutoActions();
         }
@@ -932,19 +1190,26 @@
             if (player.chips === 0) player.allIn = true;
         }
 
+        /** The button skips busted and departing seats — they are not in the game. */
         _advanceDealer() {
-            if (this.dealerIndex === -1) {
-                this.dealerIndex = 0;
-            } else {
-                this.dealerIndex = this._seatAfter(this.dealerIndex);
+            const n = this.players.length;
+            if (!n) { this.dealerIndex = -1; return; }
+            let next = this.dealerIndex;
+            for (let i = 0; i < n; i++) {
+                next = (next + 1 + n) % n;
+                const p = this.players[next];
+                if (!p.busted && !p.leaving) { this.dealerIndex = next; return; }
             }
+            this.dealerIndex = 0;
         }
 
         _seatAfter(index) {
-            let next = (index + 1) % this.players.length;
+            const n = this.players.length;
+            if (!n) return -1;
+            let next = (index + 1 + n) % n;
             let attempts = 0;
-            while (this.players[next].folded && attempts < this.players.length) {
-                next = (next + 1) % this.players.length;
+            while (this.players[next].folded && attempts < n) {
+                next = (next + 1) % n;
                 attempts++;
             }
             return next;
@@ -954,13 +1219,85 @@
             return (index + 1) % this.players.length;
         }
 
-        handleAction(playerId, action, amount = 0) {
+        /* ── Turn identity and the turn clock ──────────────────────── */
+
+        /**
+         * Nobody has a decision to make. turnSeq is bumped along with the index so a
+         * token minted for the seat that just acted is refused as firmly as the index
+         * is, and the clock is stopped — its expiry would dereference players[-1].
+         */
+        _setNoTurn() {
+            this.currentPlayerIndex = -1;
+            this.turnSeq++;
+            this._clearTurnClock();
+        }
+
+        /**
+         * Start the clock on the seat that is now to act. Captures the turn it was
+         * armed for, so a clock that survives a synchronous re-entry (or a hand that
+         * ended in between) cannot act on somebody else's decision.
+         */
+        _armTurnClock() {
+            this._clearTurnClock();
+            if (this.turnTimeoutMs <= 0) return;
+            if (this.currentPlayerIndex < 0) return;
+            if (this.phase <= PHASE.WAITING || this.phase >= PHASE.SHOWDOWN) return;
+            const seq = this.turnSeq;
+            const hand = this.handNum;
+            this.turnDeadline = Date.now() + this.turnTimeoutMs;
+            this._turnClock = setTimeout(() => {
+                this._turnClock = null;
+                this.turnDeadline = null;
+                if (this.turnSeq !== seq || this.handNum !== hand) return;
+                if (this.phase <= PHASE.WAITING || this.phase >= PHASE.SHOWDOWN) return;
+                if (this.currentPlayerIndex < 0) return;
+                this._autoActFor(this.players[this.currentPlayerIndex]);
+            }, this.turnTimeoutMs);
+        }
+
+        /** Check if they can, fold if they cannot. Shared by the clock and auto-actions. */
+        _autoActFor(player) {
+            if (!player) return false;
+            return this.handleAction(player.id, player.currentBet >= this.currentBet ? 'check' : 'fold');
+        }
+
+        /* ── Actions ───────────────────────────────────────────────── */
+
+        /**
+         * @param {object} [meta] — { handNum, turnSeq } the action was drawn for. When
+         *   given it must match exactly: a second tap, or one replayed out of a
+         *   reconnect queue, belongs to a decision that no longer exists.
+         * @returns {boolean} whether the action changed anything.
+         */
+        handleAction(playerId, action, amount, meta = null) {
+            if (this.phase === PHASE.WAITING || this.phase === PHASE.SHOWDOWN) return false;
+            // No decision is pending (the board is running itself out).
+            if (this.currentPlayerIndex < 0) return false;
+
             const pIdx = this.players.findIndex(p => p.id === playerId);
-            if (pIdx === -1 || pIdx !== this.currentPlayerIndex) return;
-            if (this.phase === PHASE.WAITING || this.phase === PHASE.SHOWDOWN) return;
+            if (pIdx === -1 || pIdx !== this.currentPlayerIndex) return false;
+
+            if (meta && (meta.handNum !== this.handNum || meta.turnSeq !== this.turnSeq)) return false;
 
             const player = this.players[pIdx];
-            if (player.folded || player.allIn) return;
+            if (player.folded || player.allIn || player.busted) return false;
+
+            if (typeof action !== 'string') return false;
+            // Only a raise reads the amount, so its absence is normal everywhere else
+            // and is normalised away here. A RAISE with no amount, though, cannot be
+            // honoured: clamping it up to the minimum invents a bet the player never
+            // chose, and that is exactly what a garbled wire value buys (BinaryPack and
+            // JSON both turn a NaN amount into null on the way across).
+            if (action !== 'raise') amount = 0;
+            // A non-numeric raise amount used to turn chips, the pot and currentBet
+            // into NaN for the rest of the game. Chips are whole numbers everywhere
+            // else in this engine, so a fractional raise is refused too: accepted, it
+            // turned every stack at the table into a float for the rest of the session.
+            if (typeof amount !== 'number' || !Number.isInteger(amount) || amount < 0) return false;
+
+            // A "call" with nothing to call is a check. Left as an alias it was the
+            // quiet way a doubled Call became an unseen check on the next street.
+            if (action === 'call' && this.currentBet - player.currentBet <= 0) action = 'check';
 
             switch (action) {
                 case 'fold':
@@ -968,12 +1305,12 @@
                     this.roundActed.add(pIdx);
                     if (this.playersInHand().length === 1) {
                         this._awardPotToLastPlayer();
-                        return;
+                        return true;
                     }
                     break;
 
                 case 'check':
-                    if (player.currentBet < this.currentBet) return; // Can't check
+                    if (player.currentBet < this.currentBet) return false; // Can't check
                     this.roundActed.add(pIdx);
                     break;
 
@@ -1038,22 +1375,27 @@
                     player.allIn = true;
                     break;
                 }
+
+                default:
+                    // An unrecognised action must NOT fall through to _advanceTurn: that
+                    // passed the turn on without the player having acted.
+                    return false;
             }
 
             this._advanceTurn();
+            return true;
         }
 
         _advanceTurn() {
             // Check if all active non-allin players have acted and matched the bet
-            const bettingDone = this._isBettingRoundDone();
-
-            if (bettingDone) {
+            if (this._isBettingRoundDone()) {
                 this._endBettingRound();
-            } else {
-                this._moveToNextPlayer();
-                this._broadcast();
-                this._checkAutoActions();
+                return;
             }
+            if (this._moveToNextPlayer()) this._armTurnClock();
+            else this._setNoTurn();
+            this._broadcast();
+            this._checkAutoActions();
         }
 
         _isBettingRoundDone() {
@@ -1069,33 +1411,42 @@
             return true;
         }
 
+        /** @returns {boolean} whether a seat that can act was found. */
         _moveToNextPlayer() {
             let next = this.currentPlayerIndex;
             for (let i = 0; i < this.players.length; i++) {
-                next = (next + 1) % this.players.length;
+                next = (next + 1 + this.players.length) % this.players.length;
                 const p = this.players[next];
                 if (!p.folded && !p.allIn) {
                     this.currentPlayerIndex = next;
-                    return;
+                    this.turnSeq++;
+                    return true;
                 }
             }
+            return false;
         }
 
+        /**
+         * Act for a seat that is gone for GOOD — one whose reconnect window expired or
+         * who left the table. A player whose phone merely blinked keeps their seat
+         * until the turn clock runs out: auto-folding inside their own reconnect window
+         * is how a five-second flicker used to muck a live hand.
+         */
         _checkAutoActions() {
             const current = this.players[this.currentPlayerIndex];
             if (!current) return;
-
-            // Auto-fold disconnected players (if they need to put money in) or auto-check
-            if (current.disconnected) {
-                if (current.currentBet >= this.currentBet) {
-                    this.handleAction(current.id, 'check');
-                } else {
-                    this.handleAction(current.id, 'fold');
-                }
-            }
+            if (current.leaving) this._autoActFor(current);
         }
 
         _endBettingRound() {
+            // Terminal phases end the chain. Without this a stray tick fell straight
+            // through the phase chain below into the run-out block and re-armed itself
+            // every step, for ever — re-broadcasting a finished hand and, once the
+            // table was down to one player, paying the same pot out a second time.
+            if (this.phase === PHASE.SHOWDOWN || this.phase === PHASE.WAITING) return;
+            this._clearRunOut();
+            this._clearTurnClock();
+
             // Reset current bets
             for (const p of this.players) {
                 p.currentBet = 0;
@@ -1129,18 +1480,31 @@
             } else if (this.phase === PHASE.RIVER) {
                 this._showdown();
                 return;
+            } else {
+                // A phase this chain does not own. Stop rather than fall through — and
+                // clear the turn on the way out: the clock was stopped above while
+                // currentPlayerIndex still names the last actor, and leaving that pair
+                // behind is exactly the frozen table this whole fix closes.
+                this._setNoTurn();
+                return;
             }
 
             if (skipToShowdown) {
-                // Run out remaining cards then showdown
+                // The board is dealing itself out and nobody may act. Clearing the turn
+                // is what stops a live-looking Check button from forking this chain.
+                this._setNoTurn();
                 this._broadcast();
-                setTimeout(() => this._endBettingRound(), 1200);
+                this._runOutTimer = setTimeout(() => {
+                    this._runOutTimer = null;
+                    this._endBettingRound();
+                }, this.runOutStepMs);
                 return;
             }
 
             // Next round: first active player after dealer
             this.currentPlayerIndex = this.dealerIndex;
-            this._moveToNextPlayer();
+            if (this._moveToNextPlayer()) this._armTurnClock();
+            else this._setNoTurn();
             this.lastRaiserIndex = -1;
 
             this._broadcast();
@@ -1149,20 +1513,39 @@
 
         _awardPotToLastPlayer() {
             const winner = this.playersInHand()[0];
-            winner.chips += this.pot;
+            // Unreachable today (every caller checks playersInHand().length === 1), but
+            // a bare return here would leave the turn pointing at the last actor with
+            // its clock already stopped — a frozen table.
+            if (!winner) { this._setNoTurn(); return; }
+            const amount = this.pot;
+            winner.chips += amount;
+            // Zeroed the instant it is paid: the payout is then idempotent whatever a
+            // stray timer does.
+            this.pot = 0;
             this.handResults = [{
                 winners: [winner.id],
-                amount: this.pot,
+                amount,
                 handName: null
             }];
+            // Won without a showdown: nobody bought the right to see these cards.
+            this.uncontested = true;
             this.phase = PHASE.SHOWDOWN;
+            this._setNoTurn();
+            this._clearRunOut();
             this._broadcast();
-            setTimeout(() => this.startHand(), 3000);
+            this._clearNextHand();
+            this._nextHandTimer = setTimeout(() => {
+                this._nextHandTimer = null;
+                this.startHand();
+            }, 3000);
         }
 
         _showdown() {
             this.phase = PHASE.SHOWDOWN;
+            this.uncontested = false;
             this.handResults = [];
+            this._setNoTurn();
+            this._clearRunOut();
 
             // Build side pots
             const pots = this._calculateSidePots();
@@ -1197,8 +1580,16 @@
                 });
             }
 
+            // Paid. The overlay reads handResults[].amount, so nothing needs the pot to
+            // stay on the table — and a pot that is still there can be paid twice.
+            this.pot = 0;
+
             this._broadcast();
-            setTimeout(() => this.startHand(), 5000);
+            this._clearNextHand();
+            this._nextHandTimer = setTimeout(() => {
+                this._nextHandTimer = null;
+                this.startHand();
+            }, 5000);
         }
 
         _calculateSidePots() {
@@ -1233,48 +1624,88 @@
                 prevLevel = level;
             }
 
-            // Any remaining from folded players goes to main pot
-            // (already captured by the loop above since folded players still contributed)
+            // The levels above only reach as high as the highest LIVE contribution, so
+            // anything staked above that is not in any pot yet. Normally there is none
+            // (an uncalled bet is only possible from a player who is still in the hand,
+            // and the top level hands it straight back to them) — but a seat folded out
+            // of turn, because its player left or the host removed them, can leave money
+            // behind that nobody can be paid back. It is dead money: put it in the main
+            // pot rather than letting it evaporate off the table.
+            const covered = pots.reduce((sum, p) => sum + p.amount, 0);
+            if (covered < this.pot) {
+                if (pots.length) pots[0].amount += this.pot - covered;
+                else pots.push({ amount: this.pot, eligible: inHand.map(p => p.id) });
+            }
 
             return pots;
         }
 
-        _gameOver() {
-            const winner = this.players.find(p => p.chips > 0);
+        /**
+         * @param {object} [fallbackWinner] — a seat captured before the last eviction,
+         *   used when the player holding the chips is the one who left.
+         */
+        _gameOver(fallbackWinner) {
+            // Terminal. Nothing may deal, pay or broadcast after this.
+            this.ended = true;
+            this._clearAllTimers();
+            // The chip LEADER, not "the first seat with chips": the array has already
+            // been compacted by _evictLeavers, so the winner may not be in it at all.
+            const winner = this._chipLeader() || fallbackWinner || null;
             this.phase = PHASE.WAITING;
+            this.currentPlayerIndex = -1;
+            this.turnSeq++;
+            // Nothing is being revealed any more; leave no flag describing a hand that
+            // is over.
+            this.uncontested = false;
             this._broadcastGameOver(winner);
         }
 
+        /**
+         * @param {string|null} playerId — the seat this snapshot is addressed to, or
+         *   null/unknown for a spectator view. myId is null unless the seat really
+         *   exists, so the protocol can never carry an unaddressable id.
+         */
         getStateForPlayer(playerId) {
-            const me = this.players.find(p => p.id === playerId);
+            const me = playerId == null ? null : this.players.find(p => p.id === playerId);
             return {
                 phase: this.phase,
                 handNum: this.handNum,
+                turnSeq: this.turnSeq,
+                // Remaining, not a deadline: host and client clocks are not synced.
+                turnRemainingMs: this.turnDeadline ? Math.max(0, this.turnDeadline - Date.now()) : null,
+                ended: this.ended,
                 pot: this.pot,
                 currentBet: this.currentBet,
                 minRaise: this.minRaise,
-                communityCards: this.communityCards,
+                // Copies, not the live arrays. A snapshot can sit in SlopNet's per-client
+                // queue for the whole reconnect window, and _endBettingRound push()es
+                // into communityCards in place — so a queued PREFLOP state used to be
+                // delivered carrying the river.
+                communityCards: this.communityCards.slice(),
                 dealerIndex: this.dealerIndex,
                 currentPlayerIndex: this.currentPlayerIndex,
                 smallBlind: this.smallBlind,
                 bigBlind: this.bigBlind,
-                handResults: this.handResults,
+                handResults: this.handResults ? this.handResults.slice() : null,
                 players: this.players.map(p => ({
                     id: p.id,
                     name: p.name,
                     chips: p.chips,
                     folded: p.folded,
                     allIn: p.allIn,
+                    busted: !!p.busted,
                     currentBet: p.currentBet,
                     disconnected: p.disconnected,
                     seatIndex: p.seatIndex,
-                    // Only show hole cards if it's the player themselves or showdown
-                    holeCards: (p.id === playerId || (this.phase === PHASE.SHOWDOWN && !p.folded))
-                        ? p.holeCards
+                    // Your own cards always; everyone else's only at a real showdown.
+                    // A pot won because everybody folded was never bought, so those
+                    // cards stay face down — otherwise you could never bluff.
+                    holeCards: (p.id === playerId || (this.phase === PHASE.SHOWDOWN && !this.uncontested && !p.folded))
+                        ? p.holeCards.slice()
                         : (p.holeCards.length > 0 && !p.folded ? ['back', 'back'] : []),
                     totalBetThisHand: p.totalBetThisHand
                 })),
-                myId: playerId
+                myId: me ? playerId : null
             };
         }
 
@@ -1290,24 +1721,113 @@
     /* ══════════════════════════════════════════════════════════════
        NETWORKING (SlopNet)
        ══════════════════════════════════════════════════════════════ */
+    const STORAGE_KEY = 'holdem-client-id';
+    const ROOM_PREFIX = 'slop-holdem-';
+    // SlopLobby remembers the code a host tab is using under this key so a browser that
+    // discards and restores the tab comes back as the SAME room. A deliberate close has
+    // to forget it — see the beforeunload handler.
+    const ROOM_CODE_KEY = STORAGE_KEY + '-room-code';
+
     let lobby = null;
+    // Create Table and Join Table sit on the same screen and write the same `lobby`
+    // global, and each one can be dialling for up to ten seconds. Every entry point
+    // takes the next generation before it builds anything; everything that settles
+    // late — a rejected promise, a callback, a teardown — compares against it, so a
+    // superseded attempt can never repaint, and never destroy, the table that is
+    // actually running.
+    let tableGen = 0;
     let isHost = false;
     let myPlayerId = null;
     let myName = '';
     let game = null;
     let roomCode = '';
+    // Host: remembered so a player who comes back after the last hand is told the game
+    // is over instead of being dropped into an empty waiting room.
+    let lastWinner = null;
+    // One teardown at a time (Leave can be tapped twice).
+    let leavingTable = false;
+    // Host: playerId -> seat code. The ONLY proof a fresh tab (new sessionStorage, so a
+    // new clientId and no seat token) can offer that a seat is theirs. A name is not
+    // proof: every name at the table is broadcast to every client.
+    const seatCodes = new Map();
+
+    /**
+     * Retire whatever this tab is currently running and become its owner.
+     * Called first thing by hostGame() and joinGame(), synchronously, before either
+     * of them awaits anything — so a caller can read `tableGen` straight after the
+     * call to learn which generation its own attempt took.
+     * @returns {number} the generation this attempt owns.
+     */
+    function takeOverTable() {
+        tableGen++;
+        // The lobby first: once it is gone nothing else can call back into the game.
+        if (lobby) { const old = lobby; lobby = null; try { old.destroy(); } catch (e) { /* already gone */ } }
+        if (game) { const old = game; game = null; try { old.destroy(); } catch (e) { /* already gone */ } }
+        return tableGen;
+    }
+
+    const SEAT_CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    function newSeatCode() {
+        let code = '';
+        for (let i = 0; i < 4; i++) {
+            code += SEAT_CODE_CHARS[Math.floor(Math.random() * SEAT_CODE_CHARS.length)];
+        }
+        return code;
+    }
+
+    /**
+     * Host: the seat a reclaim code names, or null. Codes are compared upper-cased.
+     * Self-pruning: a code whose seat has left the table names nothing and must not
+     * outlive it — this is the only place the map is read, so it is the one place that
+     * can keep it honest without a sweep somewhere else.
+     */
+    function seatForCode(code) {
+        if (!code || !game) return null;
+        let hit = null;
+        for (const [playerId, seatCode] of seatCodes) {
+            const seat = game.players.find(p => p.id === playerId);
+            if (!seat) { seatCodes.delete(playerId); continue; }
+            if (seatCode === code && !hit) hit = seat;
+        }
+        return hit;
+    }
+
+    function normaliseCode(value) {
+        return String(value == null ? '' : value).trim().toUpperCase().slice(0, 4);
+    }
 
     // Client state
     let lastGameState = null;
+    // Client: the seat code the host issued us, shown in the menu so a player who has to
+    // move to another device can read it out (the host can read it too).
+    let mySeatCode = '';
+    // Terminal verdict from the library ('rejected' | 'superseded' | 'room-closed').
+    // It survives resetToLobby so the bookends that follow it cannot overwrite the
+    // reason the player was actually given; the next join clears it.
+    let terminalState = null;
+    // Client: how many reconnect rungs this outage has actually reported. The library
+    // CLAMPS the attempt number it hands us at the ladder size on purpose (so a UI is
+    // never asked to render "attempt 27 of 20"), and the ladder is walked more than
+    // once — so throttling on that number toasts on every rung of the second pass.
+    let reconnectRungs = 0;
+    let leaveAckResolve = null;
+    // Host seat only: a second guard behind the turn token, because the host's own tap
+    // is applied synchronously and its state is redrawn before a finger can lift.
+    let lastLocalActionAt = 0;
+    // Host: whether the room is currently registered with the signalling server. New
+    // players cannot dial the code while this is false; the game itself is unaffected.
+    let hostSignallingOk = true;
 
     /* ── HOST ── */
     async function hostGame(name, config) {
+        const gen = takeOverTable();
         isHost = true;
         myPlayerId = 'host';
         myName = name;
 
         game = new PokerGame(config);
         game.addPlayer(myPlayerId, name);
+        seatCodes.clear();
 
         game.onStateChange = () => {
             broadcastState();
@@ -1315,141 +1835,590 @@
         };
 
         game.onGameOver = (winner) => {
-            const msg = { type: 'gameOver', winner: winner ? { name: winner.name, chips: winner.chips } : null };
-            lobby.broadcast(msg);
-            showGameOver(winner);
+            lastWinner = winner ? { name: winner.name, chips: winner.chips } : null;
+            lobby.broadcast({ type: 'gameOver', winner: lastWinner });
+            showGameOver(lastWinner);
+        };
+
+        // One-shot notice only. The client's source of truth for "I am out" is
+        // `me.busted` in the state it renders from, so a lost message costs nothing.
+        game.onPlayersBusted = (ids) => {
+            for (const [clientId, entry] of lobby.players) {
+                if (entry && entry.playerId && ids.indexOf(entry.playerId) !== -1) {
+                    lobby.send(clientId, { type: 'bustedOut' });
+                }
+            }
+            if (ids.indexOf(myPlayerId) !== -1) toast('You are out of chips — spectating');
         };
 
         lobby = new SlopLobby.SlopLobby({
-            roomPrefix: 'slop-holdem-',
-            storageKey: 'holdem-client-id',
-            onHostData: (clientId, data) => {
-                if (data.type === 'action') {
-                    const entry = lobby.players.get(clientId);
-                    if (entry) {
-                        game.handleAction(entry.playerId, data.action, data.amount);
-                    }
+            roomPrefix: ROOM_PREFIX,
+            storageKey: STORAGE_KEY,
+
+            // The room code SlopNet reports is authoritative: if a signalling reconnect
+            // ever renames the room, what is painted here — and what clients were told —
+            // has to follow, or the code on screen dials nothing.
+            onRoomCode: (code, changed) => {
+                roomCode = code;
+                $('#display-code').textContent = code;
+                if (changed) {
+                    toast('Room code changed to ' + code);
+                    broadcastWaitingRoom();
                 }
             },
+
+            // The HOST's own signalling socket. Nobody is evicted by any of this (the
+            // data channels are untouched), but a host whose registration has died sees
+            // a perfectly normal table while the code on screen dials nothing.
+            onStateChange: (status) => {
+                if (status === 'reconnect-failed') {
+                    hostSignallingOk = false;
+                    toast('New players cannot join right now');
+                } else if (status === 'reconnected') {
+                    // Only announce the recovery if the failure was announced. A blip
+                    // that the ladder mends in a second never reaches 'reconnect-failed',
+                    // so an unconditional toast tells the host a problem they were never
+                    // told about is over.
+                    if (!hostSignallingOk) toast('Table is reachable again');
+                    hostSignallingOk = true;
+                }
+                updateWaitingRoom();
+            },
+
+            onHostData: (clientId, data) => {
+                if (!game || !data || typeof data !== 'object') return;
+                // Every message is answered on behalf of the SEAT this connection holds,
+                // never on behalf of an id in the payload.
+                const entry = lobby.players.get(clientId);
+                if (!entry || !entry.playerId) return;
+                if (!game.players.some(p => p.id === entry.playerId)) return;
+
+                if (data.type === 'action') {
+                    // The token the action was drawn for. Without both halves a second
+                    // tap — or one replayed out of a reconnect queue — lands on a
+                    // decision the player never saw. Number.isInteger, not typeof: NaN
+                    // is a 'number' and would sail through a typeof gate (it is caught
+                    // downstream by the token compare, but a gate that lets a value
+                    // through and relies on the next one is not a gate).
+                    const ok = Number.isInteger(data.handNum) && Number.isInteger(data.turnSeq) &&
+                        game.handleAction(
+                            // The amount is passed through exactly as it arrived, so
+                            // handleAction refuses garbage rather than this line
+                            // quietly turning "raise NaN" into "raise the minimum".
+                            entry.playerId, data.action, data.amount,
+                            { handNum: data.handNum, turnSeq: data.turnSeq }
+                        );
+                    if (!ok) {
+                        // Nothing changed, so no broadcast is coming: give this client
+                        // its state back or its buttons stay on 'Sending…' for ever.
+                        sendSeatState(clientId, entry.playerId);
+                    }
+                } else if (data.type === 'resync-request') {
+                    sendSeatState(clientId, entry.playerId);
+                } else if (data.type === 'leave') {
+                    lobby.send(clientId, { type: 'leave-ok' });
+                    game.removePlayer(entry.playerId);
+                    seatCodes.delete(entry.playerId);
+                    lobby.removeClient(clientId);
+                    toast((entry.name || 'A player') + ' left the table');
+                    updateWaitingRoom();
+                    broadcastWaitingRoom();
+                    hostRefresh();
+                }
+            },
+
             onPlayerJoined: (clientId, metadata) => {
-                const playerName = metadata.name || 'Player';
-                if (game.phase !== PHASE.WAITING) {
-                    lobby.send(clientId, { type: 'error', message: 'Game already in progress' });
-                    lobby.removeClient(clientId);
+                const playerName = String((metadata && metadata.name) || 'Player').slice(0, 12).trim() || 'Player';
+                const code = normaliseCode(metadata && metadata.reclaim);
+                if (game.ended) return 'Game over';
+
+                // A PROVEN seat reclaim is answered before the no-latecomers gate: this
+                // is the player whose tab died mid-hand coming back on a new device, and
+                // refusing them would leave their chips at the table auto-folding every
+                // orbit until they bust. The proof is the seat code, never the name —
+                // names are broadcast to everyone, so a name-only claim let any stranger
+                // take an away player's seat.
+                if (code) {
+                    const claimed = seatForCode(code);
+                    // `leaving` is NOT a bar here: a seat marked leaving because its
+                    // reconnect window expired is precisely the one its owner is trying
+                    // to reclaim, and setPresent puts them back in the game. Only a
+                    // deliberate removal (`removed`) is final.
+                    if (claimed && !claimed.removed && claimed.id !== myPlayerId &&
+                        reclaimSeat(clientId, claimed, playerName)) {
+                        return;
+                    }
+                    // A code that names nothing here is not a refusal: this device may
+                    // simply be remembering a seat from an EARLIER game in a room that
+                    // has since been re-created under the same code. Fall through and be
+                    // treated as the ordinary new joiner they are.
+                }
+
+                // `|| undefined`: SlopLobby reads a STRING return as a refusal, so the
+                // success value must not be null.
+                return admitPlayer(clientId, playerName) || undefined;
+            },
+
+            onPlayerRejoined: (clientId, metadata) => {
+                const entry = lobby.players.get(clientId);
+                let seat = entry && entry.playerId
+                    ? game.players.find(p => p.id === entry.playerId)
+                    : null;
+
+                if (!seat) {
+                    // The record names no seat. Either it was rebuilt from wire metadata
+                    // (SlopLobby's parked record was dropped at its cap) or the seat is
+                    // gone. A reclaim code in the metadata is still proof, so try that
+                    // before turning a legitimate returner away for good.
+                    const code = normaliseCode(metadata && metadata.reclaim);
+                    const claimed = code ? seatForCode(code) : null;
+                    if (claimed && !claimed.removed && claimed.id !== myPlayerId) {
+                        const name = String((metadata && metadata.name) || claimed.name).slice(0, 12).trim();
+                        if (reclaimSeat(clientId, claimed, name)) return;
+                    }
+                    if (!game.ended && game.phase === PHASE.WAITING) {
+                        // Their seat was released while they were away — they dropped in
+                        // the waiting room and their window ran out — and nothing has
+                        // been dealt. Seat them again: before the first hand a returner
+                        // and a newcomer are the same thing, and refusing somebody their
+                        // own name at a table that is still filling up is exactly the
+                        // "never turn a returning human away" case.
+                        const back = String((metadata && metadata.name) || (entry && entry.name) || 'Player')
+                            .slice(0, 12).trim() || 'Player';
+                        const refusal = admitPlayer(clientId, back);
+                        if (!refusal) return;
+                        lobby.removeClient(clientId, refusal);
+                        updateWaitingRoom();
+                        broadcastWaitingRoom();
+                        return;
+                    }
+                    // A record with no seat speaks for nobody: refuse it rather than
+                    // greeting a stranger and sending them somebody's cards.
+                    lobby.removeClient(clientId, 'That seat is no longer at this table');
+                    updateWaitingRoom();
+                    broadcastWaitingRoom();
                     return;
                 }
-                const playerId = 'p' + Date.now() + Math.random().toString(36).slice(2, 5);
-                if (!game.addPlayer(playerId, playerName)) {
-                    lobby.send(clientId, { type: 'error', message: 'Table is full' });
-                    lobby.removeClient(clientId);
+
+                if (seat.removed) {
+                    // The host removed this seat while its player was off the air. That
+                    // decision is not undone by the player's own reconnect.
+                    lobby.removeClient(clientId, 'Removed by the host');
+                    updateWaitingRoom();
+                    broadcastWaitingRoom();
                     return;
                 }
-                // Store playerId in the player metadata managed by SlopLobby
-                lobby.players.set(clientId, { name: playerName, playerId });
-                toast(playerName + ' joined');
-                lobby.send(clientId, { type: 'joined', playerId });
+
+                // A rejoin for a seat that was never marked away is a no-op — a duplicate
+                // join on a channel the host is already bound to. Answer that client and
+                // stop: a toast and two full-table broadcasts per inbound message is an
+                // amplifier anybody can pull on.
+                const wasAway = seat.disconnected || seat.leaving;
+                game.setPresent(seat.id);
+                if (!wasAway) {
+                    // Answer this client and nobody else — but ANSWER it. A rejoin the
+                    // host never saw as away is routinely a tab that has never been told
+                    // anything: a duplicate tab, or a reload that beat the host's notice
+                    // of the old channel closing. Without 'joined' it holds no seat id,
+                    // and in the waiting room a bare snapshot cannot move it off the join
+                    // form at all, so it sits on a dead 'Connecting...' button while the
+                    // host shows it as present.
+                    lobby.send(clientId, {
+                        type: 'joined', playerId: seat.id,
+                        reclaimCode: seatCodes.get(seat.id) || null,
+                        waiting: game.phase === PHASE.WAITING && !game.ended
+                    });
+                    sendSeatState(clientId, seat.id);
+                    return;
+                }
+
+                toast((entry.name || seat.name) + ' reconnected');
+                if (game.ended) {
+                    lobby.send(clientId, { type: 'gameOver', winner: lastWinner });
+                } else if (game.phase !== PHASE.WAITING) {
+                    // The whole table hears it too — everyone's screen still shows them
+                    // as away — and this client's own snapshot rides along.
+                    hostRefresh();
+                } else {
+                    lobby.send(clientId, {
+                        type: 'joined', playerId: seat.id,
+                        reclaimCode: seatCodes.get(seat.id) || null, waiting: true
+                    });
+                }
                 updateWaitingRoom();
                 broadcastWaitingRoom();
             },
-            onPlayerRejoined: (clientId, metadata) => {
-                const entry = lobby.players.get(clientId);
-                if (entry) {
-                    game.setDisconnected(entry.playerId, false);
-                    toast(entry.name + ' reconnected');
-                    if (game.phase !== PHASE.WAITING) {
-                        lobby.send(clientId, { type: 'state', state: game.getStateForPlayer(entry.playerId) });
-                        game.onStateChange();
-                    } else {
-                        lobby.send(clientId, { type: 'joined', playerId: entry.playerId });
-                    }
-                    updateWaitingRoom();
-                    broadcastWaitingRoom();
-                }
+
+            onPlayerLeft: (clientId, meta, final) => {
+                // TEMPORARY only: sloplobby calls onPlayerLost for the final one. The seat
+                // is being held, so mark it away and leave the decision to the turn clock
+                // — auto-folding here mucks the hand of a player whose phone blinked for
+                // five seconds and who is already on their way back.
+                if (final) return;
+                if (!meta || !meta.playerId) return;
+                if (!game.players.some(p => p.id === meta.playerId)) return;
+                game.setDisconnected(meta.playerId, true);
+                toast((meta.name || 'A player') + ' disconnected');
+                updateWaitingRoom();
+                broadcastWaitingRoom();
+                if (game.phase !== PHASE.WAITING) hostRefresh();
             },
-            onPlayerLeft: (clientId, meta) => {
-                if (meta) {
-                    game.setDisconnected(meta.playerId, true);
-                    toast(meta.name + ' disconnected');
-                    if (game.phase !== PHASE.WAITING) {
-                        const pIdx = game.players.findIndex(p => p.id === meta.playerId);
-                        if (pIdx === game.currentPlayerIndex) {
-                            game._checkAutoActions();
-                        }
-                        game.onStateChange();
-                    }
-                    updateWaitingRoom();
-                    broadcastWaitingRoom();
+
+            onPlayerLost: (clientId, meta) => {
+                // FINAL: the reconnect window expired. Their record is parked by the
+                // library for a late return, so nothing here deletes it.
+                if (!meta || !meta.playerId) return;
+                const pIdx = game.players.findIndex(p => p.id === meta.playerId);
+                if (pIdx === -1) return;
+                // Marked leaving so they stop paying blinds into a hand nobody is
+                // playing, and are dealt out from the next one.
+                game.setLeaving(meta.playerId);
+                if (game.phase === PHASE.WAITING) {
+                    // Nobody decided against them — the link simply never came back —
+                    // so the seat is released WITHOUT the permanent bar a host's Remove
+                    // carries. They may take a seat again if they turn up.
+                    game.removePlayer(meta.playerId, false);
+                } else {
+                    if (pIdx === game.currentPlayerIndex) game._checkAutoActions();
+                    hostRefresh();
                 }
+                updateWaitingRoom();
+                broadcastWaitingRoom();
             },
         });
 
-        roomCode = await lobby.createRoom(name);
+        // Into a local first: taken over while the room was registering (the player
+        // gave up and tapped Join), the lobby built above has already been destroyed
+        // and this code names nothing — writing it to the global would replace the
+        // code the join that now owns this tab is dialling.
+        const code = await lobby.createRoom(name);
+        if (gen !== tableGen) return;
+        roomCode = code;
 
         showScreen('waiting-room');
         $('#display-code').textContent = roomCode;
         updateWaitingRoom();
     }
 
+    /** Re-broadcast the table (and repaint the host's own screen). */
+    function hostRefresh() {
+        if (game && game.onStateChange) game.onStateChange();
+        // The host menu names the seat its buttons act on, so it cannot be left showing
+        // a turn that has since moved.
+        if (isHost && $('#game-menu').classList.contains('show')) renderGameMenu();
+    }
+
+    /**
+     * Host: seat a player who has no seat here yet. Shared by the join callback and by
+     * a returner whose seat was already released, so the two cannot drift apart — the
+     * name check, the seat code and the 'joined' reply are written once.
+     * @returns {string|null} a rejection reason, or null once they are seated.
+     */
+    function admitPlayer(clientId, playerName) {
+        if (!lobby || !game) return 'The table is gone';
+        if (game.ended) return 'Game over';
+        if (game.phase !== PHASE.WAITING) return 'Game already in progress';
+        // One name, one seat. A returning player proves themselves with their seat code
+        // or with the library's own seat token (a reload of the same tab, which never
+        // reaches this path at all) — never with a name, which everyone can read.
+        if (game.players.some(p => p.name.toLowerCase() === playerName.toLowerCase())) {
+            return 'That name is already at this table';
+        }
+        const playerId = 'p' + Date.now() + Math.random().toString(36).slice(2, 5);
+        if (!game.addPlayer(playerId, playerName)) return 'Table is full';
+        // The record is the only clientId -> seat map there is.
+        lobby.players.set(clientId, { name: playerName, playerId });
+        seatCodes.set(playerId, newSeatCode());
+        toast(playerName + ' joined');
+        // `waiting` is the HOST's answer to "which screen is this?". A client cannot
+        // work it out from its own: a player re-seated by a host tab that restarted
+        // under the same room code is still showing the board of the game that ended.
+        lobby.send(clientId, {
+            type: 'joined', playerId, reclaimCode: seatCodes.get(playerId), waiting: true
+        });
+        updateWaitingRoom();
+        broadcastWaitingRoom();
+        return null;
+    }
+
+    /** Host: this client's own snapshot, and nothing else. */
+    function sendSeatState(clientId, playerId) {
+        if (!lobby || !game) return;
+        lobby.send(clientId, { type: 'state', state: game.getStateForPlayer(playerId) });
+        if (game.ended) lobby.send(clientId, { type: 'gameOver', winner: lastWinner });
+    }
+
+    /**
+     * Host: hand a seat to a connection that PROVED it owns it (a matching seat code).
+     * Any other record pointing at the same seat is retired first — two clientIds mapped
+     * to one seat would both be sent that seat's hole cards.
+     * @returns {boolean} whether the seat was handed over.
+     */
+    function reclaimSeat(clientId, seat, playerName) {
+        if (!lobby || !game || !seat) return false;
+        for (const [cid, e] of [...lobby.players, ...(lobby._pastPlayers || [])]) {
+            if (cid !== clientId && e && e.playerId === seat.id) {
+                lobby.removeClient(cid, 'Your seat was reclaimed on another device');
+            }
+        }
+        lobby.players.set(clientId, { name: seat.name, playerId: seat.id });
+        game.setPresent(seat.id);
+        toast((playerName || seat.name) + ' rejoined');
+        lobby.send(clientId, {
+            type: 'joined', playerId: seat.id,
+            reclaimCode: seatCodes.get(seat.id) || null,
+            waiting: game.phase === PHASE.WAITING && !game.ended
+        });
+        if (game.ended) {
+            lobby.send(clientId, { type: 'gameOver', winner: lastWinner });
+        } else if (game.phase !== PHASE.WAITING) {
+            // Everyone's screen still shows this seat as away; the returning client's own
+            // snapshot rides along with the broadcast.
+            hostRefresh();
+        }
+        updateWaitingRoom();
+        broadcastWaitingRoom();
+        return true;
+    }
+
     function broadcastState() {
+        if (!lobby || !game) return;
         for (const [clientId, entry] of lobby.players) {
+            if (!entry || !entry.playerId) continue;
             lobby.send(clientId, { type: 'state', state: game.getStateForPlayer(entry.playerId) });
         }
     }
 
     function broadcastWaitingRoom() {
-        const players = game.players.map(p => ({ name: p.name, id: p.id, disconnected: p.disconnected }));
+        if (!lobby || !game) return;
+        const players = game.players.map(p => ({
+            name: p.name, id: p.id, disconnected: p.disconnected, busted: !!p.busted
+        }));
         lobby.broadcast({ type: 'waitingRoom', players, roomCode });
     }
 
+    /** Host: remove a seat for good, from the game menu. */
+    function removeSeat(playerId) {
+        if (!isHost || !game || !lobby) return;
+        const seat = game.players.find(p => p.id === playerId);
+        if (!seat || seat.id === myPlayerId) return;
+        const name = seat.name;
+        // Both maps. `lobby.players` holds only the clients SlopLobby currently seats;
+        // once a reconnect window expires the record is PARKED in _pastPlayers — and a
+        // ghost whose window expired is exactly the seat a host taps Remove on. Sweeping
+        // only the live map meant the kick never reached the library at all: no
+        // rejection was held against that player's retry ladder, and their next
+        // reconnect walked them straight back in.
+        for (const [clientId, entry] of [...lobby.players, ...(lobby._pastPlayers || [])]) {
+            if (entry && entry.playerId === playerId) lobby.removeClient(clientId, 'Removed by the host');
+        }
+        game.removePlayer(playerId);
+        seatCodes.delete(playerId);
+        toast(name + ' removed');
+        updateWaitingRoom();
+        broadcastWaitingRoom();
+        hostRefresh();
+        renderGameMenu();
+    }
+
     /* ── CLIENT ── */
-    async function joinGame(name, code) {
+
+    /** Client: our own seat code for a room, remembered across tabs on this device. */
+    function seatCodeKey(code) { return 'holdem-seat-' + code; }
+
+    function loadSeatCode(code) {
+        try { return localStorage.getItem(seatCodeKey(code)) || ''; } catch (e) { return ''; }
+    }
+
+    function saveSeatCode(code, seatCode) {
+        mySeatCode = seatCode || '';
+        try {
+            if (seatCode) localStorage.setItem(seatCodeKey(code), seatCode);
+        } catch (e) { /* private mode: the code is still on screen in the menu */ }
+    }
+
+    /* Everything below the wire is somebody else's browser. A state is rendered — and
+       run through the hand evaluator, which is C(n,5) work — so its shape is checked
+       once, here, rather than in each of the six places that read it. */
+    const CARD_RE = /^(?:[2-9TJQKA][shdc]|back)$/;
+
+    function isCardList(list, max) {
+        if (!Array.isArray(list) || list.length > max) return false;
+        return list.every(c => typeof c === 'string' && CARD_RE.test(c));
+    }
+
+    function isRenderableState(state) {
+        if (!state || typeof state !== 'object') return false;
+        if (!Array.isArray(state.players) || state.players.length > 12) return false;
+        if (!isCardList(state.communityCards, 5)) return false;
+        if (state.handResults != null && !Array.isArray(state.handResults)) return false;
+        for (const r of (state.handResults || [])) {
+            if (!r || !Array.isArray(r.winners)) return false;
+        }
+        for (const p of state.players) {
+            if (!p || typeof p !== 'object') return false;
+            if (!isCardList(p.holeCards == null ? [] : p.holeCards, 2)) return false;
+        }
+        return true;
+    }
+
+    async function joinGame(name, code, reclaimCode) {
+        const gen = takeOverTable();
         roomCode = code.toUpperCase();
         myName = name;
         isHost = false;
+        lastGameState = null;
+        terminalState = null;
+        reconnectRungs = 0;
+        myPlayerId = null;
+        // A code typed in by the player beats the one this device remembers: they are
+        // reading it off the host's screen precisely because this device has none.
+        const reclaim = normaliseCode(reclaimCode) || loadSeatCode(roomCode);
+        mySeatCode = reclaim;
 
         lobby = new SlopLobby.SlopLobby({
-            roomPrefix: 'slop-holdem-',
-            storageKey: 'holdem-client-id',
+            roomPrefix: ROOM_PREFIX,
+            storageKey: STORAGE_KEY,
+
+            // Every case here has to tolerate arriving in any order: the library flushes
+            // the backlog it queued for us BEFORE the host's rejoin snapshot, so a
+            // 'state' can easily land before the 'joined' that names our seat. Nothing
+            // below depends on a previous message having arrived.
             onClientData: (data) => {
+                if (gen !== tableGen) return;      // this attempt has been taken over
+                if (!data || typeof data !== 'object') return;
                 if (data.type === 'joined') {
-                    myPlayerId = data.playerId;
-                    showScreen('waiting-room');
-                    $('#display-code').textContent = roomCode;
-                    $('#btn-start-game').style.display = 'none';
+                    myPlayerId = data.playerId || null;
+                    if (typeof data.reclaimCode === 'string' && data.reclaimCode) {
+                        saveSeatCode(roomCode, normaliseCode(data.reclaimCode));
+                    }
+                    $('#game-over').classList.remove('show');
+                    // The HOST says which screen this is. Deferring to whatever screen
+                    // happens to be up cannot tell "re-seated into a brand-new pre-game
+                    // table" (a host tab that restarted under the same room code) from
+                    // "reclaimed my seat in the hand that is running", and gets the
+                    // first one wrong: the board stays up and the empty WAITING snapshot
+                    // is painted onto it. `waiting` undefined is a host still running
+                    // the older page — fall back to what that page's clients did.
+                    const waiting = data.waiting === undefined
+                        ? !$('#game').classList.contains('active')
+                        : !!data.waiting;
+                    if (waiting) {
+                        // Nothing of the old game may survive into the new one: a stale
+                        // snapshot here is what the next 'gameStart' would repaint.
+                        lastGameState = null;
+                        stopTurnClock();
+                        showScreen('waiting-room');
+                        $('#display-code').textContent = roomCode;
+                        $('#btn-start-game').style.display = 'none';
+                        $('#waiting-status').textContent = 'Waiting for host to start...';
+                    }
                 } else if (data.type === 'waitingRoom') {
-                    renderWaitingPlayers(data.players);
+                    renderWaitingPlayers(Array.isArray(data.players) ? data.players : []);
                 } else if (data.type === 'state') {
+                    // Everything below reads these two arrays without asking again.
+                    if (!isRenderableState(data.state)) return;
                     lastGameState = data.state;
+                    if (data.state.myId) myPlayerId = data.state.myId;
                     if ($('#game').classList.contains('active') || data.state.phase !== PHASE.WAITING) {
                         showScreen('game');
                         renderGame(data.state);
                     }
                 } else if (data.type === 'gameStart') {
                     showScreen('game');
+                    if (lastGameState) renderGame(lastGameState);
                 } else if (data.type === 'gameOver') {
                     showGameOver(data.winner);
-                } else if (data.type === 'error') {
-                    toast(data.message);
+                } else if (data.type === 'bustedOut') {
+                    toast('You are out of chips — spectating');
+                    if (lastGameState) renderGame(lastGameState);
+                } else if (data.type === 'leave-ok') {
+                    if (leaveAckResolve) { const r = leaveAckResolve; leaveAckResolve = null; r(); }
+                } else if (data.type === 'join-error') {
+                    // The same refusal also arrives as onStateChange('rejected'); whichever
+                    // gets here first paints it, and the other stays quiet.
+                    if (terminalState === 'rejected') return;
+                    terminalState = 'rejected';
+                    toast(data.reason || 'The host turned you away');
                     resetToLobby();
                 }
+                // Every refusal now travels as 'join-error' (the library's own contract),
+                // so there is no {type:'error'} case: the host never sends one.
             },
-            onStateChange: (status) => {
-                if (status === 'disconnected') {
-                    toast('Disconnected from host');
+
+            onStateChange: (status, detail) => {
+                if (gen !== tableGen) return;      // this attempt has been taken over
+                if (status === 'reconnecting') {
+                    // Throttled: a toast per rung is noise. Counted here rather than
+                    // read off `detail.attempt`, which is clamped at the ladder size —
+                    // every rung of the second pass reports the same number, so a
+                    // modulo on it fires on all twenty of them.
+                    reconnectRungs++;
+                    const max = (detail && detail.max) || 20;
+                    if (reconnectRungs <= max && (reconnectRungs === 1 || reconnectRungs % 5 === 0)) {
+                        toast('Reconnecting… (' + reconnectRungs + ')');
+                    }
                 } else if (status === 'reconnected') {
-                    toast('Reconnected!');
+                    reconnectRungs = 0;
+                    // `fresh`: the host holds nothing for us any more — its tab restarted
+                    // and re-registered the same room code. Whatever is on screen belongs
+                    // to a game that no longer exists, so drop it rather than let the
+                    // next snapshot paint into it. The 'joined' that follows puts us on
+                    // the right screen; this is what stops the old board being the thing
+                    // we stare at until it does.
+                    if (detail && detail.fresh) {
+                        lastGameState = null;
+                        myPlayerId = null;
+                        stopTurnClock();
+                        $('#game-over').classList.remove('show');
+                        showScreen('waiting-room');
+                        $('#display-code').textContent = roomCode;
+                        $('#btn-start-game').style.display = 'none';
+                        $('#waiting-status').textContent = 'The host restarted the table — waiting for a new game...';
+                    }
+                    // Ask for a snapshot: our queue has just been flushed at the host and a
+                    // restarted host holds nothing for us at all.
+                    if (lobby) lobby.sendToHost({ type: 'resync-request' });
+                } else if (status === 'rejected') {
+                    if (terminalState === 'rejected') return;
+                    terminalState = 'rejected';
+                    toast((typeof detail === 'string' && detail) ? detail : 'Removed from the table');
+                    resetToLobby();
+                } else if (status === 'superseded') {
+                    terminalState = 'superseded';
+                    resetToLobby();
+                } else if (status === 'room-closed') {
+                    terminalState = 'room-closed';
+                    resetToLobby();
                 } else if (status === 'reconnect-failed') {
-                    toast('Could not reconnect to host');
+                    // Also the bookend after a terminal state, where the real reason is
+                    // already on screen and must not be overwritten by a generic one.
+                    if (terminalState) return;
                     resetToLobby();
                 }
+                // 'disconnected', 'superseded', 'room-closed' and 'reconnect-failed' are
+                // deliberately silent: SlopLobby toasts each of them itself on the way
+                // through, and a second toast saying the same thing — for room-closed,
+                // character for character — is just noise. 'rejected' is not one of
+                // them: the library raises no toast of its own for a refusal.
             },
         });
 
-        await lobby.joinRoom(roomCode, myName);
+        // The reclaim code rides in the join metadata, so the host can answer a returning
+        // player on the very first knock — including one arriving mid-hand, whose seat is
+        // sitting at the table being auto-folded every orbit.
+        await lobby.joinRoom(roomCode, myName, reclaim ? { reclaim } : undefined);
     }
 
     function resetToLobby() {
-        if (lobby) { lobby.destroy(); lobby = null; }
+        stopTurnClock();
+        mySeatCode = '';
+        if (lobby) { try { lobby.destroy(); } catch (e) { /* already gone */ } lobby = null; }
+        lastGameState = null;
+        myPlayerId = null;
+        leaveAckResolve = null;
+        $('#game-menu').classList.remove('show');
+        $('#game-over').classList.remove('show');
         showScreen('lobby');
         $('#btn-join').disabled = false;
         $('#btn-join').textContent = 'Join Table';
@@ -1457,27 +2426,107 @@
         $('#btn-create').textContent = 'Create Table';
     }
 
-    function sendAction(action, amount) {
-        const msg = { type: 'action', action, amount };
+    /**
+     * @param {object} [token] — { handNum, turnSeq } of the state these buttons were
+     *   drawn from. Passed by renderActions so a tap always carries the decision it was
+     *   aimed at, rather than whatever the table happens to be doing when it lands.
+     */
+    function sendAction(action, amount, token) {
         if (isHost) {
-            game.handleAction(myPlayerId, action, amount);
-        } else if (lobby) {
-            lobby.sendToHost(msg);
+            // The host's tap goes straight into the engine, so onHostData's turn token
+            // never sees it — hand handleAction the same token a remote client sends, so
+            // the host's seat is protected by the same mechanism as every other seat.
+            // The debounce stays as belt and braces: the host's screen is redrawn
+            // synchronously, so a second tap can land on freshly drawn buttons.
+            const now = Date.now();
+            if (now - lastLocalActionAt < 300) return;
+            lastLocalActionAt = now;
+            if (!game) return;
+            const meta = token || (() => {
+                const st = game.getStateForPlayer(myPlayerId);
+                return { handNum: st.handNum, turnSeq: st.turnSeq };
+            })();
+            game.handleAction(myPlayerId, action, amount || 0, meta);
+            return;
         }
+        if (!lobby || !lastGameState) return;
+        const meta = token || { handNum: lastGameState.handNum, turnSeq: lastGameState.turnSeq };
+        lobby.sendToHost({
+            type: 'action',
+            action,
+            amount: amount || 0,
+            handNum: meta.handNum,
+            turnSeq: meta.turnSeq
+        });
+        // Close the window a second tap goes through: the buttons stay gone until the
+        // host's next snapshot redraws them.
+        showActionPending();
+    }
+
+    function showActionPending() {
+        $('#actions').innerHTML = '<span style="color:var(--color-text-muted);font-size:0.85rem;">Sending…</span>';
+        $('#raise-controls').style.display = 'none';
+        $('#raise-presets').style.display = 'none';
+    }
+
+    /** Leave for good: tell the other side first, then reload. */
+    async function leaveTable() {
+        if (leavingTable) return;
+        leavingTable = true;
+        $('#game-menu').classList.remove('show');
+        stopTurnClock();
+        try {
+            if (isHost) {
+                if (game) game.destroy();
+                // Players hear 'room-closed' instead of reconnecting for minutes
+                // against a room that no longer exists.
+                //
+                // 2000ms, not 1000: PeerHost.close() holds the room open for
+                // reconnectBackoffBase + 250 = 1250ms whenever a seat is away, so that
+                // an absent player's first reconnect rung is answered with the goodbye
+                // rather than silence. A 1000ms race reloaded the page 250ms early —
+                // before SlopLobby.destroy() (and with it clearRoomCode) had run, so the
+                // tab came back still holding the room code and the next table was
+                // announced under the code everyone had just been bounced off.
+                if (lobby) await withTimeout(lobby.closeRoom('Host left the table'), 2000);
+                // And unconditionally, because the beforeunload fallback that exists for
+                // exactly this deliberately stands down once leavingTable is set.
+                forgetRoomCode();
+            } else if (lobby) {
+                const ack = new Promise(resolve => { leaveAckResolve = resolve; });
+                lobby.sendToHost({ type: 'leave' });
+                await withTimeout(ack, 400);
+                lobby.destroy();
+            }
+        } catch (e) { /* leaving anyway */ }
+        location.reload();
+    }
+
+    function withTimeout(promise, ms) {
+        return Promise.race([
+            Promise.resolve(promise),
+            new Promise(resolve => setTimeout(resolve, ms))
+        ]);
     }
 
     /* ══════════════════════════════════════════════════════════════
        UI RENDERING
        ══════════════════════════════════════════════════════════════ */
 
+    const esc = SlopLobby.esc;
+
     function updateWaitingRoom() {
         if (!game) return;
-        renderWaitingPlayers(game.players.map(p => ({ name: p.name, id: p.id, disconnected: p.disconnected })));
-        const canStart = game.players.filter(p => !p.disconnected).length >= 2;
-        $('#btn-start-game').disabled = !canStart;
+        renderWaitingPlayers(game.players.map(p => ({
+            name: p.name, id: p.id, disconnected: p.disconnected, busted: !!p.busted
+        })));
+        const canStart = game.players.filter(p => !p.disconnected && !p.busted).length >= 2;
+        $('#btn-start-game').disabled = !canStart || game.handNum > 0 || game.ended;
         if (isHost) {
             $('#btn-start-game').style.display = '';
-            $('#waiting-status').textContent = canStart ? '' : 'Need at least 2 players to start';
+            $('#waiting-status').textContent = !hostSignallingOk
+                ? 'Offline: new players cannot join until the table is reachable again'
+                : (canStart ? '' : 'Need at least 2 players to start');
         } else {
             $('#btn-start-game').style.display = 'none';
             $('#waiting-status').textContent = 'Waiting for host to start...';
@@ -1492,23 +2541,45 @@
             div.className = 'player-item';
             let badges = '';
             if (p.id === 'host') badges += '<span class="host-badge">Host</span>';
+            if (p.busted) badges += '<span class="disconnected-badge">Out</span>';
             if (p.disconnected) badges += '<span class="disconnected-badge">Away</span>';
-            div.innerHTML = `<span>${p.name}</span><div>${badges}</div>`;
+            // esc: the name is wire metadata from another player's phone.
+            div.innerHTML = `<span>${esc(p.name)}</span><div>${badges}</div>`;
             container.appendChild(div);
         }
         // Update start button state
         if (isHost) {
-            const canStart = players.filter(p => !p.disconnected).length >= 2;
-            $('#btn-start-game').disabled = !canStart;
+            const canStart = players.filter(p => !p.disconnected && !p.busted).length >= 2;
+            $('#btn-start-game').disabled = !canStart || (game ? game.handNum > 0 || game.ended : false);
         }
     }
 
+    /**
+     * What to show as "the pot". During the result window the engine has already paid it
+     * out (and zeroed it, so a stray timer cannot pay it twice), so the amount that was
+     * won is the honest number to paint until the next hand is dealt.
+     */
+    function potOnScreen(state) {
+        if (state.pot > 0) return state.pot;
+        if (state.phase === PHASE.SHOWDOWN && Array.isArray(state.handResults)) {
+            return state.handResults.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
+        }
+        return state.pot || 0;
+    }
+
     function renderGame(state) {
-        if (!state) return;
+        if (!state || !Array.isArray(state.players)) return;
+        // The host renders its own snapshot directly, so this is the one place both
+        // roles meet: never assume the board is an array.
+        const community = Array.isArray(state.communityCards) ? state.communityCards : [];
 
         // Blinds
         $('#blinds-display').textContent = state.smallBlind + '/' + state.bigBlind;
-        $('#pot-display').textContent = state.pot;
+        // The pot is zeroed the instant it is paid (that is what makes the payout
+        // idempotent), so during the result window it is the amount being WON that
+        // belongs on screen, not a bare 0.
+        const displayPot = potOnScreen(state);
+        $('#pot-display').textContent = displayPot;
 
         // Find me
         const me = state.players.find(p => p.id === state.myId);
@@ -1541,19 +2612,22 @@
             cardsHtml += '</div>';
 
             let betStr = '';
-            if (p.currentBet > 0) betStr = `<div class="bet-amount">Bet: ${p.currentBet}</div>`;
+            if (p.currentBet > 0) betStr = `<div class="bet-amount">Bet: ${esc(p.currentBet)}</div>`;
 
             let handLabel = '';
-            if (state.phase === PHASE.SHOWDOWN && !p.folded && p.holeCards && p.holeCards[0] !== 'back') {
-                const ev = evaluateBestHand(p.holeCards, state.communityCards);
-                handLabel = `<div class="hand-label">${ev.name}</div>`;
+            if (state.phase === PHASE.SHOWDOWN && !p.folded && p.holeCards && p.holeCards[0] !== 'back' &&
+                community.length >= 3) {
+                const ev = evaluateBestHand(p.holeCards, community);
+                handLabel = `<div class="hand-label">${esc(ev.name)}</div>`;
             }
 
             let statusStr = '';
-            if (p.folded) statusStr = '<div class="bet-amount">Folded</div>';
+            if (p.busted) statusStr = '<div class="bet-amount">Out</div>';
+            else if (p.folded) statusStr = '<div class="bet-amount">Folded</div>';
             else if (p.allIn) statusStr = '<div class="bet-amount" style="color:var(--color-error)">ALL IN</div>';
 
-            div.innerHTML = `${dealerChip}<div class="name">${p.name}</div>${cardsHtml}<div class="chips">${p.chips}</div>${betStr}${statusStr}${handLabel}`;
+            // esc: every one of these strings came off the wire.
+            div.innerHTML = `${dealerChip}<div class="name">${esc(p.name)}</div>${cardsHtml}<div class="chips">${esc(p.chips)}</div>${betStr}${statusStr}${handLabel}`;
             oppContainer.appendChild(div);
         }
 
@@ -1561,7 +2635,7 @@
         const commContainer = $('#community');
         commContainer.innerHTML = '';
         for (let i = 0; i < 5; i++) {
-            const card = state.communityCards[i] || null;
+            const card = community[i] || null;
             commContainer.appendChild(renderCard(card, true));
         }
 
@@ -1571,15 +2645,14 @@
 
         // Main pot label
         const mainPotLabel = $('#main-pot-label');
-        if (state.pot > 0 && state.phase > PHASE.WAITING) {
-            mainPotLabel.textContent = 'Pot: ' + state.pot;
+        if (displayPot > 0 && state.phase > PHASE.WAITING) {
+            mainPotLabel.textContent = 'Pot: ' + displayPot;
         } else {
             mainPotLabel.textContent = '';
         }
 
         // My area
-        if (me) {
-            $('#my-name').textContent = me.name;
+        if (me && !me.busted) {
             $('#my-chips').textContent = me.chips;
 
             const dealerIsMe = state.dealerIndex >= 0 && state.players[state.dealerIndex]?.id === me.id;
@@ -1594,8 +2667,8 @@
                 }
 
                 // Show hand evaluation
-                if (state.communityCards.length >= 3 && !me.folded) {
-                    const ev = evaluateBestHand(me.holeCards, state.communityCards);
+                if (community.length >= 3 && !me.folded) {
+                    const ev = evaluateBestHand(me.holeCards, community);
                     $('#my-hand-label').textContent = ev.name;
                 } else {
                     $('#my-hand-label').textContent = '';
@@ -1606,10 +2679,21 @@
 
             // Actions
             renderActions(state, me);
+        } else {
+            // No seat in this snapshot, or a seat with no chips left. Either way the
+            // panel must be cleared: leaving the last hand's cards and buttons frozen
+            // there for the rest of the night is what a busted player used to get,
+            // with nothing to tell them they were out.
+            $('#my-name').textContent = (me ? me.name : (myName || 'You')) + (me ? ' — out' : ' — spectating');
+            $('#my-chips').textContent = me ? String(me.chips) : '';
+            $('#my-cards').innerHTML = '';
+            $('#my-hand-label').textContent = '';
+            renderActions(state, null);
         }
 
         // Announcement
         renderAnnouncement(state);
+        syncTurnClock(state);
     }
 
     function renderActions(state, me) {
@@ -1620,21 +2704,44 @@
         raiseControls.style.display = 'none';
         raisePresets.style.display = 'none';
 
+        const activePhase = state.phase > PHASE.WAITING && state.phase < PHASE.SHOWDOWN;
+
+        // Spectator (busted, removed, or a snapshot that names no seat of ours).
+        if (!me) {
+            if (activePhase) {
+                actionsContainer.innerHTML = '<span style="color:var(--color-text-muted);font-size:0.85rem;">Spectating</span>';
+            }
+            return;
+        }
+
         // Not my turn or not in an active phase
         const isMyTurn = state.currentPlayerIndex >= 0 &&
             state.players[state.currentPlayerIndex]?.id === me.id &&
-            state.phase > PHASE.WAITING && state.phase < PHASE.SHOWDOWN;
+            activePhase;
 
         if (!isMyTurn || me.folded || me.allIn) {
             if (me.folded) {
                 actionsContainer.innerHTML = '<span style="color:var(--color-text-muted);font-size:0.85rem;">Folded</span>';
             } else if (me.allIn) {
                 actionsContainer.innerHTML = '<span style="color:var(--color-error);font-size:0.85rem;font-weight:600;">ALL IN</span>';
-            } else if (state.phase > PHASE.WAITING && state.phase < PHASE.SHOWDOWN) {
-                actionsContainer.innerHTML = '<span style="color:var(--color-text-muted);font-size:0.85rem;">Waiting for ' + (state.players[state.currentPlayerIndex]?.name || '...') + '</span>';
+            } else if (activePhase && state.currentPlayerIndex < 0) {
+                // The board is dealing itself out: nobody has a decision to make.
+                actionsContainer.innerHTML = '<span style="color:var(--color-text-muted);font-size:0.85rem;">Running it out…</span>';
+            } else if (activePhase) {
+                const waitingFor = state.players[state.currentPlayerIndex]?.name || '...';
+                const span = document.createElement('span');
+                span.style.color = 'var(--color-text-muted)';
+                span.style.fontSize = '0.85rem';
+                span.textContent = 'Waiting for ' + waitingFor;
+                actionsContainer.appendChild(span);
             }
             return;
         }
+
+        // The decision these buttons are being drawn FOR. Captured here, not read when
+        // the finger lands: a button drawn for one decision must never be applied to the
+        // next one, whichever seat taps it and however it was dispatched.
+        const token = { handNum: state.handNum, turnSeq: state.turnSeq };
 
         const toCall = state.currentBet - me.currentBet;
         const canCheck = toCall === 0;
@@ -1646,7 +2753,7 @@
         const foldBtn = document.createElement('button');
         foldBtn.className = 'btn btn-danger';
         foldBtn.textContent = 'Fold';
-        foldBtn.onclick = () => sendAction('fold');
+        foldBtn.onclick = () => sendAction('fold', 0, token);
         actionsContainer.appendChild(foldBtn);
 
         // Check or Call
@@ -1654,7 +2761,7 @@
             const checkBtn = document.createElement('button');
             checkBtn.className = 'btn';
             checkBtn.textContent = 'Check';
-            checkBtn.onclick = () => sendAction('check');
+            checkBtn.onclick = () => sendAction('check', 0, token);
             actionsContainer.appendChild(checkBtn);
         } else if (canCall) {
             const callAmount = Math.min(toCall, me.chips);
@@ -1663,9 +2770,9 @@
             callBtn.textContent = callAmount >= me.chips ? `Call All-In (${callAmount})` : `Call (${callAmount})`;
             callBtn.onclick = () => {
                 if (callAmount >= me.chips) {
-                    sendAction('allin');
+                    sendAction('allin', 0, token);
                 } else {
-                    sendAction('call');
+                    sendAction('call', 0, token);
                 }
             };
             actionsContainer.appendChild(callBtn);
@@ -1714,7 +2821,7 @@
                 const allInBtn = document.createElement('button');
                 allInBtn.className = 'btn btn-primary';
                 allInBtn.textContent = `All In (${me.chips})`;
-                allInBtn.onclick = () => sendAction('allin');
+                allInBtn.onclick = () => sendAction('allin', 0, token);
                 actionsContainer.appendChild(allInBtn);
                 raiseControls.style.display = 'none';
                 raisePresets.style.display = 'none';
@@ -1725,14 +2832,50 @@
                 raiseBtn.onclick = () => {
                     const val = parseInt(slider.value);
                     if (val >= maxRaise) {
-                        sendAction('allin');
+                        sendAction('allin', 0, token);
                     } else {
-                        sendAction('raise', val);
+                        sendAction('raise', val, token);
                     }
                 };
                 actionsContainer.appendChild(raiseBtn);
             }
         }
+    }
+
+    /* ── Turn countdown ───────────────────────────────────────────────
+       The state only arrives when something changes, so the clock is painted from a
+       local interval seeded with the REMAINING time the host reported (the two
+       clocks are not synced). Tracked and cleared like every other timer here. */
+    let turnClockTimer = null;
+    let turnClockUntil = 0;
+    let turnClockLabel = '';
+
+    function syncTurnClock(state) {
+        const active = state.currentPlayerIndex >= 0 &&
+            state.phase > PHASE.WAITING && state.phase < PHASE.SHOWDOWN &&
+            state.turnRemainingMs != null;
+        if (!active) { stopTurnClock(); return; }
+        const who = state.players[state.currentPlayerIndex];
+        turnClockUntil = Date.now() + state.turnRemainingMs;
+        turnClockLabel = (who && who.id === state.myId) ? 'Your turn' : (who ? who.name : '');
+        paintTurnClock();
+        if (!turnClockTimer) turnClockTimer = setInterval(paintTurnClock, 1000);
+    }
+
+    function paintTurnClock() {
+        const el = $('#turn-timer');
+        const left = Math.max(0, Math.ceil((turnClockUntil - Date.now()) / 1000));
+        // The two clocks are not synced, so ours can run out a beat before the host acts
+        // for the seat. Say "time" rather than sitting on a stopped "0s".
+        el.textContent = left > 0 ? turnClockLabel + ' ' + left + 's' : turnClockLabel + ' — time';
+        el.style.display = '';
+        if (left <= 0 && turnClockTimer) { clearInterval(turnClockTimer); turnClockTimer = null; }
+    }
+
+    function stopTurnClock() {
+        if (turnClockTimer) { clearInterval(turnClockTimer); turnClockTimer = null; }
+        const el = $('#turn-timer');
+        if (el) { el.textContent = ''; el.style.display = 'none'; }
     }
 
     function renderAnnouncement(state) {
@@ -1762,6 +2905,7 @@
     }
 
     function showGameOver(winner) {
+        stopTurnClock();
         $('#game-over').classList.add('show');
         if (winner) {
             $('#game-over-title').textContent = winner.name + ' wins the game!';
@@ -1769,6 +2913,83 @@
         } else {
             $('#game-over-title').textContent = 'Game Over';
             $('#game-over-text').textContent = '';
+        }
+    }
+
+    /**
+     * The menu is rebuilt when it is opened, after any action taken from it, and (via
+     * hostRefresh) on every state change while it is open — so the seat its buttons name
+     * is the seat they act on.
+     */
+    function renderGameMenu() {
+        renderSeatCodes();
+        const box = $('#host-controls');
+        if (!isHost || !game || game.ended) { box.style.display = 'none'; return; }
+        box.style.display = '';
+
+        const foldBox = $('#menu-fold-current');
+        foldBox.innerHTML = '';
+        const current = game.currentPlayerIndex >= 0 ? game.players[game.currentPlayerIndex] : null;
+        if (current) {
+            // The decision this button was drawn for, captured now. Acting on whoever
+            // happens to be current at CLICK time is the same "second tap lands on the
+            // next decision" bug the turn token closes everywhere else.
+            const forId = current.id;
+            const forHand = game.handNum;
+            const forSeq = game.turnSeq;
+            const btn = document.createElement('button');
+            btn.className = 'btn';
+            // textContent, not innerHTML: the name came off the wire.
+            btn.textContent = (current.currentBet >= game.currentBet ? 'Check for ' : 'Fold for ') + current.name;
+            btn.addEventListener('click', () => {
+                const p = game.currentPlayerIndex >= 0 ? game.players[game.currentPlayerIndex] : null;
+                if (!p || p.id !== forId || game.handNum !== forHand || game.turnSeq !== forSeq) {
+                    toast('The turn has already moved on');
+                    renderGameMenu();
+                    return;
+                }
+                game.handleAction(p.id, p.currentBet >= game.currentBet ? 'check' : 'fold',
+                    0, { handNum: forHand, turnSeq: forSeq });
+                renderGameMenu();
+            });
+            foldBox.appendChild(btn);
+        }
+
+        const list = $('#menu-remove-list');
+        list.innerHTML = '';
+        for (const p of game.players) {
+            if (p.id === myPlayerId) continue;
+            const btn = document.createElement('button');
+            btn.className = 'btn btn-danger';
+            btn.textContent = 'Remove ' + p.name;
+            btn.addEventListener('click', () => removeSeat(p.id));
+            list.appendChild(btn);
+        }
+    }
+
+    /**
+     * Seat codes. A player whose tab died needs one to get back into a live hand from
+     * another device — so their own code is on their own screen, and the host (who can
+     * read it out to them) has the whole list.
+     */
+    function renderSeatCodes() {
+        const el = $('#menu-seat-codes');
+        if (!el) return;
+        if (isHost && game) {
+            // `removed`, not `leaving`: a seat is marked leaving when its reconnect
+            // window runs out, which is PRECISELY the player who is now asking the host
+            // to read their code out — onPlayerJoined accepts that reclaim. Only a
+            // deliberate removal is final, and only that may hide the code.
+            const lines = game.players
+                .filter(p => p.id !== myPlayerId && !p.removed && seatCodes.has(p.id))
+                .map(p => p.name + (p.leaving || p.disconnected ? ' (away)' : '') + ': ' + seatCodes.get(p.id));
+            el.textContent = lines.length
+                ? 'Seat codes — read one out to a player who lost their tab · ' + lines.join(' · ')
+                : '';
+        } else {
+            el.textContent = mySeatCode
+                ? 'Your seat code: ' + mySeatCode + ' — use it to rejoin from another device'
+                : '';
         }
     }
 
@@ -1783,15 +3004,30 @@
         const buyIn = parseInt($('#buy-in').value) || 1000;
         const sb = parseInt($('#small-blind').value) || 5;
         const bb = parseInt($('#big-blind').value) || 10;
+        // BOTH buttons: they share this screen and the single `lobby` global, and a
+        // create can sit unresolved for seconds. A tap on the other one in that window
+        // used to take the table over underneath this one.
         btn.disabled = true;
         btn.textContent = 'Creating...';
+        $('#btn-join').disabled = true;
+        // hostGame takes its generation synchronously, before its first await.
+        const pending = hostGame(name, { buyIn, smallBlind: sb, bigBlind: bb });
+        const gen = tableGen;
         try {
-            await hostGame(name, { buyIn, smallBlind: sb, bigBlind: bb });
+            await pending;
         } catch (e) {
-            toast('Failed: ' + e.message);
+            // Something newer owns the table now: this failure is about a lobby that has
+            // already been retired, and touching `lobby` here would tear down the live one.
+            if (gen !== tableGen) return;
+            toast('Failed: ' + (e && e.message ? e.message : 'could not create the table'));
+            if (lobby) { try { lobby.destroy(); } catch (err) {} lobby = null; }
+            isHost = false;
+            game = null;
         }
+        if (gen !== tableGen) return;
         btn.disabled = false;
         btn.textContent = 'Create Table';
+        $('#btn-join').disabled = false;
     });
 
     // Join table
@@ -1799,15 +3035,30 @@
         const btn = $('#btn-join');
         const name = $('#join-name').value.trim() || 'Player';
         const code = $('#room-code').value.trim();
+        const seatCode = $('#rejoin-code').value.trim();
         if (!code) { toast('Enter a room code'); return; }
         btn.disabled = true;
         btn.textContent = 'Connecting...';
+        $('#btn-create').disabled = true;
+        // joinGame takes its generation synchronously, before its first await.
+        const pending = joinGame(name, code, seatCode);
+        const gen = tableGen;
         try {
-            await joinGame(name, code);
+            await pending;
+            // Stays disabled until the host answers ('joined'), or until one of the
+            // error paths puts us back on this screen through resetToLobby().
         } catch (e) {
-            toast('Failed: ' + e.message);
-            btn.disabled = false;
-            btn.textContent = 'Join Table';
+            // Something newer owns the table now — the player gave up on this code and
+            // tapped Create Table, and that room is live. resetToLobby() from here would
+            // destroy it and drop everyone who has joined it.
+            if (gen !== tableGen) return;
+            // The lobby was torn down under us (another join started, or we left).
+            if (e && e.type === 'destroyed') return;
+            // A refusal has already been painted with the host's own words by the
+            // 'rejected' state / join-error message; do not overwrite it with a
+            // generic "check the room code".
+            if (!terminalState) toast('Could not join: check the room code');
+            resetToLobby();
         }
     });
 
@@ -1818,11 +3069,12 @@
 
     // Start game
     $('#btn-start-game').addEventListener('click', () => {
-        if (!isHost || !game) return;
-        if (game.players.filter(p => !p.disconnected).length < 2) {
+        if (!isHost || !game || game.ended || game.handNum > 0) return;
+        if (game.players.filter(p => !p.disconnected && !p.busted).length < 2) {
             toast('Need at least 2 players');
             return;
         }
+        $('#btn-start-game').disabled = true;
         showScreen('game');
         // Tell clients
         lobby.broadcast({ type: 'gameStart' });
@@ -1831,24 +3083,41 @@
 
     // Menu
     $('#btn-menu').addEventListener('click', () => {
+        renderGameMenu();
         $('#game-menu').classList.add('show');
     });
     $('#btn-menu-close').addEventListener('click', () => {
         $('#game-menu').classList.remove('show');
     });
-    $('#btn-leave').addEventListener('click', () => {
-        if (lobby) lobby.destroy();
-        location.reload();
-    });
+    $('#btn-leave').addEventListener('click', () => { leaveTable(); });
 
     // Game over - back to lobby
-    $('#btn-back-lobby').addEventListener('click', () => {
-        if (lobby) lobby.destroy();
-        location.reload();
+    $('#btn-back-lobby').addEventListener('click', () => { leaveTable(); });
+
+    // Best effort on tab close: the goodbye goes out synchronously, so players are told
+    // the room is over instead of dialling a dead code for minutes.
+    window.addEventListener('beforeunload', () => {
+        if (leavingTable) return;
+        if (isHost && lobby) {
+            try { lobby.closeRoom('Host left the table'); } catch (e) {}
+            // closeRoom's own cleanup (which forgets the room code) runs on a timer that
+            // an unloading page will never reach. Forget it here instead: every player
+            // has just been told this room is over, so a reload must come back as a new
+            // room rather than resurrecting a code they were all bounced off.
+            forgetRoomCode();
+        }
     });
+
+    /** The key SlopLobby stores a host tab's room code under. */
+    function forgetRoomCode() {
+        try { sessionStorage.removeItem(ROOM_CODE_KEY); } catch (e) { /* nothing to forget */ }
+    }
 
     // Enter key on inputs
     $('#room-code').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') $('#btn-join').click();
+    });
+    $('#rejoin-code').addEventListener('keydown', (e) => {
         if (e.key === 'Enter') $('#btn-join').click();
     });
     $('#host-name').addEventListener('keydown', (e) => {
