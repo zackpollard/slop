@@ -1,25 +1,33 @@
 # Multiplayer bug audit
 
+> **STATUS: CLOSED.** Every bug in this document has been fixed and independently
+> re-verified, and a second, fresh audit run afterwards found and fixed 35 more.
+> This file is now a historical record of the first wave — the per-bug entries
+> below still describe the code as it was, and their line numbers are stale.
+> For what the code does *now*, read the source and `lib/slopnet/__tests__/`.
+> See [Resolution](#resolution) at the end for what actually happened.
+
 A backlog of confirmed bugs in the four peer-to-peer games. Nothing here is
 speculative: every entry was found by reading the code, then survived three
 independent reviewers voting on whether it was real, needing a two-of-three
 majority to be recorded at all.
 
-**This is a to-do list, not a report.** Each entry says what a player sees, what
-sequence causes it, and the specific fix in this codebase.
+Each entry says what a player sees, what sequence causes it, and the fix that was
+proposed at the time. Where the fix that actually shipped differs — and it often
+does, because roughly half these proposals turned out to be incomplete or to
+regress something else — the code is the authority, not this file.
 
 ## Where this came from
 
 The four games share `lib/slopnet` (a PeerJS wrapper) and `lib/sloplobby` (rooms,
-identity, rejoin). An audit of that shared library found 79 bugs. **The 31 in the
-library are already fixed**; see `lib/slopnet/__tests__/repro-*.test.js`, which
-reproduce them, and the commit that turned them green.
+identity, rejoin). An audit of that shared library found 79 bugs. The 31 in the
+library were fixed first; see `lib/slopnet/__tests__/repro-*.test.js`, which
+reproduce them.
 
 The 48 in this document are in the apps themselves. They were re-checked against
-the *fixed* library, so the status column reflects the code as it stands today,
-not as it was when the bug was found.
+the *fixed* library, so the status column reflected the code as it stood then.
 
-## The state of it
+## The state of it, as filed
 
 | | Count |
 |---|---|
@@ -1021,3 +1029,104 @@ call it real. Candidates that failed that bar are not in this document.
 
 Line numbers were re-checked against the current files during triage, but they
 drift with every edit — treat them as a starting point and search for the symbol.
+
+---
+
+# Resolution
+
+<a id="resolution"></a>
+
+All 48 entries above are closed, along with a second wave of 35 issues found by a
+fresh audit afterwards. The test suite went from 147 tests with 9 failing to
+**715 tests, all passing**.
+
+## How it was done
+
+**1. Validate before fixing.** Every one of the 48 entries, plus 12 suspected
+library faults, was re-traced against the current code by an independent agent,
+with two further votes on anything called not-real. Result: 49 confirmed, 10 real
+but with a different trigger than described, 1 genuinely fixed upstream. The
+validators also corrected about half the proposed fixes — several would have
+regressed the happy path — and those corrections became the specs the fixes were
+written from.
+
+**2. The library first.** `lib/slopnet` and `lib/sloplobby` are shared by all four
+games, so they were rewritten before any app was touched, then put through three
+rounds of adversarial review. Highlights:
+
+- Listener isolation, so an exception in an app callback can no longer abort the
+  library's own bookkeeping or propagate into PeerJS's data handler.
+- Connection binding: a record belongs to one DataConnection, and a stale or
+  superseded socket can no longer speak for a seat or mark it disconnected.
+- Seat tokens, so a `clientId` read off the wire cannot take an occupied seat.
+- Terminal client states (`rejected`, `superseded`, `room-closed`) that stop the
+  retry storms — a kicked client used to re-dial roughly once a second forever.
+- A room-closed protocol, so ending a game tells the players instead of leaving
+  them reconnecting against a room that no longer exists.
+- A host's *second* signalling outage is now repaired. It never was: the reconnect
+  path left its attempt handlers on the adopted peer, and those returned early
+  forever after, so the room silently fell off the signalling server.
+
+**3. Then the apps**, one implementer per game working from a spec, with one
+verifier per audit finding re-tracing whether that specific bug was closed, plus
+regression and adversarial protocol reviewers, looping until clean.
+
+**4. Then a fresh audit** of everything, five lenses (reconnect, message ordering,
+identity, lifecycle, deadlocks) across the library and all four games.
+
+## What the fresh audit found
+
+35 distinct issues from 75 reports — the clustering was the useful signal, with
+seven independent finders converging on the same seat bug and nine on the same
+kick bug. Three were regressions introduced by the earlier fix rounds:
+
+- **The seat tie-break superseded the seat's own owner.** "Newest connection wins"
+  compared two timestamps that measure opposite directions of the same link, so a
+  single tab reconnecting to its own seat won or lost on a coin flip.
+- **A held kick reason was never cleared** by a successful join, so it detonated on
+  that player's next ordinary reconnect, minutes later.
+- **A reloading host silently re-rolled its room code**, because a signalling server
+  still holding the old registration was read as "someone else owns this code".
+
+The rest were app-level: tapping Create while a Join was still dialling clobbered
+the shared lobby object in two games; a joiner typing the host's exact name was
+seated as the host in Herd Mentality; a seat could be taken by anyone who typed an
+absent player's name; and a player who rejoined from a new tab was re-marked
+disconnected two minutes later when their old seat's window expired.
+
+## What is guarded now
+
+The suite is the specification. Beyond the library's own tests, each game has a
+test file that loads the **real shipped page** and drives its inline script against
+the real SlopNet/SlopLobby over a PeerJS mock built to match peerjs 1.5.5
+semantics (synchronous close, flush-close, control-message interception):
+
+| File | Covers |
+|---|---|
+| `app-cah.test.js`, `app-cah-doors-and-controls.test.js` | Cards Against Humanity |
+| `app-herd.test.js` | Herd Mentality |
+| `app-flip7.test.js` | Flip 7 |
+| `app-holdem.test.js` | Texas Hold'em |
+| `attack-*.test.js` | hostile-client and protocol attacks per game and on the library |
+| `lib-*.test.js` | one file per library guarantee |
+| `repro-*.test.js` | the original reproductions, now green |
+
+## A note on the fixes themselves
+
+Three of the 35 second-wave issues were regressions introduced by the first wave, and one
+more was found only because this document's own re-review was run before committing: six
+library findings had been judged real and then never fixed, because the orchestration that
+dispatched the fixers matched paths beginning `/lib/` while the findings carried
+`lib/slopnet/slopnet.js`. No fixer was dispatched and nothing failed loudly. They are
+fixed now, each with a test verified to fail against the reverted change — which is the
+only reason to trust the others.
+
+## Known residuals
+
+- While a seat is held but its channel is down, a client that has never been
+  refused and presents no token can still claim it by name. That is indistinguishable
+  from the device-switch flow the games deliberately support, and closing it would
+  remove that feature. The narrower hole — reclaiming a seat the host has already
+  refused you by name — is closed.
+- `closeRoom()` reaches players who are connected. A player already deep in their
+  reconnect ladder will still dial a room that has ended.

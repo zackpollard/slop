@@ -560,6 +560,13 @@
             margin-left: 0.25rem;
         }
 
+        /* A player whose phone dropped out of the lobby. Their seat is held, so
+           they stay on the list rather than vanishing from everyone's screen. */
+        .lobby-player.away {
+            opacity: 0.5;
+            border-style: dashed;
+        }
+
         /* Connection status */
         .connection-status {
             display: flex;
@@ -994,6 +1001,9 @@
                         <span class="connection-dot connected"></span>
                         <span>Connected! Waiting for host to start...</span>
                     </div>
+                    <!-- A lobby blip no longer bounces the player to the form: the
+                         library holds their seat and redials, and this says so. -->
+                    <div id="join-status" class="hidden" style="color:var(--color-accent); font-size:0.85rem; margin-top:0.5rem;"></div>
                     <h2 style="margin-top:0.75rem;">Players in Lobby</h2>
                     <div class="lobby-players" id="join-lobby-players"></div>
                     <div class="lobby-ruleset" id="join-ruleset"></div>
@@ -1023,6 +1033,8 @@
                 <div class="actions-row" style="justify-content:center; margin-top:1rem;">
                     <button class="btn btn-primary" id="play-again-btn">Play Again</button>
                     <button class="btn" id="new-game-btn">New Game</button>
+                    <!-- Joined players cannot reset anyone else's scoreboard, so they ask. -->
+                    <button class="btn btn-primary hidden" id="request-rematch-btn">Ask for a Rematch</button>
                 </div>
             </div>
 
@@ -1059,11 +1071,11 @@
                 <div id="round-waiting" class="hidden">
                     <div class="waiting-message">
                         <span class="spinner"></span>
-                        Score submitted! Waiting for other players...
+                        <span id="round-waiting-text">Score submitted! Waiting for other players...</span>
                     </div>
                 </div>
                 <div class="actions-row" id="round-actions">
-                    <button class="btn btn-danger btn-sm" id="undo-round-btn" class="hidden">Undo Last Round</button>
+                    <button class="btn btn-danger btn-sm hidden" id="undo-round-btn">Undo Last Round</button>
                     <button class="btn btn-primary" id="submit-round-btn">Submit Round</button>
                 </div>
             </div>
@@ -1106,7 +1118,7 @@
 
     <script>
     (function() {
-        const { esc } = SlopLobby;
+        const { esc, toast } = SlopLobby;
 
         // =====================================================================
         // STATE
@@ -1117,26 +1129,81 @@
         let gameStarted = false;
         let gameOver = false;
         let roundState = {};
+        // A MONOTONIC identity for the round in play. `currentRound` is not one:
+        // Undo rewinds it and Play Again resets it to 1, so a submission queued
+        // across either used to be accepted into the replayed round under its old
+        // number. This only ever counts up, for the life of the room.
+        let roundEpoch = 0;
 
         // Multiplayer state
         let gameMode = 'single'; // 'single' | 'host' | 'peer'
         let lobby = null;  // SlopLobby instance
         let roomCode = '';
         let myName = '';
-        let lobbyPlayers = []; // [{name, isHost, clientId}]
+        let lobbyPlayers = []; // [{name, isHost, clientId, away, isLocal}]
         let peerSubmissions = {}; // host tracks: {playerName: scoreData}
+        // Which epoch each stored submission belongs to, so "already submitted" means
+        // "for THIS round", not "at some point in this room".
+        let submissionEpochs = {};
+        // Which CONNECTION each stored submission came in on. Names are shared state —
+        // a seat can change hands mid-round — so this is the only way to tell a score
+        // the seat's owner sent from one sent by whoever was sitting in it meanwhile.
+        // It needs no clearing: it is only ever read against a submission that exists.
+        const submissionBy = new Map();
         let myScoreSubmitted = false;
+        // The submission is in the client's outbox, not on the wire. Told apart from
+        // "submitted" so the peer is never shown a lie about what the host has.
+        let myScoreQueued = false;
+        // What we handed to the transport and the host has not acked yet, as
+        // {epoch, round, scoreData}. Handing a message to peerjs is NOT delivery — a
+        // plain close throws the buffer away — so this is what lets a resync re-send
+        // it instead of pinning the player on a waiting screen for the whole round.
+        let pendingSubmit = null;
+        // Peer: the host told us they are entering our score for this round.
+        let myOverridden = false;
         let hostEditingPlayers = new Set(); // host manually editing these remote players
+        // Names All Bust took over in one tap. Remembered so the same tap can give
+        // them back, and so a real submission still wins over a seat nobody typed in.
+        let allBustTakeovers = new Set();
         let disconnectedPlayers = new Set(); // players currently disconnected
         let localPlayers = new Set(); // players added locally by host (no device)
+        // A terminal state (kicked / superseded / room closed) must not be undone by
+        // the generic 'reconnect-failed' bookend the library raises straight after it.
+        let terminalActive = false;
+        // The host's signalling ladder has reported failure and is now knocking at the
+        // plateau. It goes on emitting 'reconnecting' forever, and each one used to
+        // paint the amber spinner straight over the red banner — in the same tick, so
+        // the host never saw the one message that mattered ("players already in the
+        // room can keep playing") and watched "attempt 20/20" instead, for ever.
+        let hostReconnectFailed = false;
+        // Tracked so a teardown can clear it; nothing may fire into a dead lobby.
+        let leaveTimer = null;
+        let leaveResolve = null;
+        // Peers who asked for a rematch. The host decides — a tap on somebody else's
+        // phone must not wipe the final standings off every screen.
+        let rematchRequests = new Set();
+        let rematchAskTimer = null;
+        // A closeRoom() grace is in flight. The lobby stays painted for up to ~1.25 s
+        // while it runs, and Start must not fire into a room that is being closed.
+        let hostLeaving = false;
+        // Per-client resync throttle: one message in must not become N messages out.
+        const resyncSeen = new Map();
+        const RESYNC_MIN_MS = 2000;
 
         // Ruleset: 'classic' (original Flip 7) or 'vengeance' (Flip 7: With a Vengeance).
         // `brutal` is the optional Brutal Mode variant and only applies under 'vengeance'.
         let ruleset = 'classic';
         let brutal = false;
+        // The ruleset decides how every card in every message is scored, so it is
+        // frozen for the life of a game: once the cards are on the table, a message
+        // that says "actually this is Vengeance" would re-score rounds under rules
+        // they were never played under. Set at game-start, cleared on a full reset.
+        let rulesetLocked = false;
 
         const TARGET_SCORE = 200;
         const FLIP7_BONUS = 15;
+        // Nothing off the wire gets to allocate: no real hand is anywhere near this.
+        const MAX_CARDS = 32;
 
         const RULESETS = {
             classic: {
@@ -1186,6 +1253,7 @@
         const winnerScore = document.getElementById('winner-score');
         const newGameBtn = document.getElementById('new-game-btn');
         const playAgainBtn = document.getElementById('play-again-btn');
+        const requestRematchBtn = document.getElementById('request-rematch-btn');
         const roundSection = document.getElementById('round-section');
         const backToModeBtn = document.getElementById('back-to-mode-btn');
         const rulesetBadge = document.getElementById('ruleset-badge');
@@ -1209,6 +1277,7 @@
         const joinError = document.getElementById('join-error');
         const joinConnecting = document.getElementById('join-connecting');
         const joinWaiting = document.getElementById('join-waiting');
+        const joinStatus = document.getElementById('join-status');
         const joinForm = document.getElementById('join-form');
         const joinLobbyPlayers = document.getElementById('join-lobby-players');
         const joinRuleset = document.getElementById('join-ruleset');
@@ -1221,13 +1290,132 @@
         const mpConnectionDot = document.getElementById('mp-connection-dot');
         const submissionStatus = document.getElementById('submission-status');
         const roundWaiting = document.getElementById('round-waiting');
+        const roundWaitingText = document.getElementById('round-waiting-text');
         const roundActions = document.getElementById('round-actions');
+
+        // The host "Setting up room..." spinner, captured before anything overwrites
+        // it: the create-room error message replaces this markup permanently, so a
+        // second attempt would otherwise open on stale error text.
+        const HOST_CONNECTING_HTML = hostConnecting.innerHTML;
 
         // =====================================================================
         // UTILITIES
         // =====================================================================
+        // Stable, INJECTIVE per-session id for a display name.
+        //
+        // This used to be `name.replace(/[^a-zA-Z0-9]/g,'_').toLowerCase()`, which
+        // folds 'Sam'/'SAM' and 'Jo Anne'/'Jo-Anne' onto one id — and every non-ASCII
+        // character onto '_', so any two same-length non-Latin names collided too.
+        // Two players then shared one roundState entry and one set of DOM ids: the
+        // second player's taps silently rewrote the first player's score. Minting an
+        // opaque id per distinct name removes the collision without refusing anyone
+        // their own name. Ids only need to be unique within a page load.
+        const playerIds = new Map();   // display name -> id
+        const idToPlayer = new Map();  // id -> display name
+
         function nameToId(name) {
-            return name.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
+            const key = String(name);
+            let id = playerIds.get(key);
+            if (!id) {
+                id = 'p' + (playerIds.size + 1);
+                playerIds.set(key, id);
+                idToPlayer.set(id, key);
+            }
+            return id;
+        }
+
+        function idToName(id) {
+            return idToPlayer.get(id);
+        }
+
+        // Names are compared case-insensitively everywhere a duplicate is refused, so
+        // 'Sam' and 'sam' cannot both sit at the table. Comparing through nameToId
+        // would be wrong (it is deliberately injective now) and comparing raw strings
+        // is what let the collision in.
+        function nameKey(name) {
+            return String(name == null ? '' : name).trim().toLowerCase();
+        }
+
+        function sameName(a, b) {
+            return nameKey(a) === nameKey(b);
+        }
+
+        // A round number off the wire. Anything that is not a sane positive integer
+        // would end up in getDealerIndex() and in every "Round N" heading.
+        function toRound(value) {
+            const n = Math.floor(Number(value));
+            return (isFinite(n) && n >= 1 && n <= 9999) ? n : 1;
+        }
+
+        // The finished rounds off the wire. Each slot is a { name: entry } map that
+        // renderStandings and getPlayerTotal index by player name; a null or a string
+        // in there threw out of the render and froze the scoreboard, so anything that
+        // is not a plain object becomes an empty round rather than a crash.
+        function adoptRounds(wire) {
+            if (!Array.isArray(wire)) return null;
+            return wire.slice(0, 999).map(r =>
+                (r && typeof r === 'object' && !Array.isArray(r)) ? r : {});
+        }
+
+        // The roster's own spelling of a name, or null. Inbound names are matched
+        // case-insensitively and then answered with the canonical spelling, so a
+        // player who retypes 'sam' is still recognised as 'Sam'.
+        function findRosterName(name) {
+            return players.find(p => sameName(p, name)) || null;
+        }
+
+        // Is this name already spoken for? Optionally ignoring one lobby seat (the
+        // one being re-admitted).
+        function isNameTaken(name, exceptClientId) {
+            const key = nameKey(name);
+            if (myName && nameKey(myName) === key) return true;
+            if (players.some(p => nameKey(p) === key)) return true;
+            return lobbyPlayers.some(p => nameKey(p.name) === key &&
+                (exceptClientId === undefined || p.clientId !== exceptClientId));
+        }
+
+        /**
+         * Does `clientId` still hold the mid-game seat called `name`?
+         *
+         * Seat events name a seat by its DISPLAY NAME, but a seat belongs to a
+         * clientId. A player whose tab was killed comes back on a brand-new clientId
+         * (sessionStorage is per tab) and rebindReturningPlayer re-points the seat at
+         * it — while SlopNet goes on holding the ABANDONED one for the rest of its
+         * reconnect window and then reports the same NAME as lost. Acting on that
+         * painted a red DISCONNECTED card over a player who was sitting there playing,
+         * for the rest of the game: nothing clears it again short of another rejoin,
+         * and the host is invited by the card to type a score over theirs.
+         */
+        function stillSeated(clientId, name) {
+            const entry = lobbyPlayers.find(p => sameName(p.name, name));
+            return !!entry && entry.clientId === clientId;
+        }
+
+        /**
+         * Give up a lobby seat that holds `name` for a connection nobody is on any
+         * more, so a returning player is not refused their own name.
+         *
+         * A killed or reloaded tab returns with a NEW clientId, so the entry
+         * onPlayerLeft greyed out carries an id that will never answer again — and
+         * `isNameTaken` saw it and turned the player away from the lobby they were
+         * standing in, for the whole two-minute window. The old connection is retired
+         * along with the entry: leaving it seated in SlopNet is what turned a locked
+         * phone into a ghost that still received game-start.
+         *
+         * A seat somebody is actually connected on is NOT released — that is a real
+         * name clash, and it is refused as one.
+         */
+        function releaseVacantSeat(name, clientId) {
+            const connected = lobby ? lobby.getConnectedClientIds() : [];
+            const stale = lobbyPlayers.filter(p => sameName(p.name, name) &&
+                p.clientId && p.clientId !== clientId && !p.isLocal &&
+                connected.indexOf(p.clientId) < 0);
+            if (!stale.length) return;
+            lobbyPlayers = lobbyPlayers.filter(p => stale.indexOf(p) < 0);
+            stale.forEach(p => {
+                resyncSeen.delete(p.clientId);
+                if (lobby) lobby.removeClient(p.clientId, 'That name was re-seated on another device.');
+            });
         }
 
         // Escape for use inside a double-quoted HTML attribute
@@ -1251,15 +1439,20 @@
                 const saved = localStorage.getItem('flip7-state');
                 if (!saved) return false;
                 const state = JSON.parse(saved);
-                players = state.players || [];
-                rounds = state.rounds || [];
-                currentRound = state.currentRound || 1;
+                // A truncated or hand-edited save is the one input that can brick the
+                // page on load: renderStandings maps over `rounds` and indexes each
+                // slot by name, so a non-array (or a null slot) there throws before
+                // anything is on screen and there is no way back but clearing storage.
+                players = Array.isArray(state.players) ? state.players.filter(n => typeof n === 'string') : [];
+                rounds = adoptRounds(state.rounds) || [];
+                currentRound = toRound(state.currentRound);
                 gameStarted = state.gameStarted || false;
                 gameOver = state.gameOver || false;
                 if (gameStarted) {
                     // Saved games from before rulesets existed are classic
                     ruleset = state.ruleset === 'vengeance' ? 'vengeance' : 'classic';
                     brutal = !!state.brutal;
+                    rulesetLocked = true;
                 }
                 return gameStarted;
             } catch (e) {
@@ -1306,6 +1499,29 @@
             renderRulesetUI();
         }
 
+        /**
+         * Adopt a ruleset that arrived over the wire.
+         *
+         * Every scoring function in this file branches on `ruleset`/`brutal`, and the
+         * round entries already on screen were built for the ruleset in force when
+         * they were played. So once a game is under way the ruleset is read-only: a
+         * message carrying a different one is stale (queued from before a reset) or
+         * hostile, and the caller drops the whole message rather than re-interpreting
+         * scores half-way through. A message that says nothing about the ruleset
+         * (state-update) is fine and changes nothing.
+         *
+         * @returns {boolean} false when the message contradicts the locked ruleset.
+         */
+        function adoptRuleset(wireRuleset, wireBrutal) {
+            if (wireRuleset === undefined || wireRuleset === null) return true;
+            const r = wireRuleset === 'vengeance' ? 'vengeance' : 'classic';
+            // Brutal Mode only exists under Vengeance; the host sends isBrutal().
+            const b = r === 'vengeance' && !!wireBrutal;
+            if (rulesetLocked) return r === ruleset && b === isBrutal();
+            applyRuleset(r, b);
+            return true;
+        }
+
         function renderRulesetUI() {
             const html = `
                 <div class="mode-selection">
@@ -1329,13 +1545,17 @@
             rulesetBadge.classList.toggle('brutal', isBrutal());
         }
 
+        // The pickers only ever live on the setup and host-lobby screens, never on the
+        // game screen — but a stale handler must not be able to re-score a live game.
         window._setRuleset = function(r) {
+            if (rulesetLocked) return;
             applyRuleset(r, brutal);
             saveRulesetPref();
             if (gameMode === 'host' && !gameStarted) broadcastLobbyUpdate();
         };
 
         window._setBrutal = function(b) {
+            if (rulesetLocked) return;
             applyRuleset(ruleset, b);
             saveRulesetPref();
             if (gameMode === 'host' && !gameStarted) broadcastLobbyUpdate();
@@ -1351,6 +1571,10 @@
 
         window._selectMode = function(mode) {
             if (mode === 'single') {
+                // Nothing multiplayer may survive into a single-device game: a stale
+                // lobby left the old roster, the old rounds and a dead room code on
+                // screen the moment the first name was added.
+                if (lobby) cleanupMultiplayer();
                 gameMode = 'single';
                 showPhase(setupPhase);
                 playerInput.focus();
@@ -1359,6 +1583,9 @@
                 showPhase(hostLobbyPhase);
                 initHostPeer();
             } else if (mode === 'join') {
+                // Every other mode branch retires a live lobby first; this one is the
+                // gap that could hand the join form a still-dialling client.
+                if (lobby) cleanupMultiplayer();
                 showPhase(joinLobbyPhase);
                 joinCodeInput.focus();
                 // Reset join UI
@@ -1366,6 +1593,7 @@
                 joinConnecting.classList.add('hidden');
                 joinWaiting.classList.add('hidden');
                 joinError.classList.add('hidden');
+                hideJoinStatus();
             }
         };
 
@@ -1380,9 +1608,15 @@
         // SINGLE DEVICE SETUP
         // =====================================================================
         function addPlayer(name) {
-            name = name.trim();
-            if (!name || players.includes(name)) return;
+            name = name.trim().substring(0, 20);
+            // Case-insensitive: two 'Sam's on one device shared a scorecard before.
+            if (!name || players.some(p => sameName(p, name))) {
+                playerInput.style.borderColor = name ? 'var(--color-error)' : '';
+                if (name) toast('Name already taken');
+                return;
+            }
             if (players.length >= 10) return;
+            playerInput.style.borderColor = '';
             players.push(name);
             renderPlayerTags();
             playerInput.value = '';
@@ -1396,11 +1630,20 @@
             startGameBtn.disabled = players.length < 2;
         }
 
+        // Names go in a data-* attribute, never into JavaScript source inside an
+        // attribute: the HTML parser decodes character references before the handler
+        // is compiled, so `onclick="fn('O&#39;Brien')"` is a syntax error however it
+        // is escaped, and the button silently does nothing.
         function renderPlayerTags() {
             playerTags.innerHTML = players.map(name =>
-                `<span class="player-tag">${esc(name)}<button onclick="window._removePlayer('${esc(name)}')">&times;</button></span>`
+                `<span class="player-tag">${esc(name)}<button data-remove-player="${esc(name)}">&times;</button></span>`
             ).join('');
         }
+
+        playerTags.addEventListener('click', (e) => {
+            const btn = e.target && e.target.closest && e.target.closest('[data-remove-player]');
+            if (btn) removePlayer(btn.getAttribute('data-remove-player'));
+        });
 
         window._removePlayer = removePlayer;
 
@@ -1416,6 +1659,7 @@
         startGameBtn.addEventListener('click', () => {
             if (players.length < 2) return;
             gameStarted = true;
+            rulesetLocked = true;
             showPhase(gamePhase);
             renderGame();
             saveState();
@@ -1424,111 +1668,472 @@
         // =====================================================================
         // HOST LOBBY - SLOPNET
         // =====================================================================
+        /** The underlying PeerJS connection a seated clientId is speaking over. */
+        function hostPeerIdFor(clientId) {
+            const host = lobby && lobby.host;
+            const rec = host && host.clients && host.clients.get(clientId);
+            return (rec && rec.peerId) || null;
+        }
+
+        /**
+         * Seat (or re-seat) a lobby player under `clientId`.
+         *
+         * One body for both the first join and a rejoin into the lobby: a returning
+         * player must face exactly the same duplicate check as a new one, or a name
+         * that was taken while they blipped ends up on two seats and two scorecards.
+         * @returns {string|null} a rejection reason, or null when admitted.
+         */
+        function admitToLobby(clientId, rawName) {
+            const name = String(rawName == null ? '' : rawName).trim().substring(0, 20);
+            if (!name) return 'Name is required';
+            // Drop whatever this clientId already held first, so re-admitting is
+            // idempotent and the check below only sees OTHER seats.
+            lobbyPlayers = lobbyPlayers.filter(p => p.clientId !== clientId);
+            // ...and then their own abandoned seat, if the tab that held it is gone.
+            // Without this a player whose phone locked was refused their OWN name for
+            // the whole reconnect window — the one name they were sure of.
+            releaseVacantSeat(name, clientId);
+            if (isNameTaken(name, clientId)) return 'Name already taken';
+            // One connection, one seat. A seated client can send a second join under a
+            // clientId of its own invention over the channel it already owns and be
+            // admitted as an extra player; each forgery is another name on the host's
+            // roster to score all night. A real second player is a second device.
+            const peerId = hostPeerIdFor(clientId);
+            if (peerId && lobbyPlayers.some(p =>
+                p.clientId && p.clientId !== clientId && hostPeerIdFor(p.clientId) === peerId)) {
+                return 'Already connected from this device';
+            }
+            if (lobbyPlayers.length >= 11) return 'This room is full';
+
+            lobbyPlayers.push({ name, isHost: false, clientId, away: false });
+            // Keep the library's own record canonical: onPlayerLeft/onPlayerLost read
+            // meta.name from it, and it is seeded with the RAW wire name.
+            const record = lobby && lobby.players.get(clientId);
+            if (record) record.name = name;
+
+            if (lobby) lobby.send(clientId, { type: 'join-ok', name });
+            broadcastLobbyUpdate();
+            renderHostLobby();
+            updateHostStartBtn();
+            return null;
+        }
+
+        /**
+         * A mid-game join from a clientId the host has never met. A fresh tab mints a
+         * new clientId (sessionStorage is per tab), so a browser restart, an
+         * OS-reclaimed tab or re-opening the room link all arrive here — and the
+         * player's seat is sitting empty on the roster with their name on it.
+         * @returns {string|undefined} a refusal reason, or undefined once re-seated.
+         */
+        function rebindReturningPlayer(clientId, metadata) {
+            const wire = String((metadata && metadata.name) || '').trim().substring(0, 20);
+            const rosterName = findRosterName(wire);
+            // A name nobody on the roster holds — or one the host itself or a
+            // host-scored local player owns — is a stranger.
+            if (!rosterName || sameName(rosterName, myName) || localPlayers.has(rosterName)) {
+                return 'Game already in progress. Only players already in this game can rejoin.';
+            }
+
+            const entry = lobbyPlayers.find(p => sameName(p.name, rosterName));
+            if (entry && entry.isLocal) {
+                return 'Game already in progress. Only players already in this game can rejoin.';
+            }
+            // A seat somebody is still answering on belongs to whoever is sitting in
+            // it; the library's seat token is what settles a duplicate tab.
+            const connected = lobby ? lobby.getConnectedClientIds() : [];
+            if (entry && entry.clientId && entry.clientId !== clientId && !entry.away &&
+                connected.indexOf(entry.clientId) >= 0) {
+                return 'That name is already in this game.';
+            }
+
+            if (entry) { entry.clientId = clientId; entry.away = false; }
+            else lobbyPlayers.push({ name: rosterName, isHost: false, clientId, away: false });
+            const record = lobby && lobby.players.get(clientId);
+            if (record) record.name = rosterName;
+            disconnectedPlayers.delete(rosterName);
+
+            if (lobby) lobby.send(clientId, rejoinPayload(rosterName));
+            updateMpPlayerCount();
+            renderGame();
+            return undefined;
+        }
+
+        /** Everything a returning player needs to rebuild their screen. */
+        function rejoinPayload(name) {
+            return {
+                type: 'rejoin-ok',
+                name: name,                 // canonical spelling; the client adopts it
+                players: players,
+                rounds: rounds,
+                currentRound: currentRound,
+                epoch: roundEpoch,
+                gameOver: gameOver,
+                ruleset: ruleset,
+                brutal: isBrutal(),
+                // Their own copy of this round, so the resync is a reconcile rather
+                // than a wipe. rejoin-ok now reaches players who never dropped.
+                // ONLY a real submission counts here: telling a player they submitted
+                // a score the host typed for them hides their card for the rest of
+                // the round and strands the score they actually meant to send.
+                submitted: !!peerSubmissions[name],
+                scoreData: peerSubmissions[name] || null,
+                // The truth instead: the host is filling this card in. Their Submit
+                // stays live, and handleScoreSubmission keeps whatever arrives.
+                overridden: hostEditingPlayers.has(name),
+            };
+        }
+
+        /** A player pressed Leave. Free the seat instead of leaving a phantom. */
+        function handlePeerLeave(name, clientId) {
+            players = players.filter(p => p !== name);
+            lobbyPlayers = lobbyPlayers.filter(p => p.clientId !== clientId && !sameName(p.name, name));
+            disconnectedPlayers.delete(name);
+            delete peerSubmissions[name];
+            delete submissionEpochs[name];
+            submissionBy.delete(name);
+            hostEditingPlayers.delete(name);
+            allBustTakeovers.delete(name);
+            rematchRequests.delete(name);
+            resyncSeen.delete(clientId);
+            delete roundState[nameToId(name)];
+            // Somebody who has left cannot be the target of a Brutal −15 any more.
+            // Without this the host's own card kept pointing at them: the +15 was
+            // withheld (a target is set) and the −15 hit nobody — 15 points gone.
+            dropStaleFlip7Targets();
+
+            if (lobby) {
+                // The ack first: removeClient flush-closes, so it still arrives.
+                lobby.send(clientId, { type: 'leave-ok' });
+                lobby.removeClient(clientId);
+            }
+
+            if (gameStarted) {
+                // A dedicated message, NOT state-update: peers apply this to the
+                // roster only. state-update resets every peer's round card, so one
+                // player leaving would wipe everyone else's half-entered score.
+                broadcastToAll({ type: 'player-left', name: name, players: players });
+                updateMpPlayerCount();
+                renderGame();
+            } else {
+                broadcastLobbyUpdate();
+                renderHostLobby();
+                updateHostStartBtn();
+            }
+        }
+
         async function initHostPeer() {
+            // Entering host mode always starts from a clean slate, however the
+            // previous session ended (the name input is disabled once it is set and
+            // nothing else re-enables it).
+            if (lobby) cleanupMultiplayer();
+            terminalActive = false;
+            hostReconnectFailed = false;
+            hostNameInput.disabled = false;
+            hostSetNameBtn.disabled = false;
+            hostSetNameBtn.textContent = 'Set Name';
+            hostConnecting.innerHTML = HOST_CONNECTING_HTML;
             hostConnecting.classList.remove('hidden');
             hostReady.classList.add('hidden');
+            lobbyPlayers = [];
 
             lobby = new SlopLobby.SlopLobby({
                 roomPrefix: 'flip7-',
                 storageKey: 'flip7-client-id',
                 onHostData: (clientId, data) => {
-                    if (data.type === 'score-submit' && gameStarted) {
-                        handleScoreSubmission(data.playerName, data.scoreData);
+                    if (!data || typeof data !== 'object') return;
+                    // Identity comes from the CONNECTION, never from the payload.
+                    // SlopLobby holds the record across 'client-left' and restores a
+                    // parked one on 'client-rejoined', so this lookup is reliable.
+                    const entry = lobby && lobby.players.get(clientId);
+                    const name = entry && entry.name;
+                    if (!name) {
+                        // Nothing resolves for this connection. Answer anyway rather
+                        // than dropping it in silence — the sender is otherwise left
+                        // on a "waiting for the host" screen for the whole round.
+                        if (data.type === 'score-submit' && lobby) {
+                            lobby.send(clientId, {
+                                type: 'score-rejected', round: data.round,
+                                epoch: data.epoch,
+                                reason: 'You are not in this game',
+                            });
+                        }
+                        return;
+                    }
+
+                    if (data.type === 'score-submit') {
+                        const rosterName = findRosterName(name);
+                        if (!gameStarted || gameOver) {
+                            lobby.send(clientId, {
+                                type: 'score-rejected', round: data.round,
+                                epoch: data.epoch,
+                                reason: 'The round is over',
+                            });
+                            return;
+                        }
+                        if (!rosterName) {
+                            lobby.send(clientId, {
+                                type: 'score-rejected', round: data.round,
+                                epoch: data.epoch,
+                                reason: 'You are not in this game',
+                            });
+                            return;
+                        }
+                        // A submission with no stamp, or one from a round that has
+                        // closed, is stale — it was queued while the host moved on.
+                        // The EPOCH is what makes this reliable: Undo and Play Again
+                        // rewind `currentRound`, so the number alone would let a
+                        // queued submission back into the round it was replayed as.
+                        if (data.round !== currentRound || data.epoch !== roundEpoch) {
+                            lobby.send(clientId, {
+                                type: 'score-rejected',
+                                round: data.round,
+                                epoch: data.epoch,
+                                reason: 'That round is over',
+                            });
+                            return;
+                        }
+                        if (handleScoreSubmission(rosterName, data.scoreData, clientId)) {
+                            lobby.send(clientId, { type: 'score-ack', round: currentRound });
+                        } else {
+                            // Unreadable under this ruleset. Say so rather than leaving
+                            // them on a "waiting for the host" screen that is a lie.
+                            lobby.send(clientId, {
+                                type: 'score-rejected',
+                                round: currentRound,
+                                epoch: roundEpoch,
+                                reason: 'That score could not be read',
+                            });
+                        }
+                        return;
+                    }
+
+                    if (data.type === 'request-play-again') {
+                        if (!gameStarted || !gameOver) return;
+                        const rosterName = findRosterName(name);
+                        if (!rosterName) return;
+                        // Recorded and surfaced, NOT acted on. Running the reset
+                        // straight off the wire let any one player wipe the finished
+                        // game — every round, every score — from every screen with
+                        // one tap, before anybody had read the result.
+                        if (!rematchRequests.has(rosterName)) {
+                            rematchRequests.add(rosterName);
+                            toast(rosterName + ' asked for a rematch');
+                        }
+                        updateRematchPrompt();
+                        return;
+                    }
+
+                    if (data.type === 'leave') {
+                        handlePeerLeave(findRosterName(name) || name, clientId);
+                        return;
+                    }
+
+                    if (data.type === 'resync-request') {
+                        // One message in must not become N messages out. Anything
+                        // faster than this is a loop, not a phone coming back.
+                        const now = Date.now();
+                        if (now - (resyncSeen.get(clientId) || 0) < RESYNC_MIN_MS) return;
+                        resyncSeen.set(clientId, now);
+
+                        if (gameStarted) {
+                            const rosterName = findRosterName(name);
+                            if (rosterName) lobby.send(clientId, rejoinPayload(rosterName));
+                            else lobby.removeClient(clientId, 'The host started without you.');
+                        } else if (lobbyPlayers.some(p => p.clientId === clientId)) {
+                            lobby.send(clientId, { type: 'join-ok', name });
+                            // Targeted, not broadcast: one phone asking is no reason
+                            // to re-send the roster to the whole table.
+                            lobby.send(clientId, {
+                                type: 'lobby-update', players: lobbyPlayerList(),
+                                ruleset, brutal: isBrutal(),
+                            });
+                        }
                     }
                 },
                 onPlayerJoined: (clientId, metadata) => {
-                    const name = (metadata && metadata.name || '').trim().substring(0, 20);
-                    if (!name) return 'Name is required';
-
-                    // Block new players after game has started
-                    if (gameStarted) {
-                        return 'Game already in progress. You can only rejoin with your original name.';
-                    }
-
-                    // Check for duplicate names in lobby
-                    const allNames = lobbyPlayers.map(p => p.name);
-                    if (myName) allNames.push(myName);
-                    if (allNames.includes(name)) {
-                        return 'Name already taken';
-                    }
-
-                    // Accept — SlopLobby adds to lobby.players automatically
-                    lobbyPlayers.push({ name, isHost: false, clientId });
-
-                    lobby.send(clientId, { type: 'join-ok' });
-                    broadcastLobbyUpdate();
-                    renderHostLobby();
-                    updateHostStartBtn();
+                    // A clientId the host has never met. Mid-game that is usually a
+                    // stranger — but it is also what a player's OWN phone looks like
+                    // after the tab was killed, since the clientId lives in
+                    // sessionStorage. Refusing them outright told them to "rejoin
+                    // with your original name", which is exactly what they had done.
+                    if (gameStarted) return rebindReturningPlayer(clientId, metadata);
+                    return admitToLobby(clientId, metadata && metadata.name) || undefined;
                 },
                 onPlayerRejoined: (clientId, metadata) => {
-                    const name = (metadata && metadata.name || '').trim().substring(0, 20);
+                    // The library's record first: it survives a blip, while the wire
+                    // metadata is whatever the client last typed.
+                    const record = lobby && lobby.players.get(clientId);
+                    const name = String(((record && record.name) || (metadata && metadata.name) || ''))
+                        .trim().substring(0, 20);
                     if (!name) return;
 
-                    if (gameStarted && players.includes(name) && name !== myName) {
-                        disconnectedPlayers.delete(name);
-
-                        // Update lobby player entry
-                        const lobbyEntry = lobbyPlayers.find(p => p.name === name);
-                        if (lobbyEntry) {
-                            lobbyEntry.clientId = clientId;
+                    if (!gameStarted) {
+                        // A lobby blip. Without this branch the returning player is
+                        // answered with nothing at all: absent from everyone's roster,
+                        // yet still seated in SlopNet and still sent game-start.
+                        const reason = admitToLobby(clientId, name);
+                        if (reason && lobby) {
+                            lobby.removeClient(clientId, reason);
+                            // admitToLobby already dropped their old entry, and a kick
+                            // raises no seat event — so re-paint, or the host's list
+                            // and Start count keep a seat that is gone.
+                            broadcastLobbyUpdate();
+                            renderHostLobby();
+                            updateHostStartBtn();
                         }
+                        return;
+                    }
 
-                        // Send rejoin-ok with current game state
-                        lobby.send(clientId, {
-                            type: 'rejoin-ok',
-                            players: players,
-                            rounds: rounds,
-                            currentRound: currentRound,
-                            gameOver: gameOver,
-                            ruleset: ruleset,
-                            brutal: isBrutal()
-                        });
+                    const rosterName = findRosterName(name);
+                    if (!rosterName) {
+                        if (lobby) lobby.removeClient(clientId, 'The host started without you.');
+                        return;
+                    }
 
-                        // If host was manually editing this player, stop
-                        hostEditingPlayers.delete(name);
+                    // A host-scored local player's seat is nobody's to claim (it carries
+                    // clientId:null, which a bare truthiness test reads as "free").
+                    const lobbyEntry = lobbyPlayers.find(p => sameName(p.name, rosterName));
+                    if (lobbyEntry && lobbyEntry.isLocal) {
+                        if (lobby) lobby.removeClient(clientId, 'Name already taken');
+                        return;
+                    }
+                    // Their seat was claimed by NAME while they were off the air.
+                    // rebindReturningPlayer has to allow that — a killed tab comes back
+                    // as a stranger with a new clientId, and refusing it refuses a
+                    // player their own game — but it cannot tell that stranger from
+                    // anyone who read the name off the roster, which every screen shows.
+                    // THIS arrival can be told apart: SlopNet says 'client-rejoined'
+                    // only for a connection whose clientId and seat token it recognised,
+                    // so it outranks a name typed into a join form. Hand the seat back
+                    // and retire the claimant, rather than answering the seat's own
+                    // owner with a terminal 'Name already taken' — which locked a
+                    // player out of the game they were winning for the rest of the night.
+                    if (lobbyEntry && lobbyEntry.clientId && lobbyEntry.clientId !== clientId) {
+                        const claimant = lobbyEntry.clientId;
+                        lobbyEntry.clientId = clientId;
+                        resyncSeen.delete(claimant);
+                        // Whatever the CLAIMANT sent goes with them. Left standing,
+                        // rejoin-ok would tell the returning player they had already
+                        // submitted, and the round would be scored on a number
+                        // somebody else typed into their card. A score the owner
+                        // themselves sent before they dropped is theirs and stays.
+                        if (submissionBy.get(rosterName) === claimant) {
+                            delete peerSubmissions[rosterName];
+                            delete submissionEpochs[rosterName];
+                            submissionBy.delete(rosterName);
+                        }
+                        if (lobby) lobby.removeClient(claimant, 'That player reconnected on their own device.');
+                    }
+                    if (lobbyEntry) { lobbyEntry.clientId = clientId; lobbyEntry.away = false; }
+                    if (record) record.name = rosterName;
 
+                    disconnectedPlayers.delete(rosterName);
+
+                    // NOTHING is folded into peerSubmissions here. The host's own
+                    // typed entry stays in roundState, where submitRoundHost reads it
+                    // for an active override — copying it across would announce it to
+                    // the player as their OWN submission (rejoin-ok.submitted), hide
+                    // their card, and strand the score they meant to send.
+
+                    if (lobby) lobby.send(clientId, rejoinPayload(rosterName));
+                    updateMpPlayerCount();
+                    renderGame();
+                },
+                onPlayerLeft: (clientId, meta) => {
+                    const name = meta && meta.name;
+                    if (!name) return;
+
+                    if (!gameStarted) {
+                        // TEMPORARY: SlopNet is still holding their seat. Grey them
+                        // out rather than deleting them — removing the entry is what
+                        // turned a locked phone into a ghost that still got game-start.
+                        const entry = lobbyPlayers.find(p => p.clientId === clientId);
+                        if (entry) entry.away = true;
+                        broadcastLobbyUpdate();
+                        renderHostLobby();
+                        updateHostStartBtn();
+                    } else if (stillSeated(clientId, name)) {
+                        disconnectedPlayers.add(name);
                         updateMpPlayerCount();
                         renderGame();
                     }
                 },
-                onPlayerLeft: (clientId, meta) => {
-                    if (!meta) return;
-
+                onPlayerLost: (clientId, meta) => {
+                    // FINAL: the reconnect window expired.
+                    resyncSeen.delete(clientId);
                     if (!gameStarted) {
                         lobbyPlayers = lobbyPlayers.filter(p => p.clientId !== clientId);
                         broadcastLobbyUpdate();
                         renderHostLobby();
                         updateHostStartBtn();
-                    } else {
-                        // During game, mark as disconnected but keep player
+                        return;
+                    }
+                    // Mid-game the seat stays: their scores are part of the game and
+                    // the host can still Enter Score for them each round.
+                    if (meta && meta.name && stillSeated(clientId, meta.name)) {
                         disconnectedPlayers.add(meta.name);
-                        updateMpPlayerCount();
-                        renderGame();
+                    }
+                    updateMpPlayerCount();
+                    renderGame();
+                },
+                onStateChange: (status, detail) => {
+                    // The host's own signalling socket. Nobody is evicted by these.
+                    if (status === 'reconnecting') {
+                        if (hostReconnectFailed) return;   // already said something truer
+                        showReconnectBanner('host');
+                        if (detail) updateReconnectBanner(detail.attempt, detail.max, 'host');
+                    } else if (status === 'reconnected') {
+                        hostReconnectFailed = false;
+                        hideReconnectBanner();
+                    } else if (status === 'reconnect-failed') {
+                        hostReconnectFailed = true;
+                        showReconnectFailed('host');
                     }
                 },
             });
 
+            const mine = lobby;
             try {
                 roomCode = await lobby.createRoom(myName || '_pending_');
+                if (lobby !== mine) return;   // a later action replaced this lobby
                 hostConnecting.classList.add('hidden');
                 hostReady.classList.remove('hidden');
                 roomCodeDisplay.textContent = roomCode;
-                lobbyPlayers = [];
                 renderHostLobby();
                 hostNameInput.focus();
             } catch (err) {
+                if (lobby !== mine) return;
                 console.error('Host start error:', err);
-                hostConnecting.innerHTML = `<span class="connection-dot error"></span><span>Failed to create room. Please try again.</span>`;
+                // Leave nothing dialling in the background, and leave a way out: the
+                // only Back button lives inside #host-ready, which is still hidden.
+                lobby.destroy();
+                lobby = null;
+                hostConnecting.innerHTML = `<span class="connection-dot error"></span>` +
+                    `<span>Failed to create room. Please try again.</span>` +
+                    `<button class="btn btn-sm" id="host-retry-btn" style="margin-left:0.75rem;" onclick="window._hostCancel()">Back</button>`;
             }
         }
 
-        function broadcastLobbyUpdate() {
+        window._hostCancel = function() {
+            cleanupMultiplayer();
+            showPhase(modePhase);
+        };
+
+        function lobbyPlayerList() {
             const playerList = [];
             if (myName) playerList.push({ name: myName, isHost: true });
-            lobbyPlayers.forEach(p => playerList.push({ name: p.name, isHost: false }));
+            // `away` rather than omission: a player whose phone blipped still holds
+            // their seat, and everyone (including them) should see it greyed, not gone.
+            lobbyPlayers.forEach(p => playerList.push({ name: p.name, isHost: false, away: !!p.away }));
+            return playerList;
+        }
 
+        function broadcastLobbyUpdate() {
             if (lobby) {
-                lobby.broadcast({ type: 'lobby-update', players: playerList, ruleset, brutal: isBrutal() });
+                lobby.broadcast({
+                    type: 'lobby-update', players: lobbyPlayerList(),
+                    ruleset, brutal: isBrutal(),
+                });
             }
         }
 
@@ -1549,12 +2154,32 @@
                     let badge = '';
                     if (p.isHost) badge = '<span class="host-badge">(host)</span>';
                     else if (p.isLocal) badge = '<span class="host-badge">(local)</span>';
-                    const removeBtn = p.isLocal && !gameStarted
-                        ? `<button onclick="window._removeLocalPlayer('${esc(p.name)}')" style="background:none;border:none;color:var(--color-accent);cursor:pointer;font-size:1rem;line-height:1;padding:0;opacity:0.7;">&times;</button>`
-                        : '';
-                    return `<span class="lobby-player">${esc(p.name)}${badge}${removeBtn}</span>`;
+                    else if (p.away) badge = '<span class="host-badge">(away)</span>';
+                    const style = 'background:none;border:none;color:var(--color-accent);cursor:pointer;font-size:1rem;line-height:1;padding:0;opacity:0.7;';
+                    let removeBtn = '';
+                    if (p.isLocal && !gameStarted) {
+                        removeBtn = `<button data-remove-local="${esc(p.name)}" title="Remove" style="${style}">&times;</button>`;
+                    } else if (p.away && !gameStarted) {
+                        // An away seat is held for the whole reconnect window and does
+                        // not count toward the quorum, so without this the host simply
+                        // waits two minutes for a phone that has gone home.
+                        removeBtn = `<button data-remove-away="${esc(p.name)}" title="Remove this player" style="${style}">&times;</button>`;
+                    }
+                    return `<span class="lobby-player${p.away ? ' away' : ''}">${esc(p.name)}${badge}${removeBtn}</span>`;
                 }).join('');
         }
+
+        // Delegated: a player NAME cannot be written safely into JavaScript source
+        // inside an attribute (the parser decodes the escape before the handler
+        // compiles), so these carry data-* and are resolved here.
+        hostLobbyPlayers.addEventListener('click', (e) => {
+            const target = e.target;
+            if (!target || !target.closest) return;
+            const local = target.closest('[data-remove-local]');
+            if (local) { window._removeLocalPlayer(local.getAttribute('data-remove-local')); return; }
+            const away = target.closest('[data-remove-away]');
+            if (away) window._removeAwayPlayer(away.getAttribute('data-remove-away'));
+        });
 
         window._removeLocalPlayer = function(name) {
             lobbyPlayers = lobbyPlayers.filter(p => p.name !== name);
@@ -1564,17 +2189,42 @@
             updateHostStartBtn();
         };
 
+        /** Drop a lobby seat SlopNet is still holding for a player who has gone. */
+        window._removeAwayPlayer = function(name) {
+            if (gameStarted) return;
+            const entry = lobbyPlayers.find(p => sameName(p.name, name) && p.away);
+            if (!entry) return;
+            lobbyPlayers = lobbyPlayers.filter(p => p !== entry);
+            if (lobby && entry.clientId) {
+                lobby.removeClient(entry.clientId, 'The host removed you from the lobby.');
+                resyncSeen.delete(entry.clientId);
+            }
+            broadcastLobbyUpdate();
+            renderHostLobby();
+            updateHostStartBtn();
+        };
+
+        // A player whose phone dropped out of the lobby cannot start a game they are
+        // not in the room for; only seats that are actually present count. The click
+        // handler applies the SAME rule, so the button and the guard cannot disagree.
+        function presentLobbyCount() {
+            return (myName ? 1 : 0) + lobbyPlayers.filter(p => !p.away).length;
+        }
+
         function updateHostStartBtn() {
-            const totalPlayers = (myName ? 1 : 0) + lobbyPlayers.length;
-            hostStartBtn.disabled = totalPlayers < 2 || !myName;
+            hostStartBtn.disabled = hostLeaving || presentLobbyCount() < 2 || !myName;
         }
 
         hostSetNameBtn.addEventListener('click', () => {
             const name = hostNameInput.value.trim().substring(0, 20);
             if (!name) return;
-            // Check for duplicate
-            if (lobbyPlayers.some(p => p.name === name)) {
+            // Case-insensitive, and against the roster too: the room code is shown
+            // before the host has a name, so a joiner can take it first.
+            if (isNameTaken(name)) {
                 hostNameInput.style.borderColor = 'var(--color-error)';
+                // Say WHY. A red border on a visibly different name ('sam' when 'Sam'
+                // is seated) reads as the app ignoring the tap.
+                toast('Name already taken');
                 return;
             }
             myName = name;
@@ -1590,6 +2240,10 @@
             if (e.key === 'Enter') {
                 e.preventDefault();
                 hostSetNameBtn.click();
+                // Do NOT clear the border here: the click handler may have just set it
+                // red to say the name is taken, and clearing it in the same tick meant
+                // submitting with Enter gave no feedback at all.
+                return;
             }
             hostNameInput.style.borderColor = '';
         });
@@ -1597,15 +2251,14 @@
         function addLocalPlayer() {
             const name = hostLocalPlayerInput.value.trim().substring(0, 20);
             if (!name) return;
-            // Check for duplicate against all players
-            const allNames = lobbyPlayers.map(p => p.name);
-            if (myName) allNames.push(myName);
-            if (allNames.includes(name)) {
+            // Case-insensitive, and against the roster too.
+            if (isNameTaken(name)) {
                 hostLocalPlayerInput.style.borderColor = 'var(--color-error)';
+                toast('Name already taken');
                 return;
             }
             hostLocalPlayerInput.style.borderColor = '';
-            lobbyPlayers.push({ name, isHost: false, clientId: null, isLocal: true });
+            lobbyPlayers.push({ name, isHost: false, clientId: null, isLocal: true, away: false });
             localPlayers.add(name);
             hostLocalPlayerInput.value = '';
             hostLocalPlayerInput.focus();
@@ -1619,35 +2272,75 @@
             if (e.key === 'Enter') {
                 e.preventDefault();
                 addLocalPlayer();
+                return;   // keep any red border the add just set
             }
             hostLocalPlayerInput.style.borderColor = '';
         });
 
-        hostBackBtn.addEventListener('click', () => {
+        hostBackBtn.addEventListener('click', async () => {
+            // Say goodbye before going: waiting peers would otherwise dial a dead
+            // room for minutes with nothing on screen to explain it.
+            await endRoomAsHost('Host left', hostBackBtn, 'Closing room…');
             cleanupMultiplayer();
             showPhase(modePhase);
         });
 
+        /**
+         * Close the room properly (host only), swallowing transport errors.
+         * The grace is up to ~1.25 s, during which the lobby stays painted — so the
+         * controls are frozen for the duration: a Start tap landing inside it used to
+         * begin a game the very next statement tore down, leaving `gameStarted` true
+         * on the mode screen and every later room refusing all joiners.
+         */
+        async function endRoomAsHost(reason, btn, busyLabel) {
+            if (!lobby || !lobby.isHost) return;
+            const label = btn && btn.textContent;
+            hostLeaving = true;
+            if (btn) { btn.disabled = true; if (busyLabel) btn.textContent = busyLabel; }
+            updateHostStartBtn();
+            try { await lobby.closeRoom(reason); } catch (e) { /* already gone */ }
+            finally {
+                hostLeaving = false;
+                if (btn) { btn.disabled = false; if (busyLabel) btn.textContent = label; }
+            }
+        }
+
         hostStartBtn.addEventListener('click', () => {
-            if (!myName) return;
+            if (!myName || hostLeaving) return;
+            // The same rule the button is greyed by: an absent seat is held, but it
+            // cannot make up the quorum.
+            if (presentLobbyCount() < 2) return;
+
             // Build player list: host first, then joined players
             players = [myName];
-            lobbyPlayers.forEach(p => players.push(p.name));
-
-            if (players.length < 2) return;
+            lobbyPlayers.forEach(p => {
+                players.push(p.name);
+                // Someone whose phone dropped in the lobby keeps their seat: the host
+                // can enter their scores, and they are welcomed back if they return.
+                if (p.away) disconnectedPlayers.add(p.name);
+            });
 
             gameStarted = true;
+            // Locked from here: peers score this game under these rules, and every
+            // round already played is only readable under them.
+            rulesetLocked = true;
             gameMode = 'host';
             currentRound = 1;
+            roundEpoch = 1;
             rounds = [];
             resetRoundState();
             peerSubmissions = {};
+            submissionEpochs = {};
+            rematchRequests.clear();
+            hostEditingPlayers.clear();
+            allBustTakeovers.clear();
 
             // Broadcast game start
             broadcastToAll({
                 type: 'game-start',
                 players: players,
                 currentRound: currentRound,
+                epoch: roundEpoch,
                 ruleset: ruleset,
                 brutal: isBrutal()
             });
@@ -1694,11 +2387,23 @@
                 return;
             }
 
+            // Retire any previous session FIRST. A client left behind by an earlier
+            // attempt keeps dialling and races this one for the same seat — and
+            // cleanupMultiplayer blanks myName/roomCode, so it has to run before the
+            // assignments below.
+            if (lobby) cleanupMultiplayer();
+            // A refusal ends in a terminal state with no lobby left to clean up, so
+            // the flag has to be lowered here too or the next attempt's reconnect
+            // states would all be swallowed as bookends of the last one.
+            terminalActive = false;
+
             myName = name;
             roomCode = code;
             gameMode = 'peer';
 
             joinForm.classList.add('hidden');
+            joinError.classList.add('hidden');
+            joinWaiting.classList.add('hidden');
             joinConnecting.classList.remove('hidden');
 
             lobby = new SlopLobby.SlopLobby({
@@ -1707,34 +2412,97 @@
                 onClientData: (data) => {
                     handlePeerMessage(data);
                 },
-                onStateChange: (status) => {
+                onStateChange: (status, detail) => {
+                    // The library wraps every terminal state in 'disconnected' … the
+                    // state … 'reconnect-failed'. Once we know the game is over for
+                    // us, those bookends must not paint over the reason.
+                    if (status === 'rejected') {
+                        enterTerminal(detail || 'The host removed you from the game.');
+                        return;
+                    }
+                    if (status === 'superseded') {
+                        enterTerminal('This game is open in another tab');
+                        return;
+                    }
+                    if (status === 'room-closed') {
+                        enterTerminal(detail ? 'Host ended the game: ' + detail : 'Host ended the game');
+                        return;
+                    }
+                    if (terminalActive) return;
+
                     if (status === 'disconnected') {
                         if (gameStarted) {
                             mpConnectionDot.classList.remove('connected');
                             mpConnectionDot.classList.add('error');
                             showReconnectBanner('peer');
+                            renderRoundScoring();   // Submit is not honest while offline
                         } else {
-                            showJoinError('Disconnected from host.');
+                            // Keep the client. SlopNet holds this seat for two minutes
+                            // and its ladder is usually back inside a second; tearing
+                            // it down on the FIRST blip threw that window away, left
+                            // the host's Start button disabled until the seat expired,
+                            // and made a lift door a permanent exit from the room.
+                            joinForm.classList.add('hidden');
+                            joinError.classList.add('hidden');
                             joinConnecting.classList.add('hidden');
-                            joinWaiting.classList.add('hidden');
-                            joinForm.classList.remove('hidden');
+                            joinWaiting.classList.remove('hidden');
+                            showJoinStatus('Reconnecting…');
+                        }
+                    } else if (status === 'reconnecting') {
+                        if (gameStarted && detail) {
+                            showReconnectBanner('peer');
+                            updateReconnectBanner(detail.attempt, detail.max, 'peer');
+                        } else if (!gameStarted && detail) {
+                            showJoinStatus(`Reconnecting… (attempt ${detail.attempt}/${detail.max})`);
                         }
                     } else if (status === 'reconnected') {
                         hideReconnectBanner();
                         mpConnectionDot.classList.remove('error');
                         mpConnectionDot.classList.add('connected');
+                        // `fresh` means the HOST restarted and holds no seat for us.
+                        // Whatever game we are painting is gone; staying on it left a
+                        // fully interactive scoreboard whose every tap was dropped.
+                        if (detail && detail.fresh && gameStarted) {
+                            returnToJoinLobby();
+                        }
+                        if (!gameStarted) {
+                            joinForm.classList.add('hidden');
+                            joinError.classList.add('hidden');
+                            joinConnecting.classList.add('hidden');
+                            joinWaiting.classList.remove('hidden');
+                            hideJoinStatus();
+                        }
+                        // Ask for the truth rather than assuming our copy survived.
+                        if (lobby) lobby.sendToHost({ type: 'resync-request' });
+                        if (gameStarted) renderRoundScoring();
                     } else if (status === 'reconnect-failed') {
-                        showReconnectFailed('peer');
+                        if (gameStarted) {
+                            showReconnectFailed('peer');
+                        } else {
+                            // The ladder is spent — now the client really is finished.
+                            showJoinError('Disconnected from host.');
+                            joinConnecting.classList.add('hidden');
+                            joinWaiting.classList.add('hidden');
+                            hideJoinStatus();
+                            joinForm.classList.remove('hidden');
+                            cleanupMultiplayer();
+                        }
                     }
                 },
             });
 
+            const mine = lobby;
             try {
                 await lobby.joinRoom(roomCode, myName);
                 // Connection established, wait for join-ok/join-error from host via 'data' event
             } catch (err) {
+                // A pending connect can reject long after we moved on (a Back tap, a
+                // second Join). Never clean up a lobby this attempt does not own.
+                if (lobby !== mine || (err && err.type === 'destroyed')) return;
                 console.error('Join error:', err);
-                if (err.type === 'peer-unavailable') {
+                if (err && err.type === 'rejected' && err.reason) {
+                    showJoinError(err.reason);
+                } else if (err && err.type === 'peer-unavailable') {
                     showJoinError('Room not found. Check the code and try again.');
                 } else {
                     showJoinError('Could not connect. Check the room code and try again.');
@@ -1748,15 +2516,32 @@
         // =====================================================================
         // SHARED RECONNECT UI
         // =====================================================================
-        function showReconnectBanner(mode) {
+        function ensureReconnectBanner() {
             let banner = document.getElementById('reconnect-banner');
             if (!banner) {
                 banner = document.createElement('div');
                 banner.id = 'reconnect-banner';
                 banner.style.cssText = 'background:rgba(196,162,78,0.15); border:1px solid var(--color-accent); border-radius:8px; padding:0.6rem 1rem; margin-bottom:1rem; display:flex; align-items:center; justify-content:space-between; font-size:0.85rem;';
-                const mpBannerEl = document.getElementById('mp-banner');
-                mpBannerEl.parentNode.insertBefore(banner, mpBannerEl.nextSibling);
             }
+            // Into whichever phase is actually on screen. It used to be pinned next to
+            // #mp-banner, which lives inside #game-phase — so a host whose signalling
+            // dropped while still in the lobby was shown nothing at all.
+            const phase = [gamePhase, hostLobbyPhase, joinLobbyPhase, setupPhase, modePhase]
+                .find(el => el && !el.classList.contains('hidden'));
+            if (phase === gamePhase) {
+                const mpBannerEl = document.getElementById('mp-banner');
+                if (mpBannerEl && mpBannerEl.parentNode && banner.parentNode !== gamePhase) {
+                    mpBannerEl.parentNode.insertBefore(banner, mpBannerEl.nextSibling);
+                }
+            } else if (phase && banner.parentNode !== phase) {
+                if (phase.insertBefore) phase.insertBefore(banner, phase.firstChild || null);
+                else phase.appendChild(banner);
+            }
+            return banner;
+        }
+
+        function showReconnectBanner(mode) {
+            const banner = ensureReconnectBanner();
             banner.style.borderColor = 'var(--color-accent)';
             banner.style.background = 'rgba(196,162,78,0.15)';
             const label = mode === 'host' ? 'Re-establishing room...' : 'Reconnecting...';
@@ -1769,10 +2554,11 @@
             banner.classList.remove('hidden');
         }
 
-        function updateReconnectBanner(attempt, max) {
+        function updateReconnectBanner(attempt, max, mode) {
             const text = document.getElementById('reconnect-text');
             if (text) {
-                text.textContent = `Reconnecting... (attempt ${attempt}/${max})`;
+                const label = mode === 'host' ? 'Re-establishing room' : 'Reconnecting';
+                text.textContent = `${label}... (attempt ${attempt}/${max})`;
             }
         }
 
@@ -1782,62 +2568,211 @@
         }
 
         function showReconnectFailed(mode) {
-            const banner = document.getElementById('reconnect-banner');
-            if (banner) {
-                banner.style.borderColor = 'var(--color-error)';
-                banner.style.background = 'rgba(196,94,78,0.15)';
-                const label = mode === 'host' ? 'Lost connection to server' : 'Disconnected from host';
+            // Build it if it is not there. Relying on an earlier 'disconnected' having
+            // created one means one skipped bookend leaves the player with no banner.
+            const banner = ensureReconnectBanner();
+            banner.style.borderColor = 'var(--color-error)';
+            banner.style.background = 'rgba(196,94,78,0.15)';
+            if (mode === 'host') {
+                // No Retry for the host: the library's signalling ladder never gives
+                // up, and host.resume() is deliberately throttled — a button that
+                // usually does nothing is worse than no button.
                 banner.innerHTML = `
                     <div style="display:flex; align-items:center; gap:0.5rem;">
-                        <span style="color:var(--color-error); font-weight:600;">${label}</span>
+                        <span style="color:var(--color-error); font-weight:600;">Lost connection to the server</span>
+                        <span style="color:var(--color-text-muted);">still trying; players already in the room can keep playing</span>
+                    </div>
+                `;
+            } else {
+                banner.innerHTML = `
+                    <div style="display:flex; align-items:center; gap:0.5rem;">
+                        <span style="color:var(--color-error); font-weight:600;">Disconnected from host</span>
                     </div>
                     <button class="btn btn-sm btn-primary" onclick="window._retryReconnect()" style="font-size:0.75rem;">Retry</button>
                 `;
             }
+            banner.classList.remove('hidden');
+        }
+
+        /**
+         * The room is over for us: kicked, superseded, or the host closed it.
+         * Terminal — nothing retries, and the generic bookend states that follow are
+         * ignored so the reason stays on screen.
+         */
+        function enterTerminal(message) {
+            const wasInGame = gameStarted;
+            cleanupMultiplayer();          // resets terminalActive...
+            terminalActive = true;         // ...so it is raised again afterwards
+            if (wasInGame) {
+                showRoomEnded(message);
+                submitRoundBtn.disabled = true;
+            } else {
+                showJoinError(message);
+                joinConnecting.classList.add('hidden');
+                joinWaiting.classList.add('hidden');
+                hideJoinStatus();
+                joinForm.classList.remove('hidden');
+                showPhase(joinLobbyPhase);
+            }
+        }
+
+        function showRoomEnded(message) {
+            const banner = ensureReconnectBanner();
+            banner.style.borderColor = 'var(--color-error)';
+            banner.style.background = 'rgba(196,94,78,0.15)';
+            banner.innerHTML = `
+                <div style="display:flex; align-items:center; gap:0.5rem;">
+                    <span style="color:var(--color-error); font-weight:600;">${esc(message)}</span>
+                </div>
+                <button class="btn btn-sm btn-primary" onclick="window._leaveToMenu()" style="font-size:0.75rem;">Back to menu</button>
+            `;
+            banner.classList.remove('hidden');
+        }
+
+        window._leaveToMenu = function() {
+            resetAll();
+        };
+
+        /** Go back to the mode screen and say why. Used by every "the room ended". */
+        function leaveRoom(message) {
+            resetAll();
+            if (message) toast(message);
         }
 
         window._retryReconnect = function() {
-            if (gameMode === 'host' && lobby) {
-                // SlopNet handles reconnection internally; we can't easily reset it
-                // but we can show the banner again
-                showReconnectBanner('host');
-            } else if (gameMode === 'peer' && lobby && lobby.client) {
+            if (terminalActive) return;
+            if (gameMode === 'peer' && lobby && lobby.client && !lobby.client.isTerminal) {
                 lobby.client.reconnect();
                 showReconnectBanner('peer');
             }
         };
 
-        // Detect visibility change (screen on/off) to trigger reconnect
-        document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState !== 'visible' || !gameStarted) return;
-
-            if (gameMode === 'peer' && lobby && lobby.client) {
-                // SlopNet handles reconnection, but we can nudge it on visibility change
-                if (!lobby.client.isConnected) {
-                    lobby.client.reconnect();
-                }
-            }
-        });
+        // No local visibilitychange handler: SlopLobby now registers one per lobby for
+        // both roles (client.resume()/host.resume()), which probes rather than tearing
+        // a negotiating reconnect down and restarting it.
 
         function showJoinError(msg) {
             joinError.textContent = msg;
             joinError.classList.remove('hidden');
         }
 
+        /** A non-fatal note on the waiting screen ("Reconnecting…"). */
+        function showJoinStatus(msg) {
+            if (!joinStatus) return;
+            joinStatus.textContent = msg;
+            joinStatus.classList.remove('hidden');
+        }
+
+        function hideJoinStatus() {
+            if (joinStatus) joinStatus.classList.add('hidden');
+        }
+
+        /**
+         * The host restarted and holds no seat for us: whatever game we are painting
+         * no longer exists. Drop back to the lobby view rather than leaving a live,
+         * fully interactive scoreboard whose every tap is silently discarded.
+         */
+        function returnToJoinLobby() {
+            gameStarted = false;
+            gameOver = false;
+            rulesetLocked = false;
+            players = [];
+            rounds = [];
+            currentRound = 1;
+            roundEpoch = 0;
+            resetRoundState();
+            myScoreSubmitted = false;
+            myScoreQueued = false;
+            pendingSubmit = null;
+            myOverridden = false;
+            hideReconnectBanner();
+            winnerBanner.classList.add('hidden');
+            mpBanner.classList.add('hidden');
+            joinLobbyPlayers.innerHTML = '';
+            joinForm.classList.add('hidden');
+            joinError.classList.add('hidden');
+            joinConnecting.classList.add('hidden');
+            joinWaiting.classList.remove('hidden');
+            hideJoinStatus();
+            showPhase(joinLobbyPhase);
+        }
+
+        /**
+         * Everything the host says. Every branch has to survive arriving out of order:
+         * a returning client's queued backlog is flushed BEFORE the host answers the
+         * rejoin, so the last word is always rejoin-ok — but the ones before it must
+         * not destroy anything on the way past.
+         */
         function handlePeerMessage(data) {
+            if (!data || typeof data !== 'object') return;
+
+            // The room is over for us (kicked, superseded, host closed it). SlopLobby
+            // destroys the client, but a backlog flushed in the same breath as the
+            // goodbye can still be delivered behind it — and a 'state-update' or
+            // 'rejoin-ok' landing after the notice would repaint a live, fully
+            // interactive scoreboard whose every tap goes nowhere. Only the host's own
+            // explanation gets through, and only when it actually carries one.
+            if (terminalActive && !(data.type === 'join-error' && data.reason)) return;
+
             if (data.type === 'join-ok') {
+                if (typeof data.name === 'string' && data.name) myName = data.name.substring(0, 20);
+                if (gameStarted) {
+                    // The host has no game: theirs restarted (a reloaded tab under the
+                    // same room code). Ours is a picture of one that no longer exists.
+                    returnToJoinLobby();
+                    toast('The host restarted the game');
+                    return;
+                }
+                // The pre-game 'disconnected' branch may have put the form back up.
+                joinForm.classList.add('hidden');
+                joinError.classList.add('hidden');
                 joinConnecting.classList.add('hidden');
                 joinWaiting.classList.remove('hidden');
+                hideJoinStatus();
             } else if (data.type === 'rejoin-ok') {
-                // Reconnecting to an active game
-                players = data.players;
-                rounds = data.rounds;
-                currentRound = data.currentRound;
-                gameOver = data.gameOver;
+                // A reconcile, not a wipe: this now reaches players who never dropped
+                // (the host emits 'client-rejoined' for anyone who answers a ping).
+                // The ruleset first, and before ANY state is touched: emptyRoundEntry,
+                // snapshotEntry and every scoring function branch on it, and a
+                // snapshot that disagrees with the game in play is not ours to apply.
+                if (!adoptRuleset(data.ruleset, data.brutal)) return;
+                if (typeof data.name === 'string' && data.name) myName = data.name.substring(0, 20);
+                const nextRound = toRound(data.currentRound);
+                const nextEpoch = toRound(data.epoch);
+                // The epoch too, not just the number: Undo and Play Again can land us
+                // back on "round 1" that is a different round 1.
+                const roundChanged = !gameStarted || nextRound !== currentRound || nextEpoch !== roundEpoch;
+                if (Array.isArray(data.players)) players = data.players;
+                { const nextRounds = adoptRounds(data.rounds); if (nextRounds) rounds = nextRounds; }
+                currentRound = nextRound;
+                roundEpoch = nextEpoch;
+                gameOver = !!data.gameOver;
                 gameStarted = true;
-                myScoreSubmitted = false;
-                applyRuleset(data.ruleset, data.brutal);
-                resetRoundState();
+                rulesetLocked = true;
+
+                if (roundChanged) {
+                    resetRoundState();
+                    myScoreSubmitted = !!data.submitted;
+                    pendingSubmit = null;
+                    myScoreQueued = false;
+                } else {
+                    // Never downgrade within a round: the host computes `submitted`
+                    // one message before our own queued submit reaches it.
+                    myScoreSubmitted = myScoreSubmitted || !!data.submitted;
+                }
+                myOverridden = !!data.overridden;
+
+                const myId = nameToId(myName);
+                if (data.scoreData && isBlankEntry(roundState[myId])) {
+                    roundState[myId] = snapshotEntry(data.scoreData);
+                }
+                // The host has no score for us but ours is still in flight (handed to
+                // a channel that died with the radio, or only queued). Send it again
+                // rather than sitting on a waiting screen for the rest of the round —
+                // the host is idempotent, so a duplicate costs nothing.
+                if (!data.submitted && pendingSubmit && pendingSubmit.epoch === roundEpoch) {
+                    resendPendingSubmit();
+                }
 
                 showPhase(gamePhase);
                 showMpBanner();
@@ -1846,79 +2781,225 @@
                     checkWinner();
                 }
             } else if (data.type === 'join-error') {
-                showJoinError(data.reason || data.message || 'Could not join.');
-                joinConnecting.classList.add('hidden');
-                joinForm.classList.remove('hidden');
-                cleanupMultiplayer();
+                // A reasonless kick is announced through onStateChange('rejected')
+                // first and this message follows it LAST; painting a generic string
+                // over the host's own words is worse than saying nothing. (The guard
+                // at the top of this function is what enforces that; kept here as the
+                // single place the rule is stated for this message.)
+                if (terminalActive && !data.reason) return;
+                const reason = data.reason || data.message || 'Could not join.';
+                if (gameStarted) {
+                    enterTerminal(reason);
+                } else {
+                    showJoinError(reason);
+                    joinConnecting.classList.add('hidden');
+                    joinWaiting.classList.add('hidden');
+                    joinForm.classList.remove('hidden');
+                    cleanupMultiplayer();
+                }
             } else if (data.type === 'lobby-update') {
-                applyRuleset(data.ruleset, data.brutal);
+                // Pre-game the host owns the ruleset; mid-game (a stale one out of a
+                // backlog) adoptRuleset refuses it and the roster paint is harmless.
+                adoptRuleset(data.ruleset, data.brutal);
                 renderJoinLobby(data.players);
             } else if (data.type === 'game-start') {
+                // A replayed game-start out of a queued backlog must not wipe the game
+                // it started: startGame stamps epoch 1 and every finished round bumps
+                // it, so a lower stamp belongs to a game that is already history. This
+                // is also what keeps game-start from re-ruling a live game — it is the
+                // only message allowed to set the ruleset, so it must be fresh.
+                // `<=`, not `<`: a game-start at the epoch we are already playing is a
+                // duplicate by definition (a real new game always bumps the stamp, and
+                // a host that restarted reaches us through 'reconnected' with
+                // fresh:true, which puts us back to epoch 0 first). Re-running it would
+                // clear a card the player is halfway through typing.
+                if (gameStarted && toRound(data.epoch) <= roundEpoch) return;
+                // A broadcast is not an admission ticket: SlopNet walks its own client
+                // map and knows nothing about who the host actually seated.
+                if (!Array.isArray(data.players) || !data.players.some(n => sameName(n, myName))) {
+                    showJoinError('The host started without you.');
+                    joinConnecting.classList.add('hidden');
+                    joinWaiting.classList.add('hidden');
+                    joinForm.classList.remove('hidden');
+                    cleanupMultiplayer();
+                    showPhase(joinLobbyPhase);
+                    return;
+                }
+                myName = data.players.find(n => sameName(n, myName)) || myName;
                 players = data.players;
-                currentRound = data.currentRound;
+                currentRound = toRound(data.currentRound);
+                roundEpoch = toRound(data.epoch);
                 rounds = [];
                 gameStarted = true;
                 gameOver = false;
+                // A new game may be played under new rules; from here they are fixed.
+                rulesetLocked = false;
                 applyRuleset(data.ruleset, data.brutal);
+                rulesetLocked = true;
                 resetRoundState();
-                myScoreSubmitted = false;
+                clearMySubmission();
 
                 showPhase(gamePhase);
                 showMpBanner();
                 renderGame();
             } else if (data.type === 'state-update') {
-                players = data.players;
-                rounds = data.rounds;
-                currentRound = data.currentRound;
-                gameOver = data.gameOver;
-                myScoreSubmitted = false;
-                resetRoundState();
+                // The host does not put a ruleset in here at all; one that does is not
+                // the host we are playing with. Dropping it stops a backlog being
+                // re-read under rules the cards were never played under.
+                if (!adoptRuleset(data.ruleset, data.brutal)) return;
+                // A queued backlog can deliver an older round after a newer one; only
+                // ever move forwards (undo and play-again have their own messages).
+                const nextRound = toRound(data.currentRound);
+                const nextEpoch = toRound(data.epoch);
+                if (nextEpoch < roundEpoch) return;
+                if (nextEpoch === roundEpoch && nextRound < currentRound) return;
+                const roundChanged = nextRound !== currentRound || nextEpoch !== roundEpoch;
+                if (Array.isArray(data.players)) players = data.players;
+                { const nextRounds = adoptRounds(data.rounds); if (nextRounds) rounds = nextRounds; }
+                currentRound = nextRound;
+                roundEpoch = nextEpoch;
+                gameOver = !!data.gameOver;
+                if (roundChanged) {
+                    clearMySubmission();
+                    resetRoundState();
+                }
                 renderGame();
                 if (gameOver) {
                     checkWinner();
                 }
+            } else if (data.type === 'player-left') {
+                // Roster only. Reusing state-update here would wipe every other
+                // peer's half-entered card just because somebody pressed Leave.
+                if (Array.isArray(data.players)) players = data.players;
+                dropStaleFlip7Targets();
+                renderGame();
+            } else if (data.type === 'score-ack') {
+                if (typeof data.round === 'number' && data.round !== currentRound) return;
+                // The ONLY thing that makes a score "submitted": the host says it has
+                // it. send() returning true means peerjs took it into a buffer that a
+                // plain close throws away.
+                myScoreSubmitted = true;
+                myScoreQueued = false;
+                pendingSubmit = null;
+                renderGame();
+            } else if (data.type === 'override') {
+                // The host has taken our card over, or given it back. Stamped, because
+                // a message queued across a reconnect must not put the note back on a
+                // round that has since moved on.
+                if (toRound(data.round) !== currentRound) return;
+                if (data.epoch !== undefined && toRound(data.epoch) !== roundEpoch) return;
+                myOverridden = !!data.overridden;
+                renderRoundScoring();
+            } else if (data.type === 'score-rejected') {
+                // Two separate questions. (1) Does this un-submit us? Only if it is
+                // about the round we are still on — and the EPOCH too, because Undo
+                // and Play Again bring round numbers back round again, so a refusal
+                // from the previous round 1 must not clear a submission made in the
+                // replayed one. (2) Is the player told? Always: a score the host threw
+                // away is never silently forgotten, even once we have moved on.
+                const mine = toRound(data.round) === currentRound &&
+                    (data.epoch === undefined || toRound(data.epoch) === roundEpoch);
+                if (mine) {
+                    clearMySubmission();
+                } else if (pendingSubmit && pendingSubmit.round === toRound(data.round)) {
+                    // Resending it would only be refused again for the same reason.
+                    pendingSubmit = null;
+                    myScoreQueued = false;
+                }
+                if (data.reason) toast(String(data.reason).substring(0, 120));
+                renderGame();
+            } else if (data.type === 'leave-ok') {
+                resolveLeave();
             } else if (data.type === 'round-reset') {
-                rounds = data.rounds;
-                currentRound = data.currentRound;
+                { const nextRounds = adoptRounds(data.rounds); if (nextRounds) rounds = nextRounds; }
+                currentRound = toRound(data.currentRound);
+                roundEpoch = toRound(data.epoch);
                 gameOver = false;
-                myScoreSubmitted = false;
+                clearMySubmission();
                 winnerBanner.classList.add('hidden');
                 resetRoundState();
                 renderGame();
             } else if (data.type === 'play-again') {
-                players = data.players;
+                // Same table, same rules: Play Again never re-rules the game, so a
+                // 'play-again' that says otherwise is not from this game.
+                if (!adoptRuleset(data.ruleset, data.brutal)) return;
+                if (Array.isArray(data.players)) players = data.players;
                 rounds = [];
-                currentRound = data.currentRound;
+                currentRound = toRound(data.currentRound);
+                roundEpoch = toRound(data.epoch);
                 gameOver = false;
-                myScoreSubmitted = false;
-                if (data.ruleset) applyRuleset(data.ruleset, data.brutal);
+                clearMySubmission();
                 resetRoundState();
                 winnerBanner.classList.add('hidden');
                 renderGame();
             } else if (data.type === 'game-reset') {
-                gameStarted = false;
-                gameOver = false;
-                cleanupMultiplayer();
-                showPhase(modePhase);
+                // A full reset, not a half one: leaving players/rounds/gameMode behind
+                // meant picking Single Device afterwards started with the old roster,
+                // the old totals and a dead room code still on screen.
+                leaveRoom('The host ended the game');
             }
         }
 
+        /** A Brutal-Mode −15 target who has left the table is no longer a target. */
+        function dropStaleFlip7Targets() {
+            Object.keys(roundState).forEach(id => {
+                const st = roundState[id];
+                if (st && st.flip7Target && !players.includes(st.flip7Target)) st.flip7Target = null;
+            });
+        }
+
         function renderJoinLobby(playerList) {
-            joinLobbyPlayers.innerHTML = playerList.map(p =>
-                `<span class="lobby-player">${esc(p.name)}${p.isHost ? '<span class="host-badge">(host)</span>' : ''}</span>`
-            ).join('');
+            const list = Array.isArray(playerList) ? playerList : [];
+            joinLobbyPlayers.innerHTML = list.map(p => {
+                let badge = '';
+                if (p.isHost) badge = '<span class="host-badge">(host)</span>';
+                else if (p.away) badge = '<span class="host-badge">(away)</span>';
+                return `<span class="lobby-player${p.away ? ' away' : ''}">${esc(p.name)}${badge}</span>`;
+            }).join('');
             joinRuleset.innerHTML = `Ruleset: <strong>${esc(rulesetLabel())}</strong>`;
         }
 
-        joinBackBtn.addEventListener('click', () => {
+        joinBackBtn.addEventListener('click', async () => {
+            // Tell the host on the way out, so the seat is freed rather than left as
+            // a phantom the host has to score 0 every round.
+            joinBackBtn.disabled = true;
+            await sendLeaveAndWait();
+            joinBackBtn.disabled = false;
             cleanupMultiplayer();
             showPhase(modePhase);
         });
+
+        /**
+         * Send 'leave' and give it a moment to land. Tearing the transport down in the
+         * same tick as the send is exactly how the goodbye gets dropped, so wait for
+         * the host's 'leave-ok' or for a short timeout — whichever comes first.
+         */
+        function sendLeaveAndWait() {
+            // Settle any earlier waiter first. Overwriting the slot left the first
+            // promise pending for ever and threw away the handle of its timer.
+            resolveLeave();
+            if (gameMode !== 'peer' || !lobby || !lobby.client || lobby.client.isTerminal) {
+                return Promise.resolve();
+            }
+            if (!lobby.sendToHost({ type: 'leave' })) return Promise.resolve();
+            return new Promise(resolve => {
+                leaveResolve = resolve;
+                leaveTimer = setTimeout(() => { leaveTimer = null; resolveLeave(); }, 400);
+            });
+        }
+
+        function resolveLeave() {
+            if (leaveTimer) { clearTimeout(leaveTimer); leaveTimer = null; }
+            const done = leaveResolve;
+            leaveResolve = null;
+            if (done) done();
+        }
 
         // =====================================================================
         // MULTIPLAYER BANNER
         // =====================================================================
         function showMpBanner() {
+            applyRoleGating();
             if (gameMode === 'single') {
                 mpBanner.classList.add('hidden');
                 return;
@@ -1929,9 +3010,13 @@
         }
 
         function updateMpPlayerCount() {
-            if (gameMode === 'host' && lobby) {
-                const connected = lobby.getConnectedClientIds().length;
-                const total = connected + 1; // +1 for host
+            if (gameMode === 'host') {
+                // Count the ROSTER, not SlopNet's seats: the latter includes ghosts and
+                // refused-but-still-connected clients, so the host was regularly told
+                // there were more players than the game had.
+                const total = gameStarted
+                    ? players.length
+                    : (myName ? 1 : 0) + lobbyPlayers.filter(p => !p.away).length;
                 mpPlayerCount.textContent = `${total} player${total !== 1 ? 's' : ''} connected`;
             } else {
                 mpPlayerCount.textContent = `${players.length} players`;
@@ -1946,15 +3031,37 @@
                 lobby.destroy();
                 lobby = null;
             }
+            resolveLeave();
+            if (rematchAskTimer) { clearTimeout(rematchAskTimer); rematchAskTimer = null; }
             lobbyPlayers = [];
             peerSubmissions = {};
-            myScoreSubmitted = false;
+            submissionEpochs = {};
+            clearMySubmission();
+            submissionBy.clear();
             hostEditingPlayers.clear();
+            allBustTakeovers.clear();
             disconnectedPlayers.clear();
             localPlayers.clear();
+            rematchRequests.clear();
+            resyncSeen.clear();
+            hostLeaving = false;
+            terminalActive = false;
+            hostReconnectFailed = false;
             hideReconnectBanner();
+            hideJoinStatus();
             myName = '';
             roomCode = '';
+
+            // Unwind the host form too. `disabled = true` was assigned when the name
+            // was set and re-enabled nowhere, so a host who ended one room could never
+            // name themselves in the next one — the Start button stayed grey forever.
+            hostNameInput.disabled = false;
+            hostSetNameBtn.disabled = false;
+            hostSetNameBtn.textContent = 'Set Name';
+            hostNameInput.value = '';
+            hostNameInput.style.borderColor = '';
+            hostLocalPlayerInput.value = '';
+            hostLocalPlayerInput.style.borderColor = '';
         }
 
         // =====================================================================
@@ -1963,8 +3070,10 @@
         function getPlayerTotal(playerName) {
             let total = 0;
             for (const round of rounds) {
-                if (round[playerName]) {
-                    total += round[playerName].score;
+                if (round && round[playerName]) {
+                    // rounds[] arrives over the wire on every peer. Coerce, or a
+                    // non-numeric score turns the running total into concatenation.
+                    total += Number(round[playerName].score) || 0;
                 }
             }
             return total;
@@ -1987,12 +3096,34 @@
         // round entry with its score computed.
         function snapshotEntry(state) {
             const entry = emptyRoundEntry();
-            if (state) {
+            if (state && typeof state === 'object') {
+                // Copy BY THE TEMPLATE'S TYPE, never by whatever arrived. `state` can
+                // come straight off the wire, and a spread does not care what it is
+                // spreading: [...'hello'] is five one-character "cards" that turn
+                // every later sum into NaN. So an array slot only accepts an array of
+                // finite numbers, a boolean slot only a boolean, and so on.
                 Object.keys(entry).forEach(key => {
-                    if (state[key] === undefined) return;
-                    entry[key] = Array.isArray(entry[key]) ? [...(state[key] || [])] : state[key];
+                    const value = state[key];
+                    if (value === undefined) return;
+                    const template = entry[key];
+                    if (Array.isArray(template)) {
+                        if (!Array.isArray(value)) return;
+                        entry[key] = value
+                            .filter(n => typeof n === 'number' && isFinite(n))
+                            .slice(0, MAX_CARDS);
+                    } else if (typeof template === 'boolean') {
+                        entry[key] = !!value;
+                    } else if (typeof template === 'number') {
+                        entry[key] = isFinite(Number(value)) ? Number(value) : 0;
+                    } else if (typeof value === 'string' || value === null) {
+                        // flip7Target: a name, or nobody.
+                        entry[key] = typeof value === 'string' ? value.substring(0, 20) : null;
+                    }
                 });
             }
+            // A −15 can only be aimed at somebody who is still at the table.
+            if ('flip7Target' in entry && entry.flip7Target != null &&
+                !players.includes(entry.flip7Target)) entry.flip7Target = null;
             if ('flip7Target' in entry && !entry.flip7) entry.flip7Target = null;
             entry.score = calculateRoundScore(entry);
             return entry;
@@ -2003,8 +3134,35 @@
             return snapshotEntry({ bust: true });
         }
 
+        // Has nothing been entered here at all? Used to decide whether a host override
+        // is "untouched" and may be handed back to the player who submitted for real.
+        function isBlankEntry(state) {
+            if (!state) return true;
+            if ((state.cards || []).length > 0) return false;
+            if ((state.modifiers || []).length > 0) return false;
+            const flags = ['x2', 'flip7', 'bust', 'zero', 'unlucky7', 'lucky13', 'half'];
+            if (flags.some(key => !!state[key])) return false;
+            return !state.flip7Target;
+        }
+
+        // Blank except for a bust flag — what one tap of All Bust leaves behind.
+        function isBustOnlyEntry(state) {
+            if (!state || !state.bust) return false;
+            return isBlankEntry(Object.assign({}, state, { bust: false }));
+        }
+
+        // The scoring helpers below are also fed `rounds[]`, which every peer adopts
+        // straight from the host — so "an array of numbers" is a hope, not a fact. A
+        // string where a card list should be used to throw out of renderGame
+        // (`'abc'.reduce` / `[...12]`), and a throw inside a render leaves the whole
+        // scoreboard frozen on the last good paint.
+        function cardList(data) {
+            return (data && Array.isArray(data.cards)) ? data.cards : [];
+        }
+
         function sum(arr) {
-            return (arr || []).reduce((a, b) => a + b, 0);
+            if (!Array.isArray(arr)) return 0;
+            return arr.reduce((a, b) => a + (Number(b) || 0), 0);
         }
 
         // Total of a player's number cards (specials included)
@@ -2021,7 +3179,7 @@
 
         // How many number cards count toward a Flip 7
         function flip7CardCount(data) {
-            let count = (data.cards || []).length;
+            let count = cardList(data).length;
             if (isVengeance()) {
                 Object.keys(RULESETS.vengeance.specials).forEach(key => {
                     if (data[key]) count++;
@@ -2086,9 +3244,52 @@
         // RENDERING
         // =====================================================================
         function renderGame() {
+            // checkWinner FIRST: it owns `gameOver`, and renderRoundScoring keys the
+            // whole round card off it. Called afterwards it was always deciding about
+            // the render that had already happened.
+            checkWinner();
             renderStandings();
             renderRoundScoring();
-            checkWinner();
+            applyRoleGating();
+        }
+
+        /**
+         * Controls a joined player must not have. Gating at render time AND in each
+         * handler: stale DOM is not to be trusted, and hiding alone is not enough —
+         * every one of these used to mutate the peer's own copy and broadcast nothing,
+         * forking their scoreboard away from the table's.
+         */
+        function applyRoleGating() {
+            const isPeer = gameMode === 'peer';
+            newGameBtn.classList.toggle('hidden', isPeer);
+            playAgainBtn.classList.toggle('hidden', isPeer);
+            // Reset Game is a peer's only way out of a room, so it is relabelled
+            // rather than hidden — and the handler branches to match the label.
+            resetGameBtn.textContent = isPeer ? 'Leave Game' : 'Reset Game';
+            const showRematch = isPeer && gameOver;
+            if (!showRematch) {
+                // Re-arm it for the next game over, so a player who asked once is not
+                // left staring at a permanently dead button.
+                if (rematchAskTimer) { clearTimeout(rematchAskTimer); rematchAskTimer = null; }
+                requestRematchBtn.disabled = false;
+                requestRematchBtn.textContent = 'Ask for a Rematch';
+            }
+            requestRematchBtn.classList.toggle('hidden', !showRematch);
+            if (isPeer) undoRoundBtn.classList.add('hidden');
+            updateRematchPrompt();
+        }
+
+        /**
+         * Surface rematch requests on the host's own Play Again button. The host is
+         * the only one who may act on them: running the reset straight off the wire
+         * let one player wipe the finished game from every screen.
+         */
+        function updateRematchPrompt() {
+            if (gameMode !== 'host') return;
+            const names = [...rematchRequests];
+            if (names.length === 0) playAgainBtn.textContent = 'Play Again';
+            else if (names.length === 1) playAgainBtn.textContent = `Play Again (${names[0]} asked)`;
+            else playAgainBtn.textContent = `Play Again (${names.length} asked)`;
         }
 
         function renderStandings() {
@@ -2104,14 +3305,18 @@
                 const pct = Math.max(0, Math.min(100, (p.total / TARGET_SCORE) * 100));
                 const isWinner = gameOver && p.total >= TARGET_SCORE && i === 0;
                 const roundScores = rounds.map((round) => {
-                    const rd = round[p.name];
+                    // `rounds` comes off the wire whole: a null slot must not throw
+                    // out of the render and freeze the standings on the last paint.
+                    const rd = round && round[p.name];
                     if (!rd) return `<span class="round-score-chip">-</span>`;
                     const title = attr(formatScoreBreakdown(rd));
                     let cls = '';
                     if (rd.bust) cls = 'bust';
                     else if (rd.flip7) cls = 'flip7';
                     else if (rd.score < 0) cls = 'negative';
-                    return `<span class="round-score-chip ${cls}" title="${title}">${rd.score}</span>`;
+                    // rounds[] arrives over the wire on every peer — nothing from it
+                    // reaches innerHTML unescaped.
+                    return `<span class="round-score-chip ${cls}" title="${title}">${esc(rd.score)}</span>`;
                 }).join('');
 
                 return `<tr class="${isWinner ? 'winner-row' : ''}">
@@ -2136,7 +3341,7 @@
             roundSection.classList.remove('hidden');
 
             roundTitle.textContent = `Round ${currentRound}`;
-            roundDealer.textContent = players[getDealerIndex()];
+            roundDealer.textContent = players.length ? players[getDealerIndex()] : '';
 
             // Determine which players to show score cards for
             if (gameMode === 'single' || gameMode === 'host') {
@@ -2230,8 +3435,17 @@
             undoRoundBtn.classList.add('hidden');
             roundTools.classList.add('hidden');
 
-            if (myScoreSubmitted) {
+            if (myScoreSubmitted || pendingSubmit) {
                 scoringGrid.innerHTML = '';
+                // Three different truths, and only one of them is "the host has it".
+                if (roundWaitingText) {
+                    roundWaitingText.textContent = myScoreSubmitted
+                        ? (myOverridden
+                            ? 'The host is entering your score for this round — they have yours too.'
+                            : 'Score submitted! Waiting for other players...')
+                        : (myScoreQueued ? 'Saved — will send when reconnected'
+                                         : 'Score sent — waiting for the host...');
+                }
                 roundWaiting.classList.remove('hidden');
                 roundActions.classList.add('hidden');
                 submissionStatus.classList.add('hidden');
@@ -2242,9 +3456,17 @@
             roundActions.classList.remove('hidden');
             submissionStatus.classList.add('hidden');
             submitRoundBtn.textContent = 'Submit Score';
-            submitRoundBtn.disabled = false;
+            // Submitting into a dead channel is what fed the queue that later landed
+            // in the wrong round. Offer it only when it can actually be delivered.
+            submitRoundBtn.disabled = !!(lobby && lobby.client &&
+                (!lobby.client.isConnected || lobby.client.isTerminal));
 
-            scoringGrid.innerHTML = renderEditableCard(myName);
+            // The host is filling this card in for us. Say so and leave Submit live:
+            // if ours arrives the host keeps it as evidence and can switch to it.
+            const overrideNote = myOverridden
+                ? `<div class="waiting-message" style="padding:0.5rem 0; font-size:0.85rem;">The host is entering your score for this round — you can still send your own.</div>`
+                : '';
+            scoringGrid.innerHTML = overrideNote + renderEditableCard(myName);
 
             const id = nameToId(myName);
             if (!roundState[id]) {
@@ -2259,9 +3481,17 @@
             const isDisconnected = disconnectedPlayers.has(name);
             const showOverrideLabel = hostOverride && gameMode === 'host';
             const prevTotal = getPlayerTotal(name);
+            // An override needs a way out. Without one the host's guess silently beat
+            // the player's real score for the rest of the round.
+            const cancelBtn = showOverrideLabel
+                ? `<button class="edit-score-btn" data-cancel-edit="${esc(name)}">${peerSubmissions[name] ? 'Use their score' : 'Cancel'}</button>`
+                : '';
+            const theirScore = (showOverrideLabel && peerSubmissions[name])
+                ? `<div class="score-breakdown">They sent: ${esc(formatRoundTotal(peerSubmissions[name], peerSubmissions[name].score))} — ${esc(formatScoreBreakdown(peerSubmissions[name]))}</div>`
+                : '';
             return `<div class="player-score-card" id="card-${id}">
                 <div class="player-score-header">
-                    <span class="name">${esc(name)}${showOverrideLabel ? '<span class="disconnected-badge">(editing)</span>' : ''}${isDisconnected && showOverrideLabel ? '<span class="disconnected-badge">DISCONNECTED</span>' : ''}${prevTotal > 0 ? `<span class="running-total" style="margin-left:0.5rem;">Overall: ${prevTotal}</span>` : ''}</span>
+                    <span class="name">${esc(name)}${showOverrideLabel ? '<span class="disconnected-badge">(editing)</span>' : ''}${isDisconnected && showOverrideLabel ? '<span class="disconnected-badge">DISCONNECTED</span>' : ''}${cancelBtn}${prevTotal > 0 ? `<span class="running-total" style="margin-left:0.5rem;">Overall: ${prevTotal}</span>` : ''}</span>
                     <span class="round-total" id="total-${id}">0</span>
                 </div>
                 <div class="card-input-area">
@@ -2279,6 +3509,7 @@
                     <button class="toggle-btn clear-btn" id="clear-${id}" title="Clear this player's cards" onclick="window._clearCard('${id}')">Clear</button>
                 </div>
                 <div class="score-breakdown" id="breakdown-${id}"></div>
+                ${theirScore}
             </div>`;
         }
 
@@ -2311,8 +3542,11 @@
         // Brutal Mode only: choose whether a Flip 7 is +15 for you or −15 to an opponent
         function renderFlip7TargetSelect(id, name) {
             if (!isBrutal()) return '';
-            const options = players.map((p, i) =>
-                p === name ? '' : `<option value="${i}">&minus;15 to ${esc(p)}</option>`
+            // Option values are NAMES, not indices: a roster that shifts between the
+            // render and the tap (somebody leaves) would otherwise point the −15 at
+            // whoever slid into that position.
+            const options = players.map(p =>
+                p === name ? '' : `<option value="${esc(p)}">&minus;15 to ${esc(p)}</option>`
             ).join('');
             return `<select class="flip7-target hidden" id="f7target-${id}" title="Brutal Mode: take +15 or deal &minus;15 to an opponent" onchange="window._setFlip7Target('${id}', this.value)">
                 <option value="">+15 for me</option>
@@ -2328,8 +3562,8 @@
             const projectedTotal = prevTotal + score;
             return `<div class="player-score-card submitted ${isBust ? 'bust' : ''}" id="card-${id}">
                 <div class="player-score-header">
-                    <span class="name">${esc(name)}<button class="edit-score-btn" onclick="window._hostEditPlayer('${esc(name)}')">Edit</button>${prevTotal > 0 ? `<span class="running-total" style="margin-left:0.5rem;">Overall: ${projectedTotal}</span>` : (score > 0 ? `<span class="running-total" style="margin-left:0.5rem;">Overall: ${projectedTotal}</span>` : '')}</span>
-                    <span class="round-total ${isBust ? 'bust-text' : ''}">${formatRoundTotal(scoreData, score)}</span>
+                    <span class="name">${esc(name)}<button class="edit-score-btn" data-host-edit="${esc(name)}">Edit</button>${prevTotal > 0 ? `<span class="running-total" style="margin-left:0.5rem;">Overall: ${esc(projectedTotal)}</span>` : (score > 0 ? `<span class="running-total" style="margin-left:0.5rem;">Overall: ${esc(projectedTotal)}</span>` : '')}</span>
+                    <span class="round-total ${isBust ? 'bust-text' : ''}">${esc(formatRoundTotal(scoreData, score))}</span>
                 </div>
                 <div class="score-breakdown" style="margin-top:0;">
                     ${esc(formatScoreBreakdown(scoreData))}
@@ -2342,7 +3576,7 @@
             const prevTotal = getPlayerTotal(name);
             return `<div class="player-score-card" id="card-${id}" style="opacity:0.5;">
                 <div class="player-score-header">
-                    <span class="name">${esc(name)}<button class="edit-score-btn" onclick="window._hostEditPlayer('${esc(name)}')">Enter Score</button>${prevTotal > 0 ? `<span class="running-total" style="margin-left:0.5rem;">Overall: ${prevTotal}</span>` : ''}</span>
+                    <span class="name">${esc(name)}<button class="edit-score-btn" data-host-edit="${esc(name)}">Enter Score</button>${prevTotal > 0 ? `<span class="running-total" style="margin-left:0.5rem;">Overall: ${prevTotal}</span>` : ''}</span>
                     <span class="round-total" style="color:var(--color-text-muted);">...</span>
                 </div>
                 <div class="waiting-message" style="padding:0.5rem 0;">
@@ -2361,15 +3595,42 @@
                 </div>
                 <div style="display:flex; align-items:center; gap:0.75rem; padding:0.5rem 0;">
                     <span style="font-size:0.85rem; color:var(--color-text-muted);">Player disconnected.</span>
-                    <button class="btn btn-sm btn-primary" onclick="window._hostEditPlayer('${esc(name)}')">Enter Score</button>
+                    <button class="btn btn-sm btn-primary" data-host-edit="${esc(name)}">Enter Score</button>
                 </div>
             </div>`;
         }
 
+        // One delegated listener for every per-player button in the scoring grid.
+        // These carry a player NAME, and a name cannot be safely written into
+        // JavaScript source inside an attribute — `O'Brien` made the whole handler a
+        // syntax error, so the host simply could not score that player.
+        scoringGrid.addEventListener('click', (e) => {
+            const target = e.target;
+            if (!target || !target.closest) return;
+            const edit = target.closest('[data-host-edit]');
+            if (edit) { window._hostEditPlayer(edit.getAttribute('data-host-edit')); return; }
+            const cancel = target.closest('[data-cancel-edit]');
+            if (cancel) window._hostCancelEdit(cancel.getAttribute('data-cancel-edit'));
+        });
+
         window._hostEditPlayer = function(name) {
-            // Remove peer submission if any (host is overriding)
-            delete peerSubmissions[name];
+            if (gameMode !== 'host' || !players.includes(name)) return;
+            const id = nameToId(name);
+            // Seed from what they sent instead of deleting it: one stray tap on Edit
+            // used to destroy a real score with nothing put in its place.
+            if (peerSubmissions[name]) roundState[id] = snapshotEntry(peerSubmissions[name]);
+            else if (!roundState[id]) roundState[id] = emptyRoundEntry();
             hostEditingPlayers.add(name);
+            allBustTakeovers.delete(name);
+            sendOverrideState(name);
+            renderGame();
+        };
+
+        window._hostCancelEdit = function(name) {
+            hostEditingPlayers.delete(name);
+            allBustTakeovers.delete(name);
+            delete roundState[nameToId(name)];
+            sendOverrideState(name);
             renderGame();
         };
 
@@ -2384,7 +3645,7 @@
             if (isVengeance()) return formatVengeanceBreakdown(data);
             if (data.bust) return 'Bust — 0 points';
             const parts = [];
-            const cards = data.cards || [];
+            const cards = cardList(data);
             const numberSum = sum(cards);
             if (cards.length > 0) {
                 parts.push(`Cards: ${[...cards].sort((a,b) => a-b).join('+')}`);
@@ -2407,7 +3668,7 @@
                 parts.push('Bust — 0 points');
                 if (!brutalMode) return parts[0];
             } else {
-                const items = (data.cards || []).map(n => ({ value: n, label: String(n) }));
+                const items = cardList(data).map(n => ({ value: n, label: String(n) }));
                 Object.keys(specials).forEach(key => {
                     if (data[key]) items.push({ value: specials[key].value, label: specials[key].label });
                 });
@@ -2459,7 +3720,12 @@
                 const isHostEditing = hostEditingPlayers.has(name);
                 let cls = '';
                 let label = esc(name);
-                if (submitted) {
+                if (submitted && isHostEditing) {
+                    // Both are true and the override is what will be recorded. The
+                    // bare tick used to claim the opposite.
+                    cls = 'submitted';
+                    label += ' ✓ (overridden)';
+                } else if (submitted) {
                     cls = 'submitted';
                     label += ' ✓';
                 } else if (isHostEditing) {
@@ -2511,8 +3777,7 @@
         window._setFlip7Target = function(id, value) {
             const state = roundState[id];
             if (!state) return;
-            const target = value === '' ? null : players[parseInt(value)];
-            state.flip7Target = target || null;
+            state.flip7Target = players.includes(value) ? value : null;
             updatePlayerRoundDisplay(id);
         };
 
@@ -2554,24 +3819,47 @@
         // so an all-bust round can be closed in one tap. Scores that peers have
         // already submitted are left alone.
         allBustBtn.addEventListener('click', () => {
+            const before = editableIds();
+            const undoing = before.length > 0 && before.every(id => roundState[id].bust);
+
+            if (undoing) {
+                // Give the seats back. Pressing again only used to flip bust off,
+                // leaving every taken-over player host-edited with a blank card — so a
+                // score they sent afterwards was accepted, ignored and scored 0.
+                releaseAllBustTakeovers();
+                editableIds().forEach(id => {
+                    roundState[id].bust = false;
+                    updatePlayerRoundDisplay(id);
+                });
+                renderGame();
+                return;
+            }
+
             if (gameMode === 'host') {
-                let tookOver = false;
                 players.forEach(name => {
                     if (!isEditablePlayer(name) && !peerSubmissions[name]) {
                         hostEditingPlayers.add(name);
-                        tookOver = true;
+                        allBustTakeovers.add(name);
+                        sendOverrideState(name);
                     }
                 });
-                if (tookOver) renderGame();
+                if (allBustTakeovers.size) renderGame();
             }
-            const ids = editableIds();
-            const allBust = ids.length > 0 && ids.every(id => roundState[id].bust);
-            ids.forEach(id => {
-                roundState[id].bust = !allBust;
+            editableIds().forEach(id => {
+                roundState[id].bust = true;
                 updatePlayerRoundDisplay(id);
             });
             updateRoundTools();
         });
+
+        function releaseAllBustTakeovers() {
+            allBustTakeovers.forEach(name => {
+                hostEditingPlayers.delete(name);
+                delete roundState[nameToId(name)];
+                sendOverrideState(name);
+            });
+            allBustTakeovers.clear();
+        }
 
         clearAllBtn.addEventListener('click', () => {
             editableIds().forEach(id => {
@@ -2596,8 +3884,9 @@
             const card = document.getElementById(`card-${id}`);
             if (card) {
                 const runningTotalEl = card.querySelector('.running-total');
-                // Find player name from id
-                const playerName = players.find(n => nameToId(n) === id);
+                // Reverse the id -> name mint rather than re-deriving it, so this
+                // never accidentally allocates an id for a name it was only looking up.
+                const playerName = idToName(id);
                 if (playerName) {
                     const prevTotal = getPlayerTotal(playerName);
                     const projected = prevTotal + score;
@@ -2633,8 +3922,7 @@
                 const targetSelect = document.getElementById(`f7target-${id}`);
                 if (targetSelect) {
                     targetSelect.classList.toggle('hidden', !state.flip7 || state.bust);
-                    const idx = state.flip7Target ? players.indexOf(state.flip7Target) : -1;
-                    targetSelect.value = idx >= 0 ? String(idx) : '';
+                    targetSelect.value = players.includes(state.flip7Target) ? state.flip7Target : '';
                 }
             }
 
@@ -2703,9 +3991,12 @@
 
             rounds.push(roundResult);
             currentRound++;
+            roundEpoch++;
             resetRoundState();
             peerSubmissions = {};
+            submissionEpochs = {};
             hostEditingPlayers.clear();
+            allBustTakeovers.clear();
 
             // Broadcast state update to all peers
             broadcastToAll({
@@ -2713,6 +4004,7 @@
                 players: players,
                 rounds: rounds,
                 currentRound: currentRound,
+                epoch: roundEpoch,
                 gameOver: false
             });
 
@@ -2725,56 +4017,204 @@
                     players: players,
                     rounds: rounds,
                     currentRound: currentRound,
+                    epoch: roundEpoch,
                     gameOver: true
                 });
             }
         }
 
+        /** Peer: forget whatever we were waiting on (new round, or a refusal). */
+        function clearMySubmission() {
+            myScoreSubmitted = false;
+            myScoreQueued = false;
+            pendingSubmit = null;
+            myOverridden = false;
+        }
+
+        /** Put `pendingSubmit` back on the wire, unchanged. */
+        function resendPendingSubmit() {
+            if (!pendingSubmit || !lobby) return;
+            const sent = lobby.sendToHost({
+                type: 'score-submit',
+                round: pendingSubmit.round,
+                epoch: pendingSubmit.epoch,
+                playerName: myName,     // logging only — the host keys on the connection
+                scoreData: pendingSubmit.scoreData,
+            });
+            myScoreQueued = !sent;
+        }
+
         function submitScorePeer() {
+            if (gameMode !== 'peer' || gameOver) return;
+            // One outstanding submission at a time. The card is hidden after the first
+            // tap, so a second one is a stale DOM event, not a correction.
+            if (myScoreSubmitted || pendingSubmit) return;
             const id = nameToId(myName);
             const state = roundState[id];
             if (!state) return;
 
-            const scoreData = snapshotEntry(state);
-
-            // Send to host
-            if (lobby) {
-                lobby.sendToHost({
-                    type: 'score-submit',
-                    playerName: myName,
-                    scoreData: scoreData
-                });
-            }
-
-            myScoreSubmitted = true;
+            // The round stamp — and the epoch behind it — is what stops a submission
+            // queued across a reconnect being credited to whatever round is current
+            // when it finally arrives.
+            pendingSubmit = { epoch: roundEpoch, round: currentRound, scoreData: snapshotEntry(state) };
+            // NOT "submitted": send() returning true only means peerjs accepted the
+            // object into a buffer, and a plain close discards it. Until the host
+            // acks, this is "sent, waiting" — and a resync re-sends it.
+            myScoreSubmitted = false;
+            resendPendingSubmit();
             renderRoundScoring();
         }
 
-        function handleScoreSubmission(playerName, scoreData) {
-            // Host receives a peer's score; normalise it and recompute under our rules
-            if (!scoreData || typeof scoreData !== 'object') return;
-            peerSubmissions[playerName] = snapshotEntry(scoreData);
+        /**
+         * Is this payload a score at all? Everything here arrives from another device,
+         * so nothing is taken on trust: cards and modifiers must belong to the active
+         * ruleset, flags must be booleans, and a −15 target must be a real player.
+         */
+        function isValidScoreData(d) {
+            if (!d || typeof d !== 'object' || Array.isArray(d)) return false;
+            const rs = RULESETS[ruleset];
+
+            // A hand is a SET: the card buttons toggle, so no hand this app can build
+            // holds the same number twice (and in the game itself a second copy of a
+            // number is a bust, not a score). Without that check every value below
+            // passed for twenty 12s — 240 doubled to 480, plus a hundred in repeated
+            // modifiers: past the 200 target and a declared winner off one message.
+            // The caps are the deck's own, not a round number.
+            if (!Array.isArray(d.cards) || d.cards.length > rs.numberCards.length) return false;
+            const allowedCards = new Set(rs.numberCards);
+            for (const c of d.cards) {
+                if (typeof c !== 'number' || !isFinite(c) || !allowedCards.has(c)) return false;
+            }
+            if (new Set(d.cards).size !== d.cards.length) return false;
+
+            if (!Array.isArray(d.modifiers) || d.modifiers.length > rs.modifierCards.length) return false;
+            const allowedMods = new Set(rs.modifierCards.map(m => parseInt(m, 10)));
+            for (const m of d.modifiers) {
+                if (typeof m !== 'number' || !isFinite(m) || !allowedMods.has(m)) return false;
+            }
+            if (new Set(d.modifiers).size !== d.modifiers.length) return false;
+
+            for (const key of ['x2', 'flip7', 'bust', 'zero', 'unlucky7', 'lucky13', 'half']) {
+                if (key in d && typeof d[key] !== 'boolean') return false;
+            }
+            // A target who has left the table is not a reason to refuse the score —
+            // their submission was in flight when the seat went. snapshotEntry drops
+            // an unknown name, so it simply becomes a +15 for the sender.
+            if (d.flip7Target != null && typeof d.flip7Target !== 'string') return false;
+            return true;
+        }
+
+        /**
+         * Tell a joined player whether the host is entering their score for them.
+         *
+         * Their card says so and stays live — but only if they are TOLD, and the flag
+         * used to travel in rejoin-ok alone. So a player whose card the host took over
+         * mid-round saw nothing: they submitted, were acked, read "Score submitted!"
+         * and waited, while the host's typed number quietly won the round and theirs
+         * was kept only as evidence.
+         */
+        function sendOverrideState(name) {
+            if (gameMode !== 'host' || !lobby || !gameStarted) return;
+            const entry = lobbyPlayers.find(p =>
+                !p.isLocal && p.clientId && sameName(p.name, name));
+            if (!entry) return;
+            lobby.send(entry.clientId, {
+                type: 'override',
+                overridden: hostEditingPlayers.has(name),
+                round: currentRound,
+                epoch: roundEpoch,
+            });
+        }
+
+        /**
+         * Host: record a peer's score for the current round.
+         * @returns {boolean} whether it was accepted (and should be acked).
+         */
+        function handleScoreSubmission(name, scoreData, fromClientId) {
+            if (!isValidScoreData(scoreData)) return false;
+
+            const entry = snapshotEntry(scoreData);
+            // Cross-player Brutal penalties are the host's business alone; finalizeRound
+            // recomputes them. A peer must not post itself points.
+            if ('penalty' in entry) entry.penalty = 0;
+            // A Flip 7 with no cards at all is not a score, it is a free +15. (A
+            // partly-entered hand with the bonus ticked by hand is a real thing a
+            // player does on a scorepad, so only the empty case is refused.)
+            if (entry.flip7 && flip7CardCount(entry) === 0) {
+                entry.flip7 = false;
+                if ('flip7Target' in entry) entry.flip7Target = null;
+            }
+            entry.score = calculateRoundScore(entry);
+
+            const store = () => {
+                peerSubmissions[name] = entry;
+                submissionEpochs[name] = roundEpoch;
+                if (fromClientId) submissionBy.set(name, fromClientId);
+            };
+
+            if (hostEditingPlayers.has(name)) {
+                const typed = roundState[nameToId(name)];
+                // An override nobody has typed into — including a seat All Bust took
+                // in one tap — belongs to the player who actually sent a score.
+                const untouched = isBlankEntry(typed) ||
+                    (allBustTakeovers.has(name) && isBustOnlyEntry(typed));
+                if (untouched) {
+                    hostEditingPlayers.delete(name);
+                    allBustTakeovers.delete(name);
+                    delete roundState[nameToId(name)];
+                    sendOverrideState(name);
+                    store();
+                } else {
+                    // Keep the host's number, but keep the evidence too, and say so —
+                    // the host can switch to it with 'Use their score'. Warn on the
+                    // arrival of anything NEW, not merely on the first one: a resend
+                    // after a reconnect is silent, a changed score is not.
+                    const prev = peerSubmissions[name];
+                    if (!prev || prev.score !== entry.score) {
+                        toast(name + ' sent a score while you were editing');
+                    }
+                    store();
+                }
+            } else if (peerSubmissions[name] && submissionEpochs[name] === roundEpoch) {
+                // Idempotent WITHIN this round: a duplicate (or a resend after a
+                // reconnect) changes nothing, but it is still acked so the sender
+                // stops wondering. Keyed on the epoch, so a submission for a round
+                // that was replayed is never mistaken for one already recorded.
+                return true;
+            } else {
+                store();
+            }
+
             renderGame();
+            return true;
         }
 
         // =====================================================================
         // UNDO / RESET
         // =====================================================================
         undoRoundBtn.addEventListener('click', () => {
+            if (gameMode === 'peer') return;
             if (rounds.length === 0) return;
             rounds.pop();
             currentRound = rounds.length + 1;
+            // The round number goes BACKWARDS here; the epoch never does. That is what
+            // stops a submission still in flight for the round just undone being
+            // accepted into the replay of it.
+            roundEpoch++;
             gameOver = false;
             winnerBanner.classList.add('hidden');
             resetRoundState();
             peerSubmissions = {};
+            submissionEpochs = {};
             hostEditingPlayers.clear();
+            allBustTakeovers.clear();
 
             if (gameMode === 'host') {
                 broadcastToAll({
                     type: 'round-reset',
                     rounds: rounds,
-                    currentRound: currentRound
+                    currentRound: currentRound,
+                    epoch: roundEpoch
                 });
             }
 
@@ -2817,39 +4257,79 @@
                 roundSection.classList.add('hidden');
                 saveState();
             } else {
+                // Nobody is over the line — which includes "not any more". The winner
+                // pressing Leave takes their scores off the board with them, and
+                // `gameOver` latched at true left the round card hidden for good: no
+                // way to score, no way to finish, on every screen at the table.
+                gameOver = false;
                 winnerBanner.classList.add('hidden');
             }
         }
 
-        resetGameBtn.addEventListener('click', () => {
-            if (!confirm('Are you sure you want to reset the game? All scores will be lost.')) return;
-
-            if (gameMode === 'host') {
-                broadcastToAll({ type: 'game-reset' });
+        // Reset Game is 'Leave Game' for a joined player: the label and the effect have
+        // to match, and neither role may perform the other's action.
+        resetGameBtn.addEventListener('click', async () => {
+            if (gameMode === 'peer') {
+                // Say what leaving actually costs: the seat is freed, so coming back
+                // is a new join into a game that is already under way.
+                if (!confirm('Leave this game? The host keeps the scores, and you will not be able to rejoin.')) return;
+                resetGameBtn.disabled = true;
+                await sendLeaveAndWait();
+                resetGameBtn.disabled = false;
+                leaveRoom('You left the game');
+                return;
             }
-
+            if (!confirm('Are you sure you want to reset the game? All scores will be lost.')) return;
+            // closeRoom instead of "broadcast then destroy in the same tick": that
+            // goodbye was thrown away by our own destroy(), leaving every player
+            // dialling a dead room for minutes. It takes up to ~1.25 s, so the button
+            // says what it is doing rather than looking dead.
+            await endRoomAsHost('Host reset the game', resetGameBtn, 'Closing room…');
             resetAll();
         });
 
         playAgainBtn.addEventListener('click', () => {
+            if (gameMode === 'peer') return;
             resetGameKeepPlayers();
         });
 
-        newGameBtn.addEventListener('click', () => {
-            if (gameMode === 'host') {
-                broadcastToAll({ type: 'game-reset' });
-            }
+        requestRematchBtn.addEventListener('click', () => {
+            if (gameMode !== 'peer' || !lobby) return;
+            lobby.sendToHost({ type: 'request-play-again' });
+            requestRematchBtn.disabled = true;
+            requestRematchBtn.textContent = 'Asked the host…';
+            // Re-arm after a moment. The host may simply not have looked yet, and a
+            // permanently dead button is a dead end for the rest of the evening.
+            if (rematchAskTimer) clearTimeout(rematchAskTimer);
+            rematchAskTimer = setTimeout(() => {
+                rematchAskTimer = null;
+                requestRematchBtn.disabled = false;
+                requestRematchBtn.textContent = 'Ask again';
+            }, 10000);
+        });
+
+        newGameBtn.addEventListener('click', async () => {
+            if (gameMode === 'peer') return;
+            await endRoomAsHost('Host started a new game', newGameBtn, 'Closing room…');
             resetAll();
         });
 
         function resetGameKeepPlayers() {
+            if (gameMode === 'peer') return;
             rounds = [];
             currentRound = 1;
+            // Back to round 1, but NOT back to the first round 1: a submission still
+            // in flight from the finished game must not land in the new one.
+            roundEpoch++;
             gameOver = false;
             resetRoundState();
             peerSubmissions = {};
-            myScoreSubmitted = false;
+            submissionEpochs = {};
+            clearMySubmission();
+            rematchRequests.clear();
+            updateRematchPrompt();
             hostEditingPlayers.clear();
+            allBustTakeovers.clear();
             winnerBanner.classList.add('hidden');
 
             if (gameMode === 'host') {
@@ -2857,6 +4337,7 @@
                     type: 'play-again',
                     players: players,
                     currentRound: 1,
+                    epoch: roundEpoch,
                     ruleset: ruleset,
                     brutal: isBrutal()
                 });
@@ -2873,11 +4354,15 @@
             players = [];
             rounds = [];
             currentRound = 1;
+            roundEpoch = 0;
             gameStarted = false;
             gameOver = false;
+            // No game in play: the next one may be played under different rules.
+            rulesetLocked = false;
             resetRoundState();
             peerSubmissions = {};
-            myScoreSubmitted = false;
+            submissionEpochs = {};
+            clearMySubmission();
             localStorage.removeItem('flip7-state');
 
             cleanupMultiplayer();
@@ -2886,9 +4371,25 @@
             showPhase(modePhase);
             winnerBanner.classList.add('hidden');
             mpBanner.classList.add('hidden');
+            requestRematchBtn.classList.add('hidden');
+            requestRematchBtn.disabled = false;
+            requestRematchBtn.textContent = 'Ask for a Rematch';
+            resetGameBtn.textContent = 'Reset Game';
+            playAgainBtn.textContent = 'Play Again';
+            newGameBtn.classList.remove('hidden');
+            playAgainBtn.classList.remove('hidden');
             renderPlayerTags();
             startGameBtn.disabled = true;
         }
+
+        // NO beforeunload goodbye. It fired on every reload, and closeRoom() is
+        // TERMINAL: each player was told the room had closed and stopped reconnecting
+        // for good, while the host tab came back seconds later under the very same
+        // room code (SlopLobby keeps it in sessionStorage precisely so a discarded or
+        // reloaded tab is not a new room). One stray refresh ended the game for the
+        // whole table with no way back. beforeunload cannot tell a refresh from a
+        // farewell, so the farewell is left to the buttons that mean it: Back and
+        // Reset Game both call endRoomAsHost().
 
         // =====================================================================
         // INIT
