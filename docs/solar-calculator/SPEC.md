@@ -1,5 +1,8 @@
 # solar-calculator — build spec
 
+> Binding companions: `AMENDMENTS.md` (accepted critique amendments; they win over this file) and
+> `CONTRACTS.md` (module signatures). Same directory.
+
 Project dir: `projects/solar-calculator/` in the slop monorepo. Worktree root:
 `/home/zack/Source/slop/.claude/worktrees/solar-calculator` (branch `feat/solar-calculator`).
 Live URL will be `https://solar-calculator.slop.zackpollard.pro`.
@@ -45,7 +48,7 @@ change the answer — the tool must show it, not assume it). "All of this and mo
   Octopus hopes plug-in batteries arrive early 2027 → offer a clearly-flagged "what-if" mode.
 - A **portable power station used like a UPS** (charges from a socket, powers the servers from its
   own outlets, never runs in parallel with the grid) is outside G98 — a legal way to shift the server
-  load (see `research/REPORT-ups.md` once written; treat its legal conclusion per that report).
+  load (see `research/REPORT-ups.md` + `VERIFY-ups.md`; catalog `research/ups/power-stations-verified.json`).
 - Export: statutory SEG needs MCS → **plug-in export is unpaid by default**. Exception: Octopus's own
   kits (£450 1×460 W, £650 2×460 W) unlock Octopus export tariffs incl. **Outgoing Prime**
   (16p 16:00–19:00 local, 9p otherwise) — compatible with Agile import (verified).
