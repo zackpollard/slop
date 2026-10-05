@@ -178,6 +178,9 @@ jobs:
           - name: pub-quiz
             pages-project: slop-pub-quiz
             directory: projects/pub-quiz
+          - name: solar-calculator
+            pages-project: slop-solar-calculator
+            directory: projects/solar-calculator
     steps:
       - name: Checkout
         uses: actions/checkout@v4

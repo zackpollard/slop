@@ -18,6 +18,7 @@ projects/
 |---------|-----|-------------|
 | [homepage](projects/homepage) | [slop.zackpollard.pro](https://slop.zackpollard.pro) | Main landing page and project index |
 | [roof-calculator](projects/roof-calculator) | [roof-calculator.slop.zackpollard.pro](https://roof-calculator.slop.zackpollard.pro) | Satellite map-based roof measurement tool |
+| [solar-calculator](projects/solar-calculator) | [solar-calculator.slop.zackpollard.pro](https://solar-calculator.slop.zackpollard.pro) | Plug-in solar, battery and power-station savings simulated from real Octopus usage, Agile prices and satellite sunshine |
 | [dnd-encounter-generator](projects/dnd-encounter-generator) | [dnd-encounter-generator.slop.zackpollard.pro](https://dnd-encounter-generator.slop.zackpollard.pro) | D&D 2024 combat encounter generator |
 | [dnd-banners](projects/dnd-banners) | [dnd-banners.slop.zackpollard.pro](https://dnd-banners.slop.zackpollard.pro) | D&D initiative banner tokens for a DM screen, exported as printable STL/3MF |
 | [cron](projects/cron) | [cron.slop.zackpollard.pro](https://cron.slop.zackpollard.pro) | Cron expression translator with timeline visualization |

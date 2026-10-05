@@ -25,7 +25,8 @@ projects/
 ├── cards-against-humanity/    # P2P Cards Against Humanity party game
 ├── waze-beep-sound-pack/      # Beeps-only Waze sound pack generator
 ├── pub-quiz/                  # Reusable pub quiz host app
-└── unifi-store/               # Parody UniFi Store with fake checkout
+├── unifi-store/               # Parody UniFi Store with fake checkout
+└── solar-calculator/          # Plug-in solar / battery / power-station savings from real Octopus data
 lib/                   # Shared code, copied into projects at deploy time
 ├── slopnet/           # PeerJS host/client wrapper (reconnect, heartbeat, queueing) + vitest suite
 ├── sloplobby/         # Lobby layer on SlopNet: clientId, rooms, player tracking, rejoin
@@ -58,6 +59,7 @@ tofu/                  # OpenTofu infrastructure (Cloudflare Pages + DNS)
 | cards-against-humanity | `projects/cards-against-humanity/` | Static HTML/CSS/JS, PeerJS | P2P Cards Against Humanity party game |
 | waze-beep-sound-pack | `projects/waze-beep-sound-pack/` | Static HTML/CSS/JS, Web Audio API, JSZip (CDN) | Beeps-only Waze sound pack generator with WAV/zip export |
 | pub-quiz | `projects/pub-quiz/` | Static HTML/CSS/JS (ES modules), Web Speech API, Web Audio API, iTunes Search API | Reusable pub quiz host app: JSON/JS quiz packs, spoken questions and answers, synthesised music and sound effects, an audio round that streams 30-second previews of real records from Apple (nothing downloaded or re-hosted) plus synthesised public-domain melodies as the offline fallback, per-question timer, difficulty-weighted scoring, on-screen marking, jokers, leaderboards, tie-breaker, podium and printable answer sheets. Two packs ship: a 7-round classic and an 18-round mixed-age bag (180 questions) that adds picture rounds, a kids-only round and a music round played backwards |
+| solar-calculator | `projects/solar-calculator/` | Static HTML/CSS/JS (ES modules + module Web Worker), canvas charts, Leaflet (CDN, lazy), Octopus Energy REST API, Open-Meteo satellite/archive APIs, postcodes.io | Simulates plug-in solar kits, hardwired batteries and UPS-style power stations half-hour by half-hour against the user's real Octopus consumption, their Agile (or other) tariff history and SARAH-3 satellite sunshine for their home; answer-first Verdict, typical-year + 20-year weather band, orientation sweep ("solar rose"), kit leaderboard from a verified UK catalog (`data/*.json`), finance (VAT schedule, levy-adjusted forward prices, payback/NPV/IRR) and GB legal-route rules. API key stays in the browser |
 | unifi-store | `projects/unifi-store/` | Static HTML/CSS/JS (ES modules) | Parody UniFi Store: real scraped catalog (`catalog.json`) + specs (`specs.json`), cart, fake checkout w/ promo codes, daily deals, compare tool, rack builder, order tracking, dopamine dashboard — all in `localStorage` |
 
 **When adding a new project:**
@@ -86,6 +88,10 @@ tofu/                  # OpenTofu infrastructure (Cloudflare Pages + DNS)
   breaking the no-build-step rule — but it also means **an edit to one of those pages
   can fail the suite**, and that a harness anchored to the page's structure may need
   re-anchoring. Run the suite after touching any P2P game, not just after touching `lib/`.
+  `solar-*.test.js` cover `projects/solar-calculator`: they import its pure ES-module engine
+  (`js/*.js` minus the DOM files) directly and run end-to-end acceptance numbers against the
+  shipped `data/demo.json` (real London Agile prices + satellite irradiance), with small
+  fixtures in `__tests__/fixtures/solar/`. Run the suite after touching that project too.
 - **Shared libraries live in `lib/`** and are *copied into* each consuming project by
   CI, not imported across directories. Both `.github/workflows/deploy.yml` and
   `.github/workflows/preview.yml` carry a **hardcoded list of project names** to copy
