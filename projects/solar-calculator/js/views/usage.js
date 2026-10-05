@@ -12,10 +12,11 @@
  *   4. tiles: most days (p10–p90 of daily lows), used 4–7pm, the bill, average price paid
  *   5. an average day: load profile stacked above the price profile (shared x, 4–7pm shaded —
  *      two charts, never a dual axis) beside a 4–7pm panel
- *   6. always-on load by month (median, dashed p10 / p90 days) · monthly bills (energy + standing)
- *   7. 'More charts' (lazy): load and price heatmaps, negative-price half-hours, how much the
- *      user already shifts (load- vs time-weighted price), Agile vs Flexible when the engine
- *      provides it, and a data-coverage note
+ *   6. always-on load by month (the typical day as a line over the quietest–busiest 10% of days as
+ *      a range band, from insights.baseLoad.monthly) · monthly bills (energy + standing)
+ *   7. 'More charts' (lazy): load and price heatmaps (half-hours with no meter reading hatched),
+ *      negative-price half-hours, how much the user already shifts (load- vs time-weighted
+ *      price), Agile against Octopus Flexible (insights.flexible), and a data-coverage note
  *
  * Re-rendering: the DOM is built once per dataset and filled from insights. A settings change or
  * a dataset reload keeps the previous render at reduced opacity until the new figures arrive (no
@@ -26,9 +27,9 @@
  * Remembered per device (store ui.chartTables, keys 'usage.more' and 'usage.table.<chart>'):
  * whether 'More charts' is open and which charts show their table twin.
  *
- * View-local components (candidates for ui.js/charts.js — see the report): floorGlyph() (the
- * always-on floor drawn under the average day) and figurePair() (two figures compared, with
- * the difference spelled out). Their CSS lives in the injected <style id="style-usage">.
+ * Shared pieces: ui.figurePair, ui.coverageChip, the charts' range-band series, heatmap mask and
+ * tableCaption. View-local: floorGlyph() (the always-on floor drawn under the average day); its
+ * CSS lives in the injected <style id="style-usage">.
  */
 
 const STYLE_ID = 'style-usage';
@@ -46,20 +47,6 @@ const CSS = `
 .uv-context { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 8px; }
 /* tariff codes and place names can be long unbroken strings: never let them widen the page */
 .uv-context .context-line { min-width: 0; overflow-wrap: anywhere; }
-/* the card heading above already names these charts; their title only captions the table twin */
-.uv-untitled .chart-title { display: none; }
-/* a hidden chart tooltip keeps its last position; after a resize that can sit past the edge and
-   widen the page, so park it at the origin once it has faded out */
-.uv .chart-tip:not(.show) { transform: none !important; transition: opacity .1s, transform 0s .1s; }
-.uv .help-dot { flex: none; }
-.uv-chip {
-    display: inline-flex; align-items: center; gap: 7px; min-height: 26px; padding: 0 10px;
-    border: 1px solid var(--border); border-radius: 999px; text-decoration: none;
-    font-family: var(--font-mono); font-size: 11.5px; color: var(--text-2); white-space: nowrap;
-}
-.uv-chip:hover { border-color: var(--accent-line); color: var(--text); }
-.uv-chip-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--good); flex: none; }
-.uv-chip.is-warn .uv-chip-dot { background: var(--warn); }
 
 .uv-banner { align-items: center; flex-wrap: wrap; }
 .uv-banner-text { flex: 1 1 320px; min-width: 0; }
@@ -117,19 +104,15 @@ const CSS = `
 .uv-panel p { color: var(--text-2); font-size: 13.5px; }
 .uv-panel p b { color: var(--text); font-weight: 600; }
 .uv-panel-links { display: flex; flex-direction: column; gap: 2px; align-items: flex-start; }
-
-.uv-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--hairline); border: 1px solid var(--hairline); border-radius: 8px; overflow: hidden; }
-.uv-pair > div { background: var(--surface); padding: 11px 13px 12px; min-width: 0; }
-.uv-pair-label { font-size: 12px; color: var(--muted); line-height: 1.35; }
-.uv-pair-fig { font-family: var(--font-mono); font-size: 22px; font-weight: 600; letter-spacing: -.035em; color: var(--text); margin-top: 4px; }
-.uv-pair-fig small { font-family: var(--font-body); font-size: 12px; font-weight: 500; letter-spacing: 0; color: var(--muted); margin-left: 4px; }
-.uv-pair > div.is-strong { box-shadow: inset 0 2px 0 var(--accent); }
+.uv-flex-parts { margin: 12px 0 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 16px; font-size: 13px; }
+.uv-flex-parts dt { color: var(--muted); }
+.uv-flex-parts dd { margin: 0; font-family: var(--font-mono); font-size: 12.5px; color: var(--text-2); min-width: 0; overflow-wrap: anywhere; }
 
 .uv-more > summary { font-size: 15px; font-weight: 600; color: var(--text); padding: 16px 2px; }
 .uv-more > summary .uv-more-sub { display: block; font-size: 13px; font-weight: 400; color: var(--muted); margin-top: 2px; }
 .uv-more-body { display: flex; flex-direction: column; gap: 20px; padding-top: 6px; }
 .uv-note { font-size: 12.5px; color: var(--muted); margin-top: 8px; display: flex; gap: 8px; align-items: flex-start; }
-.uv-note .uv-swatch { margin-top: 3px; background: var(--ramp-empty); }
+.uv-note .key { margin-top: 3px; }
 .uv-facts { margin: 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 22px; font-size: 13.5px; }
 .uv-facts dt { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding-top: 3px; }
 .uv-facts dd { margin: 0; color: var(--text-2); min-width: 0; overflow-wrap: anywhere; }
@@ -152,7 +135,6 @@ const CSS = `
     .uv-hero-title { font-size: 21px; }
     .uv-readout-fig { font-size: 46px; }
     .uv-floor-plot { height: 76px; }
-    .uv-chip { min-height: 44px; padding: 0 12px; }
     .uv-facts { grid-template-columns: minmax(0, 1fr); gap: 2px; }
     .uv-facts dd { margin-bottom: 10px; }
     .uv-banner .btn { width: 100%; }
@@ -169,12 +151,9 @@ const CSS = `
     .uv-readout { border-left: 1px solid #ddd; padding-left: 20px; border-top: 0; padding-top: 0; }
     .uv-readout-fig { font-size: 44px; }
     .uv .tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
-    /* Cards that carry table twins run longer than a page: let them break between rows (the
-       global rule keeps every card whole, which pushes them on and leaves blank pages), but never
-       through a chart or a figure. */
-    .uv .card:not(.uv-hero):has(.chart) { break-inside: auto; }
-    .uv .chart-plot, .uv .chart-head, .uv-pair, .uv-floor, .uv .stat, .uv .card-head { break-inside: avoid; }
-    .uv .card-head { break-after: avoid; }
+    /* style.css lets a card holding a chart break between table rows (never through a chart, a
+       figure pair or a heading); the floor glyph is a figure too */
+    .uv-floor { break-inside: avoid; }
 }
 `;
 
@@ -184,8 +163,8 @@ const finite = v => typeof v === 'number' && Number.isFinite(v);
 const HH = Array.from({ length: 48 }, (_, i) => `${String(i >> 1).padStart(2, '0')}:${i % 2 ? '30' : '00'}`);
 const hhRange = i => `${HH[i]}–${HH[(i + 1) % 48] === '00:00' ? '24:00' : HH[(i + 1) % 48]}`;
 const toW = kwhPerSlot => kwhPerSlot * 2000;
-/** A line-series value: charts.js reads +null as 0, so a gap must be NaN to stay a gap. */
-const gap = v => (finite(v) ? v : NaN);
+/** A chart value: a number, or null for a gap (charts.js draws null as a break, never as zero). */
+const gap = v => (finite(v) ? v : null);
 
 /** Linear-interpolated quantile of a sorted array (numpy default, as insights.js uses). */
 function quantile(sorted, q) {
@@ -204,23 +183,53 @@ function quantilesOf(arr, qs) {
 }
 
 /**
- * Per-month p10 / median / p90 of the daily always-on values (insights dailyW, NaN = day dropped).
- * @param {Float64Array|number[]} dailyW
- * @param {string[]} dates local 'YYYY-MM-DD', aligned with dailyW
- * @param {string[]} keys month keys to report, in order
+ * The always-on load month by month, as the chart draws it: insights.baseLoad.monthly rows
+ * ({ key, w = the median day, p10, p90, days }), or — without them — the bill months with no
+ * figures, so the axis still runs the length of the data.
+ * @param {{ monthly?: Array<{ key: string, w?: number|null, p10?: number|null, p90?: number|null, days?: number }> }} bl insights.baseLoad
+ * @param {Array<{ key: string }>} [bills] insights.monthlyBills
+ * @returns {Array<{ key: string, w: number|null, p10: number|null, p90: number|null, days: number }>}
  */
-function monthlyBaseBands(dailyW, dates, keys) {
-    const by = new Map(keys.map(k => [k, []]));
-    for (let i = 0; i < (dailyW?.length || 0); i++) {
-        const v = dailyW[i];
-        if (!Number.isFinite(v)) continue;
-        by.get(String(dates?.[i] || '').slice(0, 7))?.push(v);
-    }
-    return keys.map(k => {
-        const v = (by.get(k) || []).sort((a, b) => a - b);
-        return { key: k, days: v.length, p10: quantile(v, 0.1), p50: quantile(v, 0.5), p90: quantile(v, 0.9) };
-    });
+export function baseLoadMonths(bl, bills = []) {
+    const rows = Array.isArray(bl?.monthly) && bl.monthly.length ? bl.monthly : (bills || []).map(b => ({ key: b.key }));
+    return rows.map(m => ({ key: m.key, w: gap(m.w), p10: gap(m.p10), p90: gap(m.p90), days: finite(m.days) ? m.days : 0 }));
 }
+
+/**
+ * The same usage on Octopus Flexible against what the user paid, as the Usage tab words it
+ * (insights.flexible, insights.js flexibleCompare). null when there are no Flexible prices, or
+ * when the user's own usage is already priced on Flexible (nothing to compare).
+ * @param {object} ins Insights
+ * @param {{ priceBasis?: string, tariffCode?: string }|null} summary
+ * @returns {{ yours: string, isAgile: boolean, paid: boolean, billedGbp: number, flexGbp: number, diffGbp: number,
+ *   outcome: 'same'|'flexDearer'|'flexCheaper', energyGbp: number, standingGbp: number, billedEnergyGbp: number,
+ *   billedStandingGbp: number, unitP: number|null, code: string|null, product: string|null }|null}
+ *   diffGbp = Flexible − billed (positive: Flexible would have cost more); 'same' within £1
+ */
+export function flexibleCard(ins, summary) {
+    const fx = ins?.flexible;
+    if (!fx || !finite(fx.energyGbp) || summary?.priceBasis === 'flexible') return null;
+    const tot = ins.totals || {};
+    const billedEnergyGbp = finite(tot.energyGbp) ? tot.energyGbp : 0;
+    const billedStandingGbp = finite(tot.standingGbp) ? tot.standingGbp : 0;
+    const standingGbp = finite(fx.standingGbp) ? fx.standingGbp : billedStandingGbp;
+    const billedGbp = billedEnergyGbp + billedStandingGbp;
+    const flexGbp = fx.energyGbp + standingGbp;
+    const diffGbp = finite(fx.deltaGbp) ? fx.deltaGbp : flexGbp - billedGbp;
+    const isAgile = /AGILE/i.test(summary?.tariffCode || '') || summary?.priceBasis === 'agile';
+    return {
+        yours: isAgile ? 'Agile' : summary?.priceBasis === 'flat' ? 'your flat price' : 'your prices', isAgile,
+        // 'mine': the account's own tariffs, i.e. what was actually paid; otherwise the usage is
+        // only priced as if on Agile / a flat price (a CSV, a hand-entered profile, a chosen basis)
+        paid: !summary?.priceBasis || summary.priceBasis === 'mine',
+        billedGbp, flexGbp, diffGbp, outcome: Math.abs(diffGbp) < 1 ? 'same' : diffGbp > 0 ? 'flexDearer' : 'flexCheaper',
+        energyGbp: fx.energyGbp, standingGbp, billedEnergyGbp, billedStandingGbp,
+        unitP: finite(fx.unitP) ? fx.unitP : null, code: fx.code ?? null, product: fx.product ?? null,
+    };
+}
+
+/** The 'More charts' summary line: what is inside (the Flexible comparison only when there is one). */
+const moreSubText = flex => `Every half-hour of the year, negative prices, how much you already shift, ${flex ? 'what Octopus Flexible would have cost, ' : ''}and where the data came from`;
 
 /** Negative-price half-hours per month from the day × 48 price heatmap (load in real slots only). */
 function negativeByMonth(hm, keys) {
@@ -284,6 +293,28 @@ function heatmapGaps(hm) {
         }
     }
     return { noReading, skippedDates: [...skipped] };
+}
+
+/** What a hatched load-heatmap cell is (its key, tooltip note and table marker). */
+const MASK_LABEL = 'No reading — estimated';
+
+/**
+ * The load heatmap's hatch mask: half-hours that exist but have no real meter reading (gap-filled,
+ * or estimated to complete a year) — insights.heatmap.filled, or, without it, the cells that have a
+ * price but no real load. The hour the clocks skip in March has neither and is never hatched.
+ * @param {{ days: number, load?: Float32Array, price?: Float32Array, filled?: Uint8Array }} hm
+ * @returns {Uint8Array|null} same layout as the heatmap values; null when every half-hour has a reading
+ */
+export function loadMask(hm) {
+    const n = (hm?.days || 0) * 48;
+    if (!n) return null;
+    let m = hm.filled && hm.filled.length === n ? hm.filled : null;
+    if (!m) {
+        m = new Uint8Array(n);
+        for (let i = 0; i < n; i++) if (Number.isFinite(hm.price?.[i]) && !Number.isFinite(hm.load?.[i])) m[i] = 1;
+    }
+    for (let i = 0; i < n; i++) if (m[i]) return m;
+    return null;
 }
 
 /** Month label for axes: 'Oct', or "Oct ’25" when the data spans more than a year. */
@@ -421,9 +452,9 @@ export default {
 
     /**
      * Create a chart on first use and update it afterwards (keeps hover state, focus and the table
-     * toggle). The table twin's open state is remembered per device, and the toggle gets a name
-     * that says which chart it belongs to (eight buttons all called "Table" are no use to a
-     * screen-reader user).
+     * toggle). The table twin's open state is remembered per device. Charts under a card heading
+     * pass `tableCaption` instead of `title`: the heading already names them, and the caption still
+     * names the table twin and its toggle ("Table: …").
      */
     chart(key, create, host, spec) {
         const v = this.v;
@@ -431,7 +462,6 @@ export default {
         const c = v.charts[key];
         if (c) c.update(full);
         else v.charts[key] = create(host, full);
-        host.querySelector('.chart-toggle')?.setAttribute('aria-label', `Table: ${spec.title || spec.ariaLabel}`);
     },
 
     /* ── skeleton & error ───────────────────────────────────────────────── */
@@ -484,7 +514,6 @@ export default {
         const h = ui.h;
         const ctxLine = [];
         const cov = ins?.coverage ?? summary?.coverage;
-        const real = cov?.realPct;
         const estDays = finite(cov?.extrapolatedSlots) ? Math.round(cov.extrapolatedSlots / 48) : 0;
         if (summary) {
             const d = s => (s ? fmt.date(Date.parse(`${s}T12:00:00Z`)) : '?');
@@ -499,11 +528,8 @@ export default {
             const where = [postcode, summary.regionName || (summary.region ? `region ${summary.region}` : null)].filter(Boolean).join(', ');
             if (where) ctxLine.push(` · ${where}`);
         }
-        const chip = finite(real)
-            ? h('a', { class: ['uv-chip', real < 95 && 'is-warn'], href: '#data', title: 'See where your data came from' },
-                h('span', { class: 'uv-chip-dot', 'aria-hidden': 'true' }),
-                `${fmt.pct(real, { dp: real >= 99.95 || real < 10 ? 0 : 1 })} real readings${estDays ? ` · ${fmt.num(estDays)} days estimated` : ''}`)
-            : null;
+        // "100% real readings", or "53.7% real readings · 166 days estimated" in amber below 95%
+        const chip = ui.coverageChip(cov);
         return h('div', { class: 'view-head' }, h('div', null,
             h('div', { class: 'view-kicker' }, 'Usage'),
             // tabindex -1: focus lands here when a re-render removes the control the user just used
@@ -525,17 +551,17 @@ export default {
         p.loadProfile = h('div');
         p.priceProfile = h('div');
         p.peakPanel = h('aside', { class: 'uv-panel', 'aria-label': 'The 4–7pm peak' });
-        p.baseMonthly = h('div', { class: 'uv-untitled' });
+        p.baseMonthly = h('div');
         p.baseSub = h('span');
-        p.bills = h('div', { class: 'uv-untitled' });
+        p.bills = h('div');
         p.billsSub = h('span');
         p.more = h('div', { class: 'uv-more-body' });
         p.live = h('div', { class: 'sr-only', 'aria-live': 'polite' });
+        p.moreSub = h('span', { class: 'uv-more-sub' }, moreSubText(false));
 
         const more = ui.details({
             className: 'uv-more',
-            summary: h('span', null, 'More charts',
-                h('span', { class: 'uv-more-sub' }, 'Every half-hour of the year, negative prices, how much you already shift, and where the data came from')),
+            summary: h('span', null, 'More charts', p.moreSub),
             body: p.more,
             open: this.pref('more'),        // remembered on this device, so it survives reloads
             onToggle: open => { this.setPref('more', open); if (open) this.fillMore(); },
@@ -575,6 +601,7 @@ export default {
         this.fillTiles(summary, ins);
         this.fillDay(summary, ins);
         this.fillMonthly(summary, ins);
+        p.moreSub.textContent = moreSubText(!!flexibleCard(ins, summary));
         if (v.moreBuilt || p.moreDetails.open) this.fillMore();
         const { fmt } = this.ctx;
         // Set a beat after the build: a live region filled in the same task it was inserted in is
@@ -751,7 +778,7 @@ export default {
         const ratio = finite(peakPrice) && finite(restPrice) && restPrice > 0 ? peakPrice / restPrice : null;
         v.parts.peakPanel.replaceChildren(
             h('div', { class: 'uv-panel-title' }, 'The 4–7pm peak'),
-            figurePair(h, [
+            ui.figurePair([
                 { label: 'You paid per kWh at 4–7pm', value: fmt.p(peakPrice), strong: true },
                 { label: 'and the rest of the day', value: fmt.p(restPrice) },
             ]),
@@ -769,17 +796,17 @@ export default {
         const v = this.v;
         const bl = ins.baseLoad || {};
         const bills = ins.monthlyBills || [];
-        const keys = (bl.monthly?.length ? bl.monthly : bills).map(m => m.key);
+        // per month: the median day (w) and the quietest / busiest 10% of days (insights.js)
+        const months = baseLoadMonths(bl, bills);
+        const keys = months.map(m => m.key);
         const long = keys.length > 12;
-        const bands = monthlyBaseBands(bl.dailyW, ins.heatmap?.dates, keys);
-        const med = new Map((bl.monthly || []).map(m => [m.key, m.w]));
         const pb = store.get().settings?.projectBaseW;
         const flagged = finite(bl.driftPct) && Math.abs(bl.driftPct) >= DRIFT_FLAG_PCT;
 
         // y from below the lowest low day (not zero) so the spread and any drift are visible;
         // the floor is still labelled, so nothing pretends the load is near zero.
-        const lows = bands.map(b => b.p10).filter(finite);
-        const highs = bands.map(b => b.p90).filter(finite);
+        const lows = months.map(m => m.p10 ?? m.w).filter(finite);
+        const highs = months.map(m => m.p90 ?? m.w).filter(finite);
         if (finite(pb)) { lows.push(pb); highs.push(pb); }
         const lo = lows.length ? Math.min(...lows) : 0;
         const hi = highs.length ? Math.max(...highs) : 1;
@@ -791,22 +818,23 @@ export default {
         const yMax = Math.ceil((hi + pad) / step) * step;
 
         const series = [
-            { key: 'p50', label: 'Typical day', color: 'load', values: bands.map(b => gap(med.has(b.key) ? med.get(b.key) : b.p50)), format: val => fmt.w(val) },
-            { key: 'p90', label: 'Busiest 10%', color: 'muted', values: bands.map(b => gap(b.p90)), dash: [2, 3], format: val => fmt.w(val) },
-            { key: 'p10', label: 'Quietest 10%', color: 'muted', values: bands.map(b => gap(b.p10)), dash: [5, 4], format: val => fmt.w(val) },
+            // the spread of days as a band behind the typical day (tooltip "556–573 W", two table columns)
+            { key: 'range', label: '8 days in 10', color: 'load', lo: months.map(m => m.p10), hi: months.map(m => m.p90),
+                loLabel: 'low', hiLabel: 'high', format: val => fmt.w(val) },
+            { key: 'p50', label: 'Typical day', color: 'load', values: months.map(m => m.w), format: val => fmt.w(val) },
         ];
         if (finite(pb)) series.push({ key: 'proj', label: `Used for forecasts (${fmt.w(pb)})`, color: '--accent', values: keys.map(() => pb), dash: [6, 3], format: val => fmt.w(val) });
         const n = keys.length;
         this.chart('baseMonthly', charts.createLine, v.parts.baseMonthly, {
-            title: 'Always-on load, month by month',
-            ariaLabel: 'Always-on load by month: median day, with the quietest and busiest 10% of days',
+            tableCaption: 'Always-on load, month by month',
+            ariaLabel: 'Always-on load by month: the typical day, with the range the quietest and busiest 10% of days fall outside',
             height: 240, endLabels: false,
-            x: { values: keys, format: k => monthTick(k, long), tipFormat: (k, i) => `${fmt.month(k)} · ${bands[i]?.days ? `${bands[i].days} days` : 'no complete days of readings'}` },
+            x: { values: keys, format: k => monthTick(k, long), tipFormat: (k, i) => `${fmt.month(k)} · ${months[i]?.days ? `${months[i].days} days` : 'no complete days of readings'}` },
             y: { label: 'W', format: val => fmt.num(val), min: yMin, max: yMax, zero: false },
             series,
             bands: flagged && n >= 3 ? [{ from: n - 2, to: n, label: 'last 2 months', legend: false }] : [],
         });
-        v.parts.baseSub.textContent = `Each day’s always-on figure, by month: the typical day, and the quietest and busiest 10% of days. Whole period ${fmt.w(bl.w)} · last 2 months ${fmt.w(bl.recentW)}.`;
+        v.parts.baseSub.textContent = `Each day’s always-on figure, by month: the typical day, and the band 8 days in 10 fall inside (the quietest and busiest 10% lie outside it). Whole period ${fmt.w(bl.w)} · last 2 months ${fmt.w(bl.recentW)}.`;
 
         const billKeys = bills.map(b => b.key);
         const billLong = billKeys.length > 12;
@@ -822,7 +850,7 @@ export default {
             ]
             : [{ key: 'energy', label: 'Energy', color: 'import', values: bills.map(b => b.energyGbp), format: energyFmt }];
         this.chart('bills', charts.createBars, v.parts.bills, {
-            title: 'Monthly bills',
+            tableCaption: 'Monthly bills',
             ariaLabel: 'Monthly electricity bill: energy and standing charges, as billed including VAT',
             height: 240, stacked: true, totalLabel: 'Bill',
             categories: billKeys,
@@ -864,9 +892,9 @@ export default {
 
         if (!v.moreBuilt) {
             v.moreBuilt = true;
-            p.loadHeat = h('div', { class: 'uv-untitled' });
-            p.priceHeat = h('div', { class: 'uv-untitled' });
-            p.negChart = h('div', { class: 'uv-untitled' });
+            p.loadHeat = h('div');
+            p.priceHeat = h('div');
+            p.negChart = h('div');
             p.negLede = h('p', { class: 'uv-lede-sm' });
             p.shift = h('div');
             p.flex = h('div', { hidden: true });
@@ -890,33 +918,37 @@ export default {
         for (let i = 0; i < D * 48; i++) loadVals[i] = toW(hm.load?.[i] ?? NaN);
         const [l1, l99] = quantilesOf(loadVals, [0.01, 0.99]);
         const gaps = heatmapGaps(hm);
+        // Half-hours with no real meter reading (gap-filled, or estimated to complete a year) are
+        // hatched; the hour the clocks skip in March has no half-hour at all and stays plain grey.
+        const mask = loadMask(hm);
         this.chart('loadHeat', charts.createHeatmap, p.loadHeat, {
-            title: 'Your load, every half-hour',
+            tableCaption: 'Your load, every half-hour',
             ariaLabel: 'Load for every half-hour of every day, in watts',
             rows: D, cols: 48, values: loadVals, rowLabels: hm.dates || [], colLabels: HH, transpose: true, height: 260,
             valueLabel: 'average over the half-hour', format:val => `${fmt.num(val)}\u00a0W`,
             scale: { ramp: 'sequential', min: finite(l1) ? l1 : undefined, max: finite(l99) ? l99 : undefined },
+            mask, maskLabel: MASK_LABEL,
         });
-        // What the grey cells are, in the coverage's own terms (half-hours), not "missing cells":
-        // the hour the clocks skip in March is grey too but was never missing.
+        // What the hatched cells are, in the coverage's own terms (half-hours), not "missing cells".
         const cov = ins.coverage || summary.coverage || {};
         const why = [
             cov.extrapolatedSlots > 0 ? `${fmt.num(cov.extrapolatedSlots)} half-hours outside the period your meter covers, estimated to make up a full year` : null,
             cov.filledSlots > 0 ? `${fmt.num(cov.filledSlots)} in gaps, filled in from the same time on similar days` : null,
         ].filter(Boolean);
         const dstNote = gaps.skippedDates.length
-            ? ` The grey notch on ${gaps.skippedDates.map(d => fmt.date(Date.parse(`${d}T12:00:00Z`))).join(' and ')} is the hour the clocks went forward.`
+            ? ` The plain grey notch on ${gaps.skippedDates.map(d => fmt.date(Date.parse(`${d}T12:00:00Z`))).join(' and ')} is the hour the clocks went forward.`
             : '';
-        p.loadHeatNote.replaceChildren(h('span', { class: 'uv-swatch', 'aria-hidden': 'true' }),
+        ui.put(p.loadHeatNote,
+            gaps.noReading ? h('span', { class: 'key key-hatch', 'aria-hidden': 'true' }) : null,
             h('span', null, gaps.noReading
-                ? `Grey: no meter reading${why.length ? ` — ${why.join('; ')}` : ` (${fmt.num(gaps.noReading)} half-hour${gaps.noReading === 1 ? '' : 's'})`}.${dstNote} ${SCALE_NOTE}.`
+                ? `Hatched: no meter reading${why.length ? ` — ${why.join('; ')}` : ` (${fmt.num(gaps.noReading)} half-hour${gaps.noReading === 1 ? '' : 's'})`}. The always-on load and the average day leave them out; the bills include their estimates.${dstNote} ${SCALE_NOTE}.`
                 : `Every half-hour has a real meter reading.${dstNote} ${SCALE_NOTE}.`));
 
         const priceVals = hm.price || new Float32Array(0);
         const [p1, p99] = quantilesOf(priceVals, [0.01, 0.99]);
         const tw = ins.timeWeightedPriceP;
         this.chart('priceHeat', charts.createHeatmap, p.priceHeat, {
-            title: 'The price, every half-hour',
+            tableCaption: 'The price, every half-hour',
             ariaLabel: 'Import price for every half-hour of every day, pence per kWh',
             rows: D, cols: 48, values: priceVals, rowLabels: hm.dates || [], colLabels: HH, transpose: true, height: 260,
             valueLabel: 'per kWh, incl. VAT', format: val => fmt.p(val),
@@ -942,7 +974,7 @@ export default {
         }
         const negLong = keys.length > 12;
         this.chart('neg', charts.createBars, p.negChart, {
-            title: 'Negative-price half-hours by month',
+            tableCaption: 'Negative-price half-hours by month',
             ariaLabel: 'Half-hours with a negative price, by month',
             height: 220,
             categories: keys,
@@ -959,7 +991,7 @@ export default {
         const eveningHeavy = finite(ins.peak?.kwhSharePct) && ins.peak.kwhSharePct > 15;
         p.shift.replaceChildren(
             // 1 dp, the same as the 'Average price paid' tile above
-            figurePair(h, [
+            ui.figurePair([
                 { label: 'You paid per kWh, on average', value: fmt.p(lw), strong: true },
                 { label: 'A perfectly flat load would pay', value: fmt.p(tw) },
             ]),
@@ -970,21 +1002,31 @@ export default {
                             eveningHeavy ? ', and the 4–7pm peak is a big part of that. Moving what you can out of those three hours saves money before any solar.' : '. Moving what you can to cheaper half-hours saves money before any solar.']
                             : 'Your use is spread almost exactly like a flat load: no shifting yet, and nothing working against you either.'));
 
-        // Agile vs Flexible — only when the engine supplies Flexible prices (see the report)
-        const fx = ins.flexible || ins.tariffCompare?.flexible || null;
-        if (fx && finite(fx.energyGbp)) {
-            const agileTotal = (ins.totals?.energyGbp ?? 0) + (ins.totals?.standingGbp ?? 0);
-            const flexTotal = fx.energyGbp + (finite(fx.standingGbp) ? fx.standingGbp : ins.totals?.standingGbp ?? 0);
-            const diff = flexTotal - agileTotal;
-            p.flex.replaceChildren(ui.card({ level: 3, title: 'Agile against Flexible', body: [
-                figurePair(h, [
-                    { label: 'Your prices (Agile)', value: fmt.gbp(agileTotal), strong: diff >= 0 },
-                    { label: `Octopus Flexible${finite(fx.unitP) ? ` at ${fmt.p(fx.unitP)}` : ''}`, value: fmt.gbp(flexTotal), strong: diff < 0 },
+        // The same usage on Octopus Flexible (insights.flexible): hidden without Flexible prices, or
+        // when the usage is already priced on Flexible
+        const fc = flexibleCard(ins, summary);
+        if (fc) {
+            const days = Math.round(ins.totals?.days ?? summary.days ?? 0);
+            const yours = fc.isAgile ? 'Agile' : 'Your prices';
+            // 'What you paid' only when these are the account's own bills; a CSV or a profile is priced as if on Agile
+            const mineLabel = fc.paid ? `What you paid${fc.isAgile ? ' on Agile' : ''}` : `Your usage on ${fc.isAgile ? 'Agile' : fc.yours.replace(/^your /, '')}`;
+            const cheaper = fc.paid ? [`${yours} saved you `, h('b', null, fmt.gbp(fc.diffGbp)), ' against Flexible']
+                : [`${yours} comes out `, h('b', null, `${fmt.gbp(fc.diffGbp)} cheaper`), ' than Flexible'];
+            p.flex.replaceChildren(ui.card({ level: 3, title: fc.isAgile ? 'Agile against Flexible' : 'Your prices against Flexible', body: [
+                ui.figurePair([
+                    // the cheaper of the two carries the accent rule
+                    { label: mineLabel, value: fmt.gbp(fc.billedGbp), strong: fc.diffGbp >= 0 },
+                    { label: 'On Octopus Flexible', value: fmt.gbp(fc.flexGbp), strong: fc.diffGbp < 0 },
                 ]),
                 h('p', { class: 'uv-lede-sm', style: { margin: '14px 0 0' } },
-                    Math.abs(diff) < 1 ? 'The same usage would have cost about the same on Flexible.'
-                        : diff > 0 ? `The same usage would have cost ${fmt.gbp(diff)} more on Flexible, standing charges included.`
-                            : `The same usage would have cost ${fmt.gbp(-diff)} less on Flexible, standing charges included.`),
+                    fc.outcome === 'same' ? `Over these ${fmt.num(days)} days the same usage would have cost about the same on Flexible.`
+                        : fc.outcome === 'flexDearer' ? [`Over these ${fmt.num(days)} days `, ...cheaper, ', standing charges included.']
+                            : [`Over these ${fmt.num(days)} days Flexible would have cost `, h('b', null, `${fmt.gbp(-fc.diffGbp)} less`), ` than ${fc.yours}, standing charges included.`]),
+                h('dl', { class: 'uv-flex-parts' },
+                    h('dt', null, yours), h('dd', null, `${fmt.gbp(fc.billedEnergyGbp)} energy + ${fmt.gbp(fc.billedStandingGbp)} standing`),
+                    h('dt', null, 'Flexible'), h('dd', null, `${fmt.gbp(fc.energyGbp)} energy + ${fmt.gbp(fc.standingGbp)} standing`,
+                        fc.unitP != null ? ` · ${fmt.p(fc.unitP)} a kWh on average` : '')),
+                h('p', { class: 'uv-note' }, `Flexible Octopus${fc.code ? ` (${fc.code})` : fc.product ? ` (${fc.product})` : ''}, paying by Direct Debit, at the rates it charged on each date, VAT included the same way as your bill.`),
             ] }));
         } else p.flex.replaceChildren();
         p.flex.hidden = !p.flex.firstChild;
@@ -1075,17 +1117,4 @@ function floorGlyph(h, fmt, profileKwh, baseW, sharePct) {
             h('span', null, h('span', { class: 'uv-swatch uv-swatch-base', 'aria-hidden': 'true' }),
                 `Always-on ${fmt.w(baseW)}${finite(sharePct) ? ` · ${fmt.pct(sharePct, { dp: 0 })} of your kWh` : ''}`),
             h('span', null, h('span', { class: 'uv-swatch uv-swatch-above', 'aria-hidden': 'true' }), 'Everything else, on an average day')));
-}
-
-/**
- * usage-figurePair — two figures side by side for a direct comparison (the stronger one gets the
- * accent rule). Used for peak vs off-peak price and load- vs time-weighted price.
- * @param {Function} h ui.h
- * @param {Array<{ label: string, value: string, strong?: boolean }>} items
- * @returns {HTMLElement}
- */
-function figurePair(h, items) {
-    return h('div', { class: 'uv-pair' }, items.map(it => h('div', { class: it.strong ? 'is-strong' : null },
-        h('div', { class: 'uv-pair-label' }, it.label),
-        h('div', { class: 'uv-pair-fig' }, it.value))));
 }

@@ -23,7 +23,7 @@ import { SLOT_MS, DT_H, buildLocalIndex, localMidnightUtc, localParts, daysInMon
 import { withVat } from './vat.js';
 import {
     OctopusClient, parseAccount, normaliseAccountNumber, fetchAgreementPrices, fetchProductPrices, fetchStandingCharges,
-    fetchExportPrices, resolveRegion, mergeConsumption, parseTariffCode,
+    fetchExportPrices, fetchFlexibleRates, resolveRegion, mergeConsumption, parseTariffCode,
     REGION_CENTROIDS, REGIONS, CURRENT, OUTGOING_FIXED_CHANGE_MS,
 } from './octopus.js';
 import { parseConsumptionCsv } from './csv.js';
@@ -439,6 +439,8 @@ function normRegion(r) {
  * @property {*} [exportPrime]  real Prime rows where they exist (gaps synthesised by clock)
  * @property {*} [exportFixed]  Outgoing rows (gaps synthesised 15p → 12p on 2026-03-01)
  * @property {Array<{ fromMs, toMs, pPerDayExc }>} [standing]
+ * @property {{ product: string, code?: string, unit: Array<{ fromMs, toMs, exc }>, standing?: Array<{ fromMs, toMs, pPerDayExc }> }|null} [flexible]
+ *   the region's Octopus Flexible prices over the window (insights' "same usage on Flexible"); null = not fetched
  * @property {{ start?: number, ghi, dni, dhi, tempC, windMs, wxSource, meta? }} weather
  * @property {object|null} [climatology]
  * @property {Array<{ untilMs: number, rate: number }>} [vatSchedule]
@@ -446,6 +448,21 @@ function normRegion(r) {
  * @property {string[]} [notes]
  * @property {number} [createdAtMs]
  */
+
+/**
+ * Flexible price records clipped to the window [a0, a1) and checked (finite prices, ascending);
+ * null when there are no usable unit rates.
+ */
+function normFlexible(f, a0, a1) {
+    if (!f || typeof f !== 'object' || !Array.isArray(f.unit)) return null;
+    const clip = (recs, key) => (Array.isArray(recs) ? recs : [])
+        .map(r => ({ fromMs: Math.max(Number(r.fromMs ?? -Infinity), a0), toMs: Math.min(Number(r.toMs ?? Infinity), a1), [key]: Number(r[key]) }))
+        .filter(r => r.toMs > r.fromMs && Number.isFinite(r[key]))
+        .sort((x, y) => x.fromMs - y.fromMs);
+    const unit = clip(f.unit, 'exc');
+    if (!unit.length) return null;
+    return { product: String(f.product ?? CURRENT.flexible), code: f.code ?? null, unit, standing: clip(f.standing, 'pPerDayExc') };
+}
 
 /**
  * Pure: align every input by epoch ms onto (start, n), clean and fill the load, build
@@ -577,6 +594,7 @@ export function buildDataset(parts) {
     const weatherMeta = { ...(w.meta ?? {}), counts };
 
     const standing = (parts.standing ?? []).map(s => ({ fromMs: s.fromMs, toMs: s.toMs, pPerDayExc: s.pPerDayExc }));
+    const flexible = normFlexible(parts.flexible, start, start + n * SLOT_MS);
     const lat = Number(parts.lat), lon = Number(parts.lon);
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
         throw new DataError('LOCATION', 'A location is needed to look up sunshine.', { action: 'setPostcode' });
@@ -596,6 +614,7 @@ export function buildDataset(parts) {
         importPriceExc, importPrice, importPriceFwdExc,
         exportPrices, exportPricesFwd,
         standing,
+        flexible,
         ghi, dni, dhi, tempC: tempFill.out, windMs: windFill.out, wxSource,
         local,
         climatology: toClimatology(parts.climatology),
@@ -621,7 +640,8 @@ export function buildDataset(parts) {
  * Small, structured-clone-friendly description of a Dataset for the UI.
  * @param {object} ds
  * @returns {{ id, start, n, days, from, to, region, regionName, postcode, lat, lon, altitude, source, coverage,
- *   tariffs, tariffCode, priceBasis, serverW, baseLoadW, locationSource, notes, weather, createdAtMs }}
+ *   tariffs, tariffCode, priceBasis, serverW, baseLoadW, locationSource, notes, weather, createdAtMs,
+ *   flexible: { product, code }|null }}
  */
 export function summarize(ds) {
     const days = ds.local.days;
@@ -638,6 +658,7 @@ export function summarize(ds) {
         locationSource: ds.meta.locationSource,
         notes: [...ds.meta.notes], weather: { ...ds.meta.weather },
         createdAtMs: ds.meta.createdAtMs,
+        flexible: ds.flexible ? { product: ds.flexible.product, code: ds.flexible.code } : null,
     };
 }
 
@@ -664,6 +685,14 @@ export function withBaseLoad(ds, baseW, targetW) {
         load,
         meta: { ...ds.meta, projectedBase: { baseW, targetW } },
     };
+}
+
+/** demo.json's Flexible block ({ from, to } ISO, to null = open) as buildDataset parts. */
+function demoFlexible(f) {
+    if (!f || !Array.isArray(f.unit)) return null;
+    const ms = (iso, dflt) => (iso == null ? dflt : Date.parse(iso));
+    const recs = (list, key) => (list ?? []).map(r => ({ fromMs: ms(r.from, -Infinity), toMs: ms(r.to, Infinity), [key]: r.exc }));
+    return { product: f.product, code: f.code ?? null, unit: recs(f.unit, 'exc'), standing: recs(f.standing, 'pPerDayExc') };
 }
 
 /**
@@ -698,6 +727,7 @@ export function demoDatasetFromJson(json, { serverW = 500, seed = 1 } = {}) {
         priceBasis: 'mine',
         exportAgile: { start, values: json.exportAgile },
         standing: [{ fromMs: start, toMs: end, pPerDayExc: json.standingPPerDayExc }],
+        flexible: demoFlexible(json.flexible),
         weather: {
             start,
             ghi: json.ghi, dni: json.dni, dhi: json.dhi, tempC: json.tempC, windMs: json.windMs, wxSource: json.wxSource,
@@ -1003,6 +1033,15 @@ export async function loadDataset(spec, ctx = {}) {
     notes.push(...exp.notes);
     progress({ step: 'export', status: 'done', detail: exp.agile ? 'Agile Outgoing, Outgoing, Prime' : 'Outgoing, Prime' });
 
+    // The same usage on the region's Flexible tariff (Usage tab): two small public requests; a
+    // failure only hides that comparison.
+    let flexible = null;
+    try {
+        flexible = await fetchFlexibleRates(client, { region, start, n });
+    } catch (e) {
+        if (e?.name === 'AbortError') throw e;
+    }
+
     // The store keeps { postcode, lat, lon } with empty fields; fall back to the account's postcode.
     const typedPc = String(spec.location?.postcode ?? '').trim();
     const where = { ...(spec.location ?? {}), postcode: typedPc || postcode || null };
@@ -1055,6 +1094,7 @@ export async function loadDataset(spec, ctx = {}) {
             tariffs: prices.tariffs.filter(t => t.fromMs < end).map(t => ({ ...t, toMs: Math.min(t.toMs, end) })),
             exportAgile: onGrid(exp.agile), exportPrime: onGrid(exp.prime), exportFixed: onGrid(exp.fixed),
             standing: prices.standing.filter(s => s.fromMs < end).map(s => ({ ...s, toMs: Math.min(s.toMs, end) })),
+            flexible,
             weather, climatology,
             notes,
             createdAtMs: nowMs,

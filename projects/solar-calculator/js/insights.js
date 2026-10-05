@@ -10,7 +10,7 @@
  */
 
 import { SLOT_MS, localMidnightUtc } from './time.js';
-import { DEFAULT_VAT_SCHEDULE, vatAt } from './vat.js';
+import { DEFAULT_VAT_SCHEDULE, vatAt, withVat } from './vat.js';
 
 /** Days per calendar month used to annualise (Feb = 28: a "typical" year). */
 export const DIM = Object.freeze([31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]);
@@ -108,8 +108,10 @@ const NO_MASK = {};
  * @param {Object} ds Dataset
  * @param {{ k?: number, minSlots?: number, recentDays?: number }} [opts]
  * @returns {{ w: number, p10: number, p90: number, recentW: number, driftPct: number, days: number,
- *   dailyW: Float64Array, monthly: Array<{ key: string, w: number|null }>, p5SlotW: number, estimated: boolean }}
- *   driftPct = 100·(recentW − w)/w (UX: flag at |driftPct| ≥ 15); dailyW NaN = day dropped
+ *   dailyW: Float64Array, monthly: Array<{ key: string, w: number|null, p10: number|null, p90: number|null, days: number }>,
+ *   p5SlotW: number, estimated: boolean }}
+ *   driftPct = 100·(recentW − w)/w (UX: flag at |driftPct| ≥ 15); dailyW NaN = day dropped; a month's
+ *   w/p10/p90 are the median and 10th/90th percentiles of its days' values (null with none), days how many
  */
 export function estimateBaseLoad(ds, { k = 4, minSlots = 44, recentDays = 60 } = {}) {
     const memoKey = `${k}|${minSlots}|${recentDays}`;
@@ -153,7 +155,8 @@ export function estimateBaseLoad(ds, { k = 4, minSlots = 44, recentDays = 60 } =
             if (days[di].first >= m.first && days[di].first < m.first + m.count && Number.isFinite(dailyW[di])) vals.push(dailyW[di]);
         }
         const s = Float64Array.from(vals).sort();
-        return { key: m.key, w: s.length ? quantileSorted(s, 0.5) : null };
+        const q = (p) => (s.length ? quantileSorted(s, p) : null);
+        return { key: m.key, w: q(0.5), p10: q(0.1), p90: q(0.9), days: s.length };
     });
     const out = {
         w,
@@ -182,11 +185,66 @@ function standingAt(standing, ms) {
     return 0;
 }
 
+/** Per-slot p/kWh exc VAT from interval records: the record holding the slot start, else the nearest one. */
+function ratesOnSlots(records, start, n) {
+    const out = new Float64Array(n);
+    const recs = records.slice().sort((a, b) => a.fromMs - b.fromMs);
+    let k = 0;
+    for (let t = 0; t < n; t++) {
+        const ms = start + t * SLOT_MS;
+        while (k < recs.length - 1 && ms >= (recs[k].toMs ?? Infinity)) k++;
+        const r = recs[k];
+        if (ms >= r.fromMs && ms < (r.toMs ?? Infinity)) { out[t] = r.exc; continue; }
+        // a hole between records (or before the first): the nearer neighbour's price
+        const prev = k > 0 && ms < r.fromMs ? recs[k - 1] : null;
+        out[t] = prev && ms - prev.toMs < r.fromMs - ms ? prev.exc : r.exc;
+    }
+    return out;
+}
+
+/**
+ * The same usage, the same window, on the region's Octopus Flexible tariff (Direct Debit), VAT by
+ * the vat.js schedule like the Agile bill: unit rates per half-hour, standing charge per local day
+ * (a part day at the window's edge pro rata, as the Agile standing charge is counted).
+ * @param {Object} ds Dataset with ds.flexible (dataset.js)
+ * @param {{ energyGbp: number, standingGbp: number }} billed the same window on the user's own prices
+ * @returns {{ product: string, code: string|null, unitP: number, energyGbp: number, standingGbp: number, deltaGbp: number }|null}
+ *   unitP = the load-weighted inc-VAT unit rate (energy ÷ kWh); deltaGbp = Flexible total − billed
+ *   total (positive: Flexible would have cost more); null without Flexible prices
+ */
+export function flexibleCompare(ds, billed) {
+    const f = ds.flexible;
+    if (!f || !Array.isArray(f.unit) || !f.unit.length) return null;
+    const { n, load, local } = ds;
+    const inc = withVat(ratesOnSlots(f.unit, ds.start, n), ds.start, DEFAULT_VAT_SCHEDULE);
+    let kwh = 0;
+    let p = 0;
+    for (let t = 0; t < n; t++) { kwh += load[t]; p += load[t] * inc[t]; }
+    let sp = 0;
+    const hasStanding = Array.isArray(f.standing) && f.standing.length > 0;
+    if (hasStanding) {
+        for (const d of local.days) {
+            const ms = localMidnightUtc(d.date);
+            sp += standingAt(f.standing, ms) * (1 + vatAt(ms, DEFAULT_VAT_SCHEDULE)) * (d.count / slotsInLocalDay(d.date));
+        }
+    }
+    const energyGbp = p / 100;
+    // without Flexible's standing charge the comparison is unit rates only: count the same standing
+    const standingGbp = hasStanding ? sp / 100 : billed.standingGbp;
+    return {
+        product: f.product, code: f.code ?? null,
+        unitP: kwh > 0 ? p / kwh : null,
+        energyGbp, standingGbp,
+        deltaGbp: energyGbp + standingGbp - (billed.energyGbp + billed.standingGbp),
+    };
+}
+
 /**
  * Full usage analysis for the Usage tab and the verdict tiles.
  * @param {Object} ds Dataset
  * @returns {Object} Insights (CONTRACTS §7). Money in £ unless suffixed P; base-load cost figures
- *   are annualised per calendar month; totals cover the dataset window as-is.
+ *   are annualised per calendar month; totals cover the dataset window as-is. flexible: the same
+ *   usage on the region's Octopus Flexible tariff (flexibleCompare), null without its prices.
  */
 export function analyseUsage(ds) {
     const { n, load, loadFilled, importPrice, local } = ds;
@@ -329,6 +387,7 @@ export function analyseUsage(ds) {
         timeWeightedPriceP: twN > 0 ? tw / twN : 0,
         negative: { slots: negSlots, kwh: negKwh, gbp: negP / 100 },
         totals: { kwh: totalKwh, energyGbp: totalP / 100, standingGbp: standingTotalP / 100, days: n / 48 },
+        flexible: flexibleCompare(ds, { energyGbp: totalP / 100, standingGbp: standingTotalP / 100 }),
         coverage: {
             realPct: n > 0 ? (100 * (n - filledSlots - extrapolatedSlots)) / n : 0,
             filledSlots,

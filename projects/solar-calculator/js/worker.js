@@ -12,8 +12,13 @@
  * Protocol:  main → worker  { type: 'call', id, method, args } | { type: 'cancel', id }
  *            worker → main  { type: 'ready' } | { type: 'progress', id, value } | { type: 'result', id, value } | { type: 'error', id, error }
  * Cancellation is cooperative: a cancelled call throws at its next progress callback (and its
- * fetches are aborted); synchronous engine work that never reports progress runs to completion
- * and its result is dropped.
+ * fetches are aborted); the verdict also polls an isCancelled() hook between options; synchronous
+ * engine work that never reports progress runs to completion and its result is dropped.
+ *
+ * Methods (whitelist): loadDataset, insights, runScenario, autoScenarios, verdict, orientationSweep,
+ * answerOrientation, upsStrategies, tornado, weatherInfo, baseLoadCurve, panelCountCurve,
+ * batterySizeCurve, typicalDay, exportCsv, setProjectBaseW, normalizeSystem, validate, applyFix,
+ * catalog, buildSystem.
  */
 
 const MODULES = {
@@ -45,6 +50,8 @@ export class EngineError extends Error {
 const abortError = () => Object.assign(new Error('Cancelled'), { name: 'AbortError', code: 'CANCELLED' });
 
 const plain = v => (v == null ? v : JSON.parse(JSON.stringify(v)));
+/* An optional trailing options object ({ finance, … }) — anything else becomes {}. */
+const bag = o => (o && typeof o === 'object' && !Array.isArray(o) ? o : {});
 
 /**
  * Replace every occurrence of a secret (≥ 6 chars, e.g. the API key) in a string.
@@ -106,6 +113,93 @@ export function makeGuardedFetch(fetchImpl) {
         }
         return fetchImpl(input, { ...init, credentials: 'omit' });
     };
+}
+
+const BUILD_KINDS = new Set(['kit', 'bundle', 'station', 'blank']);
+
+/**
+ * Build a System from a catalog product — or a blank custom plug-in build — exactly the way the
+ * Design view's "Start from" does, so views never have to load and normalise the catalog on the
+ * main thread. Pure: the kits.js / system.js exports and the normalised catalog are passed in.
+ *
+ * Defaults (all overridable through `opts`):
+ *  - kit: an add-on battery comes alone; an all-in-one battery unit gets one loose catalog panel per
+ *    solar input (1–4); a micro-inverter sold without panels gets two; a kit with panels comes as sold.
+ *    Loose panels get the catalog frame on a ground/flat-roof spot.
+ *  - station: no panels of its own unless `opts.panels` asks for them (capped at what can be wired).
+ *  - blank: two 460 W panels on the generic 800 W dual-input micro-inverter, £600.
+ * @param {object} kits kits.js module (kitToSystem, stationToSystem, bundleToSystem, findProduct, layoutPanels, mountingForSpot)
+ * @param {{ normalizeSystem: Function }} system system.js module
+ * @param {object} catalog normalised catalog (kits.normalizeCatalog)
+ * @param {{ kind: 'kit'|'bundle'|'station'|'blank', id?: string, opts?: { id?: string, name?: string, spot?: object|null,
+ *   dsSource?: string, exportKind?: string, strategy?: string, priceGbp?: number, dedicatedW?: 'baseload'|number,
+ *   frames?: boolean, panels?: number|{ count: number, wp?: number, catalogId?: string, frameId?: string }|null } }} req
+ * @returns {object} System (normalised)
+ */
+export function buildSystemFrom(kits, system, catalog, { kind, id, opts } = {}) {
+    const o = opts && typeof opts === 'object' ? opts : {};
+    if (!BUILD_KINDS.has(kind)) throw new EngineError('BAD_SPEC', `buildSystem: kind must be kit, bundle, station or blank (got ${kind}).`);
+    const spot = o.spot ?? null;
+    const list = { kit: catalog?.kits, bundle: catalog?.bundles, station: catalog?.stations }[kind];
+    const product = kind === 'blank' ? null : (list || []).find(p => p?.id === id) ?? null;
+    if (kind !== 'blank' && !product) throw new EngineError('UNKNOWN_PRODUCT', `There is no ${kind} "${id}" in the product list.`);
+    const loose = (count, sp) => ({
+        count, wp: catalog?.parts?.panel?.includedPanels?.wp ?? 460, catalogId: catalog?.parts?.panel?.id,
+        frameId: kits.mountingForSpot(sp) === 'open' ? catalog?.parts?.frame?.id : undefined,
+    });
+    // Caller numbers are cleaned first: a fractional or NaN panel count used to reach layoutPanels
+    // as `new Array(2.6)` and fail with a bare RangeError. Counts are whole and ≥ 0 (unusable →
+    // the default); a wattage or price that isn't a positive / non-negative number is ignored.
+    const whole = (v, dflt) => { const x = typeof v === 'string' && v.trim() === '' ? NaN : Number(v); return Number.isFinite(x) ? Math.max(0, Math.round(x)) : dflt; };
+    const watts = v => { const x = Number(v); return v != null && Number.isFinite(x) && x > 0 ? x : undefined; };
+    const price = Number.isFinite(Number(o.priceGbp)) && o.priceGbp !== null && o.priceGbp !== '' && Number(o.priceGbp) >= 0 ? Number(o.priceGbp) : undefined;
+    const isObj = o.panels != null && typeof o.panels === 'object';
+    // opts.panels: a count, or a partial loose-panel spec laid over the catalog's default panel
+    // (objDflt: the count when that spec doesn't say)
+    const panelsFor = (dflt, objDflt) => {
+        if (o.panels === null) return null;
+        if (isObj) {
+            const n = whole(o.panels.count, objDflt);
+            if (!(n > 0)) return null;
+            const { count, wp, ...rest } = o.panels;
+            const base = loose(n, spot);
+            return { ...base, ...rest, count: n, wp: watts(wp) ?? base.wp };
+        }
+        const n = o.panels === undefined ? dflt : whole(o.panels, dflt);
+        return n > 0 ? loose(n, spot) : null;
+    };
+    const dsSource = o.dsSource ?? 'octopus';
+
+    if (kind === 'kit') {
+        const base = { catalog, id: o.id, exportKind: o.exportKind, strategy: o.strategy, priceGbp: price, dsSource };
+        if (product.kind === 'battery-addon') return kits.kitToSystem(product, { ...base, name: o.name });
+        const dflt = product.kind === 'battery-inverter' ? Math.min(4, Math.max(1, product.inputs?.length || 1))
+            : product.includedPanels ? 0 : 2;
+        const panels = product.includedPanels && o.panels === undefined ? null : panelsFor(dflt, product.includedPanels?.count ?? (dflt || 2));
+        const name = o.name ?? (panels && !product.includedPanels ? `${product.name} + ${panels.count} panel${panels.count === 1 ? '' : 's'}` : undefined);
+        return kits.kitToSystem(product, { ...base, spot, panels, name });
+    }
+    if (kind === 'bundle') return kits.bundleToSystem(product, { catalog, spot, id: o.id, name: o.name, strategy: o.strategy });
+    if (kind === 'station') {
+        const n = whole(isObj ? o.panels.count : o.panels, 0);
+        let panels = null;
+        if (n > 0) {
+            const { count, wp, ...rest } = isObj ? o.panels : {};
+            panels = { spot, ...rest, count: n };
+            if (watts(wp)) panels.wp = watts(wp);
+        }
+        return kits.stationToSystem(product, { catalog, id: o.id, name: o.name, strategy: o.strategy, dedicatedW: o.dedicatedW, frames: o.frames, panels });
+    }
+    // blank: a custom plug-in build on the generic dual-input 800 W micro-inverter
+    const at = spot ?? { azimuth: 180, tilt: 35, kind: 'ground', shadingPct: 3, horizon: [] };
+    const count = Math.max(1, whole(isObj ? o.panels.count : o.panels, 2));
+    const wp = (isObj && watts(o.panels.wp)) || 460;
+    return system.normalizeSystem({
+        id: o.id ?? 'custom', name: o.name ?? 'My own plug-in build', route: 'plugin', spotId: at.id ?? null,
+        arrays: kits.layoutPanels(count, wp, 2, { azimuth: at.azimuth ?? 180, tilt: at.tilt ?? 35, mounting: kits.mountingForSpot(at), shadingPct: at.shadingPct ?? 3, horizon: Array.isArray(at.horizon) ? at.horizon : [] }),
+        costs: [{ label: 'Panels, micro-inverter and mounting', gbp: price ?? 600, year: 0, kind: 'hardware' }],
+        notes: ['A custom build: only legal as a plug-in kit if this exact kit is on the ENA register.'],
+    });
 }
 
 async function defaultCatalogLoader(fetchImpl) {
@@ -235,15 +329,23 @@ export function createDispatcher({ post, importer, fetch: fetchImpl, catalogLoad
             return s.scenarios;
         },
 
+        /*
+         * opts: { scenarios?, spots?, finance?, maxPaybackYears?, overrides?: { [scenarioId]: { priceGbp, costs? } }, … }.
+         * The verdict polls isCancelled() between options, so a cancel stops it mid-stage instead of
+         * at the next stage boundary (onPartial stays a cancellation point too).
+         */
         async verdict(ctx, opts = {}) {
             const engine = eng();
             const { buildVerdict } = await need('verdict', ['buildVerdict']);
-            const { scenarios, spots, ...rest } = opts || {};
+            const { scenarios, spots, overrides, ...rest } = opts || {};
             const list = scenarios ?? (s.scenarios = engine.autoScenarios(spots ? { spots } : {}));
+            ctx.check();
             return buildVerdict(engine, {
                 ...rest,
                 scenarios: list,
                 finance: opts?.finance,
+                ...(overrides && typeof overrides === 'object' ? { overrides } : {}),
+                isCancelled: () => ctx.cancelled,
                 onPartial: (stage, partial) => ctx.progress({ stage, verdict: partial }, true),
             });
         },
@@ -251,16 +353,35 @@ export function createDispatcher({ post, importer, fetch: fetchImpl, catalogLoad
         orientationSweep: (ctx, system, arrayId, opts) =>
             eng().orientationSweep(system, arrayId, { ...(opts || {}), onProgress: p => ctx.progress(p) }),
 
-        baseLoadCurve(ctx, idsOrSystems, xs) {
+        /* The verdict's heavy answers, for any system (B1 caches them per system + finance). */
+        answerOrientation: (ctx, system, opts) => eng().answerOrientation(system, bag(opts)),
+        upsStrategies: (ctx, system, opts) => eng().upsStrategies(system, bag(opts)),
+        tornado: (ctx, system, opts) => eng().tornado(system, bag(opts)),
+        weatherInfo: () => eng().weatherInfo(),
+
+        /* Curves take an optional { finance } (the user's money settings); without it they use the defaults. */
+        baseLoadCurve(ctx, idsOrSystems, xs, opts) {
             const engine = eng();
             const systems = (idsOrSystems || []).map(x => (typeof x === 'string' ? findScenario(x) : x)).filter(Boolean);
-            return engine.baseLoadCurve(systems, xs);
+            return engine.baseLoadCurve(systems, xs ?? undefined, bag(opts));
         },
 
-        panelCountCurve: (ctx, system) => eng().panelCountCurve(system),
-        batterySizeCurve: (ctx, system) => eng().batterySizeCurve(system),
+        panelCountCurve: (ctx, system, opts) => eng().panelCountCurve(system, bag(opts)),
+        batterySizeCurve: (ctx, system, opts) => eng().batterySizeCurve(system, bag(opts)),
         typicalDay: (ctx, system, which) => eng().typicalDay(system, which),
         exportCsv: (ctx, system) => eng().exportCsv(system),
+
+        /** A System built from a catalog product: { kind: 'kit'|'bundle'|'station'|'blank', id, opts } (see buildSystemFrom). */
+        async buildSystem(ctx, req) {
+            if (!req || typeof req !== 'object') throw new EngineError('BAD_SPEC', 'buildSystem needs { kind, id }.');
+            const [kitsMod, systemMod, catalog] = await Promise.all([
+                need('kits', ['kitToSystem', 'stationToSystem', 'bundleToSystem', 'layoutPanels', 'mountingForSpot']),
+                need('system', ['normalizeSystem']), getCatalog()]);
+            const opts = { ...(req.opts && typeof req.opts === 'object' ? req.opts : {}) };
+            // Octopus kits come with Outgoing Prime for Octopus and demo data (kits.js rule).
+            opts.dsSource ??= s.ds?.meta?.source ?? 'octopus';
+            return buildSystemFrom(kitsMod, systemMod, catalog, { kind: req.kind, id: req.id, opts });
+        },
 
         setProjectBaseW(ctx, w) {
             eng().setProjectBaseW(Number.isFinite(w) ? w : null);
@@ -286,9 +407,9 @@ export function createDispatcher({ post, importer, fetch: fetchImpl, catalogLoad
 
         async catalog() {
             const cat = await getCatalog();
-            // byId() and friends can't cross postMessage; send the data only.
-            const { kits, stations, bundles, constants } = cat;
-            return plain({ kits, stations, bundles, constants });
+            // byId() and friends can't cross postMessage; send the data only (kits.findProduct works on it).
+            const { kits, stations, bundles, constants, stationDefaults, electrician, limits, parts } = cat;
+            return plain({ kits, stations, bundles, constants, stationDefaults, electrician, limits, parts });
         },
     };
 

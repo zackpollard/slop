@@ -68,6 +68,100 @@ export function niceScale(min, max, count = 5) {
 
 const autoFormat = step => v => fmt.num(v, Math.max(0, Math.min(4, -Math.floor(Math.log10(step) + 1e-9))));
 
+/**
+ * A nice scale for a value axis that runs across the plot (tornado, horizontal bars), with only as
+ * many tick labels as fit side by side along `plotW` px. The scale keeps its tight domain and its
+ * gridlines; labels are thinned to every 2nd or 3rd tick (always including 0 when it is a tick).
+ * Only if that isn't enough does it fall back to fewer, coarser ticks.
+ * @param {number} min @param {number} max @param {number} plotW
+ * @param {(v: number) => number} widthOf label width in px for a tick value
+ * @param {{ maxCount?: number, gap?: number }} [opts]
+ * @returns {{ min: number, max: number, step: number, ticks: number[], show: boolean[] }} show[i]: label tick i
+ */
+export function fitTicks(min, max, plotW, widthOf, { maxCount = 5, gap = 12 } = {}) {
+    for (let count = maxCount; count >= 2; count--) {
+        const hit = labelEvery(niceScale(min, max, count), plotW, widthOf, gap, [1, 2, 3]);
+        if (hit) return hit;
+    }
+    const sc = niceScale(min, max, 2);
+    return { ...sc, show: sc.ticks.map((_, i) => i === 0 || i === sc.ticks.length - 1) };
+}
+
+/* Label every k-th tick of `sc` (counted from 0 when it is a tick) for the smallest k in `ks` whose
+   labels don't collide along plotW px; null when none fits. */
+function labelEvery(sc, plotW, widthOf, gap, ks) {
+    const span = sc.max - sc.min || 1;
+    const pos = sc.ticks.map(v => ((v - sc.min) / span) * plotW);
+    const w = sc.ticks.map(widthOf);
+    const zero = sc.ticks.findIndex(v => Math.abs(v) < 1e-9);
+    const anchor = zero >= 0 ? zero : 0;
+    for (const k of ks) {
+        const show = sc.ticks.map((_, i) => (i - anchor) % k === 0);
+        const idx = show.map((s, i) => (s ? i : -1)).filter(i => i >= 0);
+        let fits = idx.length >= 2 || sc.ticks.length < 2;
+        for (let j = 1; j < idx.length && fits; j++) {
+            const a = idx[j - 1], b = idx[j];
+            if (pos[b] - pos[a] < (w[a] + w[b]) / 2 + gap) fits = false;
+        }
+        if (fits) return { ...sc, show };
+    }
+    return null;
+}
+
+/**
+ * Thin the labels of a scale whose domain is fixed (a chart with explicit y.min / y.max): the ticks
+ * and gridlines stay, only every 2nd, 3rd, 4th or 6th label is kept (0 always, when it is a tick),
+ * or just the two ends when even that collides.
+ * @param {{ min: number, max: number, step: number, ticks: number[] }} sc
+ * @param {number} plotW @param {(v: number) => number} widthOf
+ * @param {{ gap?: number }} [opts]
+ * @returns {{ min: number, max: number, step: number, ticks: number[], show: boolean[] }}
+ */
+export function thinScaleLabels(sc, plotW, widthOf, { gap = 12 } = {}) {
+    return labelEvery(sc, plotW, widthOf, gap, [1, 2, 3, 4, 6])
+        ?? { ...sc, show: sc.ticks.map((_, i) => i === 0 || i === sc.ticks.length - 1) };
+}
+
+/**
+ * Thin a row of labelled ticks (e.g. month starts on a heatmap) so neighbours don't collide: the
+ * smallest step from 1, 2, 3, 4, 6, 12 that leaves `gap` px between kept labels. Ticks are
+ * [position px, label]; the first tick is always kept.
+ * @param {Array<[number, string]>} ticks
+ * @param {(label: string) => number} widthOf
+ * @param {{ gap?: number }} [opts]
+ * @returns {Array<[number, string]>}
+ */
+export function thinTicks(ticks, widthOf, { gap = 8 } = {}) {
+    if (!ticks || ticks.length < 2) return ticks || [];
+    const w = ticks.map(t => widthOf(t[1]));
+    for (const step of [1, 2, 3, 4, 6, 12]) {
+        let ok = true;
+        for (let i = step; i < ticks.length && ok; i += step) if (ticks[i][0] - ticks[i - step][0] < (w[i] + w[i - step]) / 2 + gap) ok = false;
+        if (ok) return ticks.filter((_, i) => i % step === 0);
+    }
+    return [ticks[0]];
+}
+
+/**
+ * The value series of a chart spec as a lookup: null/undefined/NaN/±Infinity are gaps (null), never
+ * zero (+null is 0, which used to draw a missing half-hour on the axis).
+ * @param {ArrayLike<any>|undefined} values
+ * @returns {(i: number) => number|null}
+ */
+export function valueLookup(values) {
+    const v = values || [];
+    return i => {
+        if (i >= v.length) return null;
+        const x = v[i];
+        if (x == null || x === '') return null;
+        const n = +x;
+        return Number.isFinite(n) ? n : null;
+    };
+}
+
+/* A range-band series ({ key, label, lo: number[], hi: number[], color }) rather than a line. */
+const isBand = se => !!se && se.lo != null && se.hi != null && se.values == null;
+
 function parseColor(c) {
     const s = String(c || '').trim();
     let m = /^#([0-9a-f]{3,8})$/i.exec(s);
@@ -190,8 +284,10 @@ function haloText(ctx, text, x, y, fill, halo) {
 
 function keyEl(kind, color) {
     const k = kind === 'line' ? 'key-line' : kind === 'dash' ? 'key-dash' : kind === 'dot' ? 'key-dot' : kind === 'ring' ? 'key-ring'
-        : kind === 'outline' ? 'key-outline' : kind === 'band' ? 'key-band' : 'key-rect';
-    const style = kind === 'dash' ? { borderColor: color } : kind === 'ring' || kind === 'outline' ? { borderColor: color } : kind === 'band' ? null : { background: color };
+        : kind === 'outline' ? 'key-outline' : kind === 'band' ? 'key-band' : kind === 'range' ? 'key-range' : kind === 'hatch' ? 'key-hatch' : 'key-rect';
+    const style = kind === 'dash' || kind === 'ring' || kind === 'outline' ? { borderColor: color }
+        : kind === 'range' ? { borderColor: color, '--key-c': color }
+            : kind === 'band' || kind === 'hatch' ? null : { background: color };
     return h('span', { class: ['key', k], style, 'aria-hidden': 'true' });
 }
 
@@ -245,13 +341,19 @@ class Chart {
 
     /* public API */
     update(spec) {
+        // Someone exploring with the keyboard keeps their place across a data update (e.g. Enter
+        // picks a rose cell and the view re-renders); a mouse hover is dropped as before.
+        const focused = typeof document !== 'undefined' && document.activeElement === this.canvas;
+        const keep = focused ? this.hover : null;
         this.spec = spec || {};
-        this.hover = null;
+        this.hover = keep != null ? this.clampHover(keep) : null;
         this.invalidate?.();
         this.chrome();
         this.render();
         if (this.showTable || this.printing) this.buildTable();
     }
+    /** A hover position carried over to new data: kept if it still exists (clamped), else null. */
+    clampHover() { return null; }
     destroy() {
         cancelAnimationFrame(this.raf);
         this.ro?.disconnect();
@@ -308,6 +410,7 @@ class Chart {
             text: v('--chart-text', '#9a9686'), strong: v('--chart-text-strong', '#e8e4d4'), crosshair: v('--chart-crosshair', '#8a8676'),
             band: v('--chart-band', 'rgba(196,162,78,.08)'), bandText: v('--chart-band-text', '#b39a5c'), iso: v('--chart-iso', '#5d5a4e'),
             front: v('--chart-front', '#c9c4b0'), empty: v('--ramp-empty', '#141410'), accent: v('--accent', '#c4a24e'),
+            hatch: v('--chart-hatch', 'rgba(232,228,212,0.62)'),
         };
     }
     ramp(scale) {
@@ -360,8 +463,12 @@ class Chart {
         const legend = items.length >= (s.legendMin ?? 2)
             ? h('ul', { class: 'chart-legend' }, items.map(it => h('li', null, keyEl(it.kind, this.colorLater(it.color, it.index)), it.label)))
             : null;
+        // Every chart has one of these, so the accessible name says which chart ("Table" stays first
+        // so the visible label is in the name).
+        const name = s.tableCaption || s.title || s.ariaLabel;
         this.toggleBtn = h('button', {
             type: 'button', class: 'chart-toggle', 'aria-pressed': String(this.showTable), title: 'Show the numbers as a table (T)',
+            'aria-label': typeof name === 'string' && name ? `Table: ${name}` : null,
             on: { click: () => this.setTable(!this.showTable) },
         }, icon('table'), 'Table');
         const title = s.title ? h('div', { class: 'chart-title' }, s.title) : null;
@@ -436,7 +543,9 @@ class Chart {
     buildTable() {
         const t = this.tableSpec();
         if (!t) { this.tableHost.replaceChildren(h('p', { class: 'muted' }, 'No data.')); return; }
-        this.tableHost.replaceChildren(uiTable({ columns: t.columns, rows: t.rows, dense: true, caption: this.spec.title || `${this.kind} data` }));
+        const s = this.spec;
+        const caption = [s.tableCaption, s.title, s.ariaLabel].find(c => typeof c === 'string' && c) || `${this.kind} data`;
+        this.tableHost.replaceChildren(uiTable({ columns: t.columns, rows: t.rows, dense: true, caption }));
     }
     tableSpec() { return null; }
 
@@ -468,12 +577,14 @@ class XYChart extends Chart {
         const s = this.spec;
         const items = (s.series || []).map((se, i) => ({
             label: se.label ?? se.key, color: se.color, index: i,
-            kind: this.stacked && !se.line ? 'rect' : se.dash ? 'dash' : 'line',
+            kind: isBand(se) ? 'range' : this.stacked && !se.line ? 'rect' : se.dash ? 'dash' : 'line',
         }));
         for (const b of s.bands || []) if (b.label && b.legend !== false) items.push({ label: b.label, kind: 'band' });
         return items;
     }
     defaultHeight(w) { return w < 600 ? 220 : 260; }
+    /* series stacked as fills (stacked charts only) — line overlays and range bands are not */
+    isFill(se) { return this.stacked && !se.line && !isBand(se); }
 
     xInfo(n) {
         const x = this.spec.x || {};
@@ -481,24 +592,35 @@ class XYChart extends Chart {
         const vals = x.values || Array.from({ length: n }, (_, i) => i);
         return { type, vals, n: vals.length || n };
     }
-    seriesValues(se, n) {
-        const v = se.values || [];
-        return i => (i < v.length && finite(+v[i]) ? +v[i] : null);
+    seriesValues(se) { return valueLookup(se.values); }
+    seriesLength(se) { return isBand(se) ? Math.max(se.lo?.length || 0, se.hi?.length || 0) : se.values?.length || 0; }
+    pointCount() {
+        const s = this.spec;
+        return Math.max(s.x?.values?.length || 0, ...(s.series || []).map(se => this.seriesLength(se)));
+    }
+    clampHover(hv) {
+        const n = this.pointCount();
+        return n > 0 && Number.isInteger(hv) ? clamp(hv, 0, n - 1) : null;
     }
     yDomain(n) {
         const s = this.spec;
         let lo = Infinity, hi = -Infinity;
         const series = s.series || [];
+        const take = v => { if (v != null) { lo = Math.min(lo, v); hi = Math.max(hi, v); } };
+        for (const se of series.filter(isBand)) {
+            const a = valueLookup(se.lo), b = valueLookup(se.hi);
+            for (let i = 0; i < n; i++) { take(a(i)); take(b(i)); }
+        }
         if (this.stacked) {
-            const stacked = series.filter(se => !se.line);
+            const stacked = series.filter(se => this.isFill(se));
             for (let i = 0; i < n; i++) {
                 let pos = 0, neg = 0;
                 for (const se of stacked) { const v = this.seriesValues(se, n)(i); if (v == null) continue; if (v >= 0) pos += v; else neg += v; }
                 hi = Math.max(hi, pos); lo = Math.min(lo, neg);
             }
-            for (const se of series.filter(x => x.line)) for (let i = 0; i < n; i++) { const v = this.seriesValues(se, n)(i); if (v != null) { lo = Math.min(lo, v); hi = Math.max(hi, v); } }
+            for (const se of series.filter(x => x.line && !isBand(x))) for (let i = 0; i < n; i++) take(this.seriesValues(se, n)(i));
         } else {
-            for (const se of series) for (let i = 0; i < n; i++) { const v = this.seriesValues(se, n)(i); if (v != null) { lo = Math.min(lo, v); hi = Math.max(hi, v); } }
+            for (const se of series) if (!isBand(se)) for (let i = 0; i < n; i++) take(this.seriesValues(se, n)(i));
         }
         if (!finite(lo)) { lo = 0; hi = 1; }
         const y = s.y || {};
@@ -513,7 +635,7 @@ class XYChart extends Chart {
     draw(ctx, w, H) {
         const s = this.spec;
         const series = s.series || [];
-        const n = Math.max(s.x?.values?.length || 0, ...series.map(se => se.values?.length || 0));
+        const n = this.pointCount();
         this.n = n;
         if (!n) { this.empty(ctx, w, H); return; }
         const X = this.xInfo(n);
@@ -527,7 +649,7 @@ class XYChart extends Chart {
         const bottom = H - 24 - xLabelH;
 
         // Direct end labels for 2–4 line series when there is room (dataviz: label ≤4, legend always).
-        const lineSeries = series.filter(se => !this.stacked || se.line);
+        const lineSeries = series.filter(se => !isBand(se) && (!this.stacked || se.line));
         const endLabels = !this.stacked && s.endLabels !== false && lineSeries.length >= 2 && lineSeries.length <= 4 && w >= 520;
         ctx.font = SANS(11.5);
         const endW = endLabels ? Math.min(140, Math.max(...lineSeries.map(se => ctx.measureText(se.label ?? se.key ?? '').width))) + 22 : 0;
@@ -581,11 +703,12 @@ class XYChart extends Chart {
             ctx.fillText(s.y.label, 2, 11);
         }
 
-        // series
+        // series: range bands first (behind everything), then the stack, then the lines
         const cols = series.map((se, i) => this.color(se.color, i));
+        series.forEach((se, i) => { if (isBand(se)) this.drawRange(ctx, se, cols[i], xpos, y, n); });
         if (this.stacked) this.drawStack(ctx, series, cols, xpos, y, n, yScale);
         series.forEach((se, i) => {
-            if (this.stacked && !se.line) return;
+            if (isBand(se) || this.isFill(se)) return;
             const val = this.seriesValues(se, n);
             const pts = Array.from({ length: n }, (_, k) => { const v = val(k); return v == null ? null : [xpos(k), y(v)]; });
             if (se.area && !this.stacked) {
@@ -674,7 +797,7 @@ class XYChart extends Chart {
             ctx.lineWidth = 1;
             ctx.beginPath(); ctx.moveTo(px, top); ctx.lineTo(px, bottom); ctx.stroke();
             series.forEach((se, i) => {
-                if (this.stacked && !se.line) return;
+                if (isBand(se) || this.isFill(se)) return;
                 const v = this.seriesValues(se, n)(this.hover);
                 if (v == null) return;
                 ctx.beginPath(); ctx.arc(px, y(v), 4, 0, Math.PI * 2);
@@ -684,7 +807,7 @@ class XYChart extends Chart {
             if (this.stacked) {
                 let pos = 0, neg = 0;
                 series.forEach((se, i) => {
-                    if (se.line) return;
+                    if (!this.isFill(se)) return;
                     const v = this.seriesValues(se, n)(this.hover);
                     if (v == null || v === 0) return;
                     const y0 = v >= 0 ? pos : neg; const y1 = y0 + v;
@@ -700,7 +823,7 @@ class XYChart extends Chart {
 
     drawStack(ctx, series, cols, xpos, y, n) {
         const t = this.t;
-        const stacked = series.map((se, i) => ({ se, i })).filter(o => !o.se.line);
+        const stacked = series.map((se, i) => ({ se, i })).filter(o => this.isFill(o.se));
         const pos = new Float64Array(n), neg = new Float64Array(n);
         const gaps = [];
         // Smooth joins by default; `steps: true` draws each half-hour as a flat step (useful when
@@ -708,31 +831,54 @@ class XYChart extends Chart {
         const step = (this.spec.x?.type || 'category') === 'category' && this.spec.steps === true;
         const bw = this.geo.bw;
         const zeroY = y(0);
-        for (const { se, i } of stacked) {
-            const val = this.seriesValues(se, n);
-            const lower = [], upper = [], thick = [];
-            for (let k = 0; k < n; k++) {
-                const v = val(k) ?? 0;
-                const base = v >= 0 ? pos[k] : neg[k];
-                const top = base + v;
-                if (v >= 0) pos[k] = top; else neg[k] = top;
-                const reps = step ? [xpos(k) - bw / 2, xpos(k) + bw / 2] : [xpos(k)];
-                for (const x of reps) {
-                    lower.push([x, y(base)]);
-                    upper.push([x, y(top)]);
-                    thick.push(Math.abs(y(top) - y(base)) > 0.5 && base !== 0);
-                }
-            }
-            ctx.beginPath();
-            upper.forEach((p, k) => (k ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])));
-            for (let k = lower.length - 1; k >= 0; k--) ctx.lineTo(lower[k][0], lower[k][1]);
-            ctx.closePath();
-            // Full-strength fills: the palette was validated at full opacity, and at 80% over the
-            // dark surface export↔clipped drops to CVD ΔE 5.5 (protan) — below the 6.0 floor.
-            ctx.fillStyle = cols[i];
-            ctx.fill();
-            gaps.push({ lower, thick });
+        const vals = stacked.map(({ se }) => { const f = this.seriesValues(se, n); return Array.from({ length: n }, (_, k) => f(k)); });
+        // A slot where no stacked layer has a value is a gap in the whole stack (missing, not zero).
+        const runs = [];
+        for (let k = 0, start = -1; k <= n; k++) {
+            const has = k < n && vals.some(v => v[k] != null);
+            if (has && start < 0) start = k;
+            if (!has && start >= 0) { runs.push([start, k - 1]); start = -1; }
         }
+        // Which side of zero each slot of a layer stacks on. A zero (or missing) slot sits on the
+        // side of the layer's last non-zero value (or its first, before any), so an empty half-hour
+        // of a below-zero layer stays below zero instead of jumping to the top of the positive stack.
+        const sides = v => {
+            const out = new Int8Array(n);
+            let last = 0;
+            for (let k = 0; k < n; k++) { if (v[k] > 0) last = 1; else if (v[k] < 0) last = -1; out[k] = last; }
+            const first = out.find(x => x !== 0) || 1;
+            for (let k = 0; k < n && out[k] === 0; k++) out[k] = first;
+            return out;
+        };
+        stacked.forEach(({ i }, j) => {
+            const v = vals[j];
+            const side = sides(v);
+            for (const [a, b] of runs) {
+                const lower = [], upper = [], thick = [];
+                for (let k = a; k <= b; k++) {
+                    const val = v[k] ?? 0;
+                    const below = val < 0 || (val === 0 && side[k] < 0);
+                    const base = below ? neg[k] : pos[k];
+                    const top = base + val;
+                    if (below) neg[k] = top; else pos[k] = top;
+                    const reps = step ? [xpos(k) - bw / 2, xpos(k) + bw / 2] : [xpos(k)];
+                    for (const x of reps) {
+                        lower.push([x, y(base)]);
+                        upper.push([x, y(top)]);
+                        thick.push(Math.abs(y(top) - y(base)) > 0.5 && base !== 0);
+                    }
+                }
+                ctx.beginPath();
+                upper.forEach((p, k) => (k ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])));
+                for (let k = lower.length - 1; k >= 0; k--) ctx.lineTo(lower[k][0], lower[k][1]);
+                ctx.closePath();
+                // Full-strength fills: the palette was validated at full opacity, and at 80% over the
+                // dark surface export↔clipped drops to CVD ΔE 5.5 (protan) — below the 6.0 floor.
+                ctx.fillStyle = cols[i];
+                ctx.fill();
+                gaps.push({ lower, thick });
+            }
+        });
         // 2px surface gap where a layer sits on another — only where this layer actually has
         // thickness, otherwise the "gap" becomes a dark outline along the top of the stack.
         ctx.strokeStyle = t.surface;
@@ -748,6 +894,37 @@ class XYChart extends Chart {
             }
         }
         ctx.stroke();
+    }
+
+    /*
+     * A range band (e.g. p10–p90): the area between lo and hi filled at ~15% of the series colour,
+     * with hairline edges at 45% so it still reads where it is thin. Missing lo or hi breaks it.
+     */
+    drawRange(ctx, se, col, xpos, y, n) {
+        const lo = valueLookup(se.lo), hi = valueLookup(se.hi);
+        const runs = [];
+        let run = [];
+        for (let k = 0; k < n; k++) {
+            const a = lo(k), b = hi(k);
+            if (a == null || b == null) { if (run.length) runs.push(run); run = []; continue; }
+            run.push([xpos(k), y(Math.min(a, b)), y(Math.max(a, b))]);
+        }
+        if (run.length) runs.push(run);
+        for (const r of runs) {
+            const pts = r.length === 1 ? [[r[0][0] - 2, r[0][1], r[0][2]], [r[0][0] + 2, r[0][1], r[0][2]]] : r;
+            ctx.beginPath();
+            pts.forEach((p, k) => (k ? ctx.lineTo(p[0], p[2]) : ctx.moveTo(p[0], p[2])));
+            for (let k = pts.length - 1; k >= 0; k--) ctx.lineTo(pts[k][0], pts[k][1]);
+            ctx.closePath();
+            ctx.fillStyle = rgba(col, se.opacity ?? 0.15);
+            ctx.fill();
+            ctx.beginPath();
+            polyline(ctx, pts.map(p => [p[0], p[1]]));
+            polyline(ctx, pts.map(p => [p[0], p[2]]));
+            ctx.strokeStyle = rgba(col, 0.45);
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        }
     }
 
     xAxis(ctx, X, left, right, bottom, xpos, xmin, xmax, plotW) {
@@ -845,37 +1022,50 @@ class XYChart extends Chart {
         if (!this.geo || i == null) return null;
         const rows = [];
         let total = 0, anyTotal = false;
-        (s.series || []).forEach((se, k) => {
-            const v = this.seriesValues(se, this.n)(i);
+        const series = s.series || [];
+        series.forEach((se, k) => {
             const f = se.format || s.y?.format || (x => fmt.num(x, Math.abs(x) < 10 ? 2 : 1));
-            if (this.stacked && !se.line && v != null) { total += v; anyTotal = true; }
-            rows.push({ color: this.colorLater(se.color, k), kind: this.stacked && !se.line ? 'rect' : se.dash ? 'dash' : 'line', value: v == null ? '—' : f(v), label: se.label ?? se.key });
+            if (isBand(se)) {
+                const a = valueLookup(se.lo)(i), b = valueLookup(se.hi)(i);
+                rows.push({ color: this.colorLater(se.color, k), kind: 'range', value: a == null || b == null ? '—' : `${f(Math.min(a, b))}–${f(Math.max(a, b))}`, label: se.label ?? se.key });
+                return;
+            }
+            const v = this.seriesValues(se, this.n)(i);
+            if (this.isFill(se) && v != null) { total += v; anyTotal = true; }
+            rows.push({ color: this.colorLater(se.color, k), kind: this.isFill(se) ? 'rect' : se.dash ? 'dash' : 'line', value: v == null ? '—' : f(v), label: se.label ?? se.key });
         });
-        if (this.stacked && s.total !== false && anyTotal && rows.length > 1) {
+        if (this.stacked && s.total !== false && anyTotal && series.filter(se => this.isFill(se)).length > 1) {
             const f = s.y?.format || (x => fmt.num(x, 2));
             rows.push({ value: f(total), label: s.totalLabel || 'Total' });
         }
         // Stacked charts list the top layer first so the tooltip reads in the same order as the picture.
         if (this.stacked) {
-            const lines = rows.filter((r, k) => (s.series[k] ? s.series[k].line : false));
-            const fills = rows.filter((r, k) => (s.series[k] ? !s.series[k].line : false)).reverse();
-            const tot = rows.length > (s.series || []).length ? [rows[rows.length - 1]] : [];
+            const lines = rows.filter((r, k) => (series[k] ? !this.isFill(series[k]) : false));
+            const fills = rows.filter((r, k) => (series[k] ? this.isFill(series[k]) : false)).reverse();
+            const tot = rows.length > series.length ? [rows[rows.length - 1]] : [];
             return { title: this.xLabel(i), rows: [...lines, ...fills, ...tot], ...this.tipAnchor };
         }
         return { title: this.xLabel(i), rows, ...this.tipAnchor };
     }
     tableSpec() {
         const s = this.spec;
-        const n = Math.max(s.x?.values?.length || 0, ...(s.series || []).map(se => se.values?.length || 0));
+        const n = this.pointCount();
         if (!n) return null;
         const columns = [{ key: '_x', label: s.x?.label || '', sortable: false }];
-        (s.series || []).forEach((se, k) => columns.push({
-            key: `s${k}`, label: se.label ?? se.key, align: 'right', sortable: false,
-            format: v => (v == null ? '—' : (se.format || s.y?.format || (x => fmt.num(x, Math.abs(x) < 10 ? 2 : 1)))(v)),
-        }));
+        const fmtOf = se => v => (v == null ? '—' : (se.format || s.y?.format || (x => fmt.num(x, Math.abs(x) < 10 ? 2 : 1)))(v));
+        (s.series || []).forEach((se, k) => {
+            const label = se.label ?? se.key;
+            // a range band reads as two columns: its low and high edge
+            if (isBand(se)) {
+                columns.push({ key: `s${k}lo`, label: `${label} (${se.loLabel || 'low'})`, align: 'right', sortable: false, format: fmtOf(se) });
+                columns.push({ key: `s${k}hi`, label: `${label} (${se.hiLabel || 'high'})`, align: 'right', sortable: false, format: fmtOf(se) });
+            } else columns.push({ key: `s${k}`, label, align: 'right', sortable: false, format: fmtOf(se) });
+        });
         const rows = Array.from({ length: n }, (_, i) => {
             const r = { _x: this.xLabel(i) };
-            (s.series || []).forEach((se, k) => { r[`s${k}`] = this.seriesValues(se, n)(i); });
+            (s.series || []).forEach((se, k) => {
+                if (isBand(se)) { r[`s${k}lo`] = valueLookup(se.lo)(i); r[`s${k}hi`] = valueLookup(se.hi)(i); } else r[`s${k}`] = this.seriesValues(se, n)(i);
+            });
             return r;
         });
         return { columns, rows };
@@ -896,8 +1086,13 @@ class BarChart extends Chart {
         if (s.horizontal) return Math.max(120, (s.categories?.length || 0) * (s.stacked || (s.series || []).length < 2 ? 30 : 16 * (s.series || []).length + 14) + 40);
         return w < 600 ? 220 : 250;
     }
-    val(se, i) { const v = se.values?.[i]; return finite(+v) && v !== null ? +v : null; }
-    domain() {
+    val(se, i) { return valueLookup(se.values)(i); }
+    clampHover(hv) {
+        const n = this.spec.categories?.length || 0;
+        return n > 0 && Number.isInteger(hv) ? clamp(hv, 0, n - 1) : null;
+    }
+    /* data extent (always including 0: bars grow from the baseline) */
+    domainRaw() {
         const s = this.spec;
         let lo = 0, hi = 0;
         const cats = s.categories || [];
@@ -908,6 +1103,11 @@ class BarChart extends Chart {
                 hi = Math.max(hi, p); lo = Math.min(lo, q);
             } else for (const se of s.series || []) { const v = this.val(se, i); if (v != null) { hi = Math.max(hi, v); lo = Math.min(lo, v); } }
         }
+        return { lo, hi };
+    }
+    domain() {
+        const s = this.spec;
+        const { lo, hi } = this.domainRaw();
         const y = s.y || {};
         const sc = niceScale(finite(y.min) ? y.min : lo, finite(y.max) ? y.max : hi, 5);
         if (finite(y.min)) sc.min = y.min;
@@ -930,7 +1130,7 @@ class BarChart extends Chart {
         const f = s.y?.format || autoFormat(sc.step);
         const cols = series.map((se, i) => this.color(se.color, i));
         const catLabel = (c, i) => (s.x?.format ? s.x.format(c, i) : String(c));
-        if (s.horizontal) this.drawH(ctx, w, H, cats, series, cols, sc, f, catLabel);
+        if (s.horizontal) this.drawH(ctx, w, H, cats, series, cols, sc, s.y?.format, catLabel);
         else this.drawV(ctx, w, H, cats, series, cols, sc, f, catLabel);
     }
     segments(series, i) {
@@ -1007,7 +1207,7 @@ class BarChart extends Chart {
         for (let i = 0; i < n; i += every) ctx.fillText(labels[i], left + (i + 0.5) * bw, bottom + 16);
         this.tipAnchor = this.hover != null ? { x: left + (this.hover + 0.5) * bw + Math.min(bw / 2, 20), y: top + 30 } : null;
     }
-    drawH(ctx, w, H, cats, series, cols, sc, f, catLabel) {
+    drawH(ctx, w, H, cats, series, cols, sc0, userFmt, catLabel) {
         const s = this.spec, t = this.t;
         ctx.font = SANS(12.5);
         const labels = cats.map(catLabel);
@@ -1015,8 +1215,20 @@ class BarChart extends Chart {
         const left = labW + 8;
         const showVals = s.labels !== false && (s.stacked || series.length === 1);
         ctx.font = MONO(11);
-        const valW = showVals ? Math.max(...cats.map((_, i) => ctx.measureText(f(this.segments(series, i).reduce((a, sg) => a + sg.v, 0))).width)) + 10 : 0;
+        const fv = userFmt || autoFormat(sc0.step);
+        const valW = showVals ? Math.max(...cats.map((_, i) => ctx.measureText(fv(this.segments(series, i).reduce((a, sg) => a + sg.v, 0))).width)) + 10 : 0;
         const right = w - 8 - valW;
+        // The value axis runs across the plot: ask for as many ticks as fit side by side (a phone
+        // gets 2–3, not 5 crowded ones). An explicit y.min / y.max keeps its domain and ticks; only
+        // its labels are thinned.
+        ctx.font = MONO(10.5);
+        let sc;
+        if (!finite(s.y?.min) && !finite(s.y?.max)) {
+            const { lo, hi } = this.domainRaw();
+            const fmtFor = v => (userFmt || autoFormat(sc0.step))(v);
+            sc = fitTicks(lo, hi, right - left, v => ctx.measureText(fmtFor(v)).width, { maxCount: 5, gap: 14 });
+        } else sc = thinScaleLabels(sc0, right - left, v => ctx.measureText(fv(v)).width, { gap: 14 });
+        const f = userFmt || autoFormat(sc.step);
         const top = 4, bottom = H - 22;
         const n = cats.length;
         const bh = (bottom - top) / n;
@@ -1028,14 +1240,16 @@ class BarChart extends Chart {
         this.geo = { left, right, top, bottom, bh, n, horizontal: true };
 
         if (this.hover != null) { ctx.fillStyle = 'rgba(255,255,255,0.035)'; ctx.fillRect(0, top + this.hover * bh, w, bh); }
-        // vertical grid
+        // vertical grid; tick labels stay inside the canvas (the last one used to be cut in half)
         ctx.font = MONO(10.5); ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
-        for (const v of sc.ticks) {
+        sc.ticks.forEach((v, i) => {
             const px = Math.round(x(v)) + 0.5;
             ctx.strokeStyle = v === 0 ? t.axis : t.grid; ctx.lineWidth = 1;
             ctx.beginPath(); ctx.moveTo(px, top); ctx.lineTo(px, bottom); ctx.stroke();
-            ctx.fillStyle = t.text; ctx.fillText(f(v), px, H - 6);
-        }
+            if (sc.show && !sc.show[i]) return;
+            const half = ctx.measureText(f(v)).width / 2;
+            ctx.fillStyle = t.text; ctx.fillText(f(v), clamp(px, half + 2, w - half - 2), H - 6);
+        });
         for (let i = 0; i < n; i++) {
             const cy = top + (i + 0.5) * bh;
             ctx.font = SANS(12.5); ctx.fillStyle = t.strong; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
@@ -1060,7 +1274,7 @@ class BarChart extends Chart {
                 const tot = segs.reduce((a, sg) => a + sg.v, 0);
                 const end = s.stacked ? x(segs.filter(sg => sg.v > 0).reduce((a, sg) => a + sg.v, 0)) : x(Math.max(0, tot));
                 ctx.font = MONO(11); ctx.fillStyle = t.text; ctx.textAlign = 'left';
-                ctx.fillText(f(tot), end + 6, cy);
+                ctx.fillText(fv(tot), end + 6, cy);
             }
             ctx.textBaseline = 'alphabetic';
         }
@@ -1133,7 +1347,68 @@ class HeatmapChart extends Chart {
         void yCount;
         return w < 600 ? 220 : 280;
     }
-    invalidate() { this.img = null; }
+    invalidate() { this.img = null; this.maskImg = null; }
+    clampHover(hv) {
+        const s = this.spec;
+        if (!hv || !s.rows || !s.cols) return null;
+        const { nx, ny } = this.dims();
+        return { ix: clamp(hv.ix, 0, nx - 1), iy: clamp(hv.iy, 0, ny - 1) };
+    }
+    maskAt(ix, iy) {
+        const s = this.spec;
+        if (!s.mask) return false;
+        const r = s.transpose ? ix : iy, c = s.transpose ? iy : ix;
+        return !!s.mask[r * s.cols + c];
+    }
+    hasMask() {
+        const m = this.spec.mask;
+        if (!m || !m.length) return false;
+        for (let i = 0; i < m.length; i++) if (m[i]) return true;
+        return false;
+    }
+    /*
+     * The mask overlay: masked cells hatched with alternating light and dark 135° stripes, so the
+     * hatching shows on every ramp colour (a single ink vanishes on one end of the ramp). Built
+     * once per data / size / theme at device resolution and drawn over the cells.
+     */
+    drawMask(ctx, left, top, pw, ph, nx, ny) {
+        const dpr = this.dpr;
+        const W = Math.max(1, Math.round(pw * dpr)), Hh = Math.max(1, Math.round(ph * dpr));
+        const key = `${W}x${Hh}|${nx}x${ny}|${this.spec.transpose}|${this.t.surface}|${this.t.hatch}`;
+        if (!this.maskImg || this.maskKey !== key) {
+            const off = document.createElement('canvas');
+            off.width = W; off.height = Hh;
+            const o = off.getContext('2d');
+            const cw = W / nx, ch = Hh / ny;
+            o.fillStyle = '#fff';
+            for (let iy = 0; iy < ny; iy++) {
+                let run = -1;
+                for (let ix = 0; ix <= nx; ix++) {
+                    const m = ix < nx && this.maskAt(ix, iy);
+                    if (m && run < 0) run = ix;
+                    if (!m && run >= 0) { o.fillRect(Math.floor(run * cw), Math.floor(iy * ch), Math.ceil((ix - run) * cw), Math.ceil(ch)); run = -1; }
+                }
+            }
+            const P = Math.max(4, Math.round(6 * dpr));
+            const pat = document.createElement('canvas');
+            pat.width = P; pat.height = P;
+            const pc = pat.getContext('2d');
+            const stripe = (off2, color, width) => {
+                pc.strokeStyle = color; pc.lineWidth = width; pc.beginPath();
+                for (const d of [-P, 0, P]) { pc.moveTo(d + off2, P); pc.lineTo(d + off2 + P, 0); }
+                pc.stroke();
+            };
+            stripe(0, this.t.hatch, 1.2 * dpr);
+            stripe(P / 2, rgba(this.t.surface, 0.7), 1.2 * dpr);
+            o.globalCompositeOperation = 'source-in';
+            o.fillStyle = o.createPattern(pat, 'repeat');
+            o.fillRect(0, 0, W, Hh);
+            this.maskImg = off;
+            this.maskKey = key;
+        }
+        ctx.imageSmoothingEnabled = true;
+        ctx.drawImage(this.maskImg, left, top, pw, ph);
+    }
     dims() {
         const s = this.spec;
         // Without transpose: rows go down the y-axis, columns along x.
@@ -1180,12 +1455,14 @@ class HeatmapChart extends Chart {
         ctx.drawImage(this.img, left, top, right - left, bottom - top);
         const cw = (right - left) / nx, ch = (bottom - top) / ny;
         this.geo = { left, right, top, bottom, cw, ch, nx, ny };
+        this.masked = this.hasMask();
+        if (this.masked) this.drawMask(ctx, left, top, right - left, bottom - top, nx, ny);
 
-        // axes labels
+        // axes labels (month ticks thinned to every 2nd/3rd… month when they'd collide)
         ctx.fillStyle = t.text;
         ctx.textBaseline = 'middle';
         ctx.textAlign = 'right';
-        if (yTicks) for (const [i, lab] of yTicks) ctx.fillText(lab, left - 8, top + (i + 0.5) * ch);
+        if (yTicks) for (const [py, lab] of thinTicks(yTicks.map(([i, lab]) => [top + (i + 0.5) * ch, lab]), () => 11, { gap: 2 })) ctx.fillText(lab, left - 8, py);
         else if (yl) {
             const every = Math.max(1, Math.ceil(14 / ch));
             for (let i = 0; i < ny; i += every) ctx.fillText(String(yl[i]), left - 8, top + (i + 0.5) * ch);
@@ -1193,7 +1470,13 @@ class HeatmapChart extends Chart {
         ctx.textBaseline = 'alphabetic';
         ctx.textAlign = 'center';
         const xTicks = dateTicks(xl);
-        if (xTicks) for (const [i, lab] of xTicks) ctx.fillText(lab, clamp(left + (i + 0.5) * cw, left + 10, right - 10), bottom + 15);
+        if (xTicks) {
+            const widthOf = lab => ctx.measureText(lab).width;
+            for (const [px, lab] of thinTicks(xTicks.map(([i, lab]) => [left + (i + 0.5) * cw, lab]), widthOf, { gap: 8 })) {
+                const half = widthOf(lab) / 2;
+                ctx.fillText(lab, clamp(px, left + half, right - half), bottom + 15);
+            }
+        }
         else if (xl) {
             const maxW = Math.max(...xl.map(l => ctx.measureText(String(l)).width));
             const every = [1, 2, 3, 4, 6, 8, 12, 24].find(e => e * cw >= maxW + 10) || Math.ceil((maxW + 10) / cw);
@@ -1214,7 +1497,7 @@ class HeatmapChart extends Chart {
         const f = s.format || (v => fmt.num(v, 1));
         const stops = [];
         for (let i = 0; i <= 10; i++) { const k = Math.round((i / 10) * 255) * 4; stops.push(`rgb(${lut[k]},${lut[k + 1]},${lut[k + 2]}) ${i * 10}%`); }
-        const key = `${stops.join()}|${sc.lo}|${sc.hi}`;
+        const key = `${stops.join()}|${sc.lo}|${sc.hi}|${this.masked}|${s.maskLabel}|${s.scaleLabel}`;
         if (this.scaleKey === key) return;
         this.scaleKey = key;
         this.scaleHost.replaceChildren(h('div', { class: 'chart-scale' },
@@ -1222,7 +1505,8 @@ class HeatmapChart extends Chart {
             h('span', { class: 'chart-scale-bar', style: { background: `linear-gradient(90deg, ${stops.join(', ')})` } }),
             h('span', null, f(sc.hi)),
             s.scale?.ramp === 'diverging' && finite(sc.mid) ? h('span', { class: 'muted' }, `· mid ${f(sc.mid)}`) : null,
-            s.scaleLabel ? h('span', null, s.scaleLabel) : null));
+            s.scaleLabel ? h('span', null, s.scaleLabel) : null,
+            this.masked ? h('span', { class: 'chart-scale-key' }, keyEl('hatch'), s.maskLabel || 'Estimated') : null));
     }
     hitTest(x, y) {
         const g = this.geo;
@@ -1250,6 +1534,7 @@ class HeatmapChart extends Chart {
         return {
             title: [fmtLab(rowLab), fmtLab(colLab)].filter(Boolean).join(' · '),
             rows: [{ color: v == null ? null : this.lutColor(this._lut, this.sc.t(v)), kind: 'rect', value: v == null ? 'no data' : f(v), label: s.valueLabel || '' }],
+            note: this.maskAt(hv.ix, hv.iy) ? (s.maskLabel || 'Estimated') : null,
             ...this.tipAnchor,
         };
     }
@@ -1259,12 +1544,19 @@ class HeatmapChart extends Chart {
         const f = s.format || (x => fmt.num(x, 1));
         const columns = [{ key: '_r', label: '', sortable: false },
             ...Array.from({ length: s.cols }, (_, c) => ({ key: `c${c}`, label: String(s.colLabels?.[c] ?? c), align: 'right', sortable: false, format: v => (v == null ? '—' : f(v)) }))];
+        // masked cells keep their value with a marker, e.g. "0.42 (estimated)"
+        const tag = ` (${String(s.maskLabel || 'Estimated').toLowerCase()})`;
+        const columns2 = s.mask ? columns.map((col, k) => (k === 0 ? col : { ...col, format: (v, row) => (v == null ? '—' : `${f(v)}${row[`m${col.key}`] ? tag : ''}`) })) : columns;
         const rows = Array.from({ length: s.rows }, (_, r) => {
             const o = { _r: String(s.rowLabels?.[r] ?? r) };
-            for (let c = 0; c < s.cols; c++) { const v = s.values[r * s.cols + c]; o[`c${c}`] = finite(v) ? v : null; }
+            for (let c = 0; c < s.cols; c++) {
+                const v = s.values[r * s.cols + c];
+                o[`c${c}`] = finite(v) ? v : null;
+                if (s.mask?.[r * s.cols + c]) o[`mc${c}`] = true;
+            }
             return o;
         });
-        return { columns, rows };
+        return { columns: columns2, rows };
     }
 }
 
@@ -1282,13 +1574,17 @@ class PolarChart extends Chart {
         return az.length > 0 && az.every(a => a >= 85 && a <= 275);
     }
     legendItems() {
-        const kinds = { best: 'Best', current: 'Current', reference: 'Reference' };
+        const kinds = { best: 'Best', current: 'Current', pick: 'Your pick', reference: 'Reference' };
         const seen = new Map();
         for (const m of this.spec.markers || []) if (!seen.has(m.kind)) seen.set(m.kind, m);
         return [...seen.values()].filter(m => kinds[m.kind]).map(m => ({
-            label: m.kind === 'best' ? 'Best (marked)' : kinds[m.kind], kind: m.kind === 'current' ? 'ring' : 'dot',
-            color: m.kind === 'best' ? 'var(--accent)' : m.kind === 'current' ? 'var(--text)' : 'var(--text-2)',
+            label: m.kind === 'best' ? 'Best (marked)' : kinds[m.kind], kind: m.kind === 'current' || m.kind === 'pick' ? 'ring' : 'dot',
+            color: m.kind === 'best' || m.kind === 'pick' ? 'var(--accent)' : m.kind === 'current' ? 'var(--text)' : 'var(--text-2)',
         }));
+    }
+    clampHover(hv) {
+        const a = this.spec.azimuths?.length || 0, b = this.spec.tilts?.length || 0;
+        return hv && a && b ? { i: clamp(hv.i, 0, a - 1), j: clamp(hv.j, 0, b - 1) } : null;
     }
     grid() {
         const s = this.spec;
@@ -1432,10 +1728,11 @@ class PolarChart extends Chart {
         const placed = marks.map(({ x, y }) => [x - 7, y - 7, x + 7, y + 7]);
         for (const { m, x, y } of marks) {
             ctx.beginPath();
-            if (m.kind === 'current') {
-                ctx.arc(x, y, 6.5, 0, Math.PI * 2);
+            if (m.kind === 'current' || m.kind === 'pick') {
+                // the user's pick: a gold ring a size up, so it reads apart from 'current' (ink ring)
+                ctx.arc(x, y, m.kind === 'pick' ? 8 : 6.5, 0, Math.PI * 2);
                 ctx.lineWidth = 4; ctx.strokeStyle = t.surface; ctx.stroke();
-                ctx.lineWidth = 2; ctx.strokeStyle = t.strong; ctx.stroke();
+                ctx.lineWidth = 2; ctx.strokeStyle = m.kind === 'pick' ? t.accent : t.strong; ctx.stroke();
             } else {
                 ctx.arc(x, y, m.kind === 'best' ? 5.5 : 4, 0, Math.PI * 2);
                 ctx.fillStyle = m.kind === 'best' ? t.accent : t.strong;
@@ -1498,7 +1795,7 @@ class PolarChart extends Chart {
         const g = this.geo;
         if (!g) return undefined;
         if (!cur) {
-            const best = (this.spec.markers || []).find(m => m.kind === 'current') || (this.spec.markers || [])[0];
+            const best = (this.spec.markers || []).find(m => m.kind === 'pick') || (this.spec.markers || []).find(m => m.kind === 'current') || (this.spec.markers || [])[0];
             if (best) {
                 const i = g.az.reduce((b, v, k) => (Math.abs(v - best.az) < Math.abs(g.az[b] - best.az) ? k : b), 0);
                 const j = g.ti.reduce((b, v, k) => (Math.abs(v - best.tilt) < Math.abs(g.ti[b] - best.tilt) ? k : b), 0);
@@ -1523,7 +1820,8 @@ class PolarChart extends Chart {
         const a = g.az[hv.i], tl = g.ti[hv.j];
         const v = tl === 0 ? this.flatValue() : this.v(hv.i, hv.j);
         const f = s.format || (x => fmt.num(x, 0));
-        const rows = [{ color: v == null ? null : this.lutColor(this._lut, this.sc.t(v)), kind: 'rect', value: v == null ? 'not computed' : f(v), label: s.metricLabel || '' }];
+        // tipLabel names the first row ('a year'); metricLabel ('£ a year') captions the scale
+        const rows = [{ color: v == null ? null : this.lutColor(this._lut, this.sc.t(v)), kind: 'rect', value: v == null ? 'not computed' : f(v), label: s.tipLabel ?? s.metricLabel ?? '' }];
         if (s.tipRows) for (const r of s.tipRows(a, tl) || []) rows.push(r);
         const marks = (s.markers || []).filter(m => Math.abs(m.az - a) <= g.azStep / 2 && Math.abs(m.tilt - tl) <= g.tiStep / 2).map(m => m.label).filter(Boolean);
         return {
@@ -1553,6 +1851,10 @@ class PolarChart extends Chart {
 class ScatterChart extends Chart {
     defaultHeight(w) { return w < 600 ? 260 : 340; }
     pointColor(p, i) { return this.color(p.color || p.route || null, i); }
+    clampHover(hv) {
+        const n = (this.spec.points || []).filter(p => finite(p.x) && finite(p.y)).length;
+        return n > 0 && Number.isInteger(hv) ? clamp(hv, 0, n - 1) : null;
+    }
     isHollow(p) { return !!p.hollow || p.route === 'whatif' || p.color === 'whatif'; }
     legendItems() {
         const s = this.spec;
@@ -1672,8 +1974,9 @@ class ScatterChart extends Chart {
                 ctx.lineWidth = 1.25; ctx.strokeStyle = rgba(t.strong, 0.7); ctx.stroke();
             }
         }
-        // selective labels: emphasised points (and any with label + showLabel)
-        const placed = [];
+        // selective labels: emphasised points (and any with label + showLabel). They avoid each other
+        // and the payback-line labels already drawn (a long name used to cover "pays back in 3 yrs").
+        const placed = isoPlaced.map(([bx, ly, bx1]) => [bx - 2, ly - 11, bx1 + 2, ly + 3]);
         ctx.font = SANS(11.5, 600);
         for (const { p } of [...order].reverse()) {
             if (!(p.emphasis || p.showLabel) || !p.label) continue;
@@ -1743,6 +2046,10 @@ class ScatterChart extends Chart {
 
 class TornadoChart extends Chart {
     defaultHeight() { return Math.max(140, (this.spec.rows?.length || 0) * 38 + 46); }
+    clampHover(hv) {
+        const n = (this.spec.rows || []).filter(r => finite(r.low) || finite(r.high)).length;
+        return n > 0 && Number.isInteger(hv) ? clamp(hv, 0, n - 1) : null;
+    }
     legendItems() {
         const l = this.spec.legend || ['At the low setting', 'At the high setting'];
         return [{ label: l[0], color: '--tornado-low', kind: 'rect' }, { label: l[1], color: '--tornado-high', kind: 'rect' }];
@@ -1754,25 +2061,54 @@ class TornadoChart extends Chart {
         const f = s.format || (v => fmt.num(v, 1));
         let lo = s.center, hi = s.center;
         for (const r of rows) for (const v of [r.low, r.high]) if (finite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
-        const sc = niceScale(lo, hi, 5);
         ctx.font = SANS(12.5);
         const labW = Math.min(w * 0.36, Math.max(...rows.map(r => ctx.measureText(r.label).width)) + 12);
         const left = labW + 10, right = w - 12;
         const top = 22, bottom = H - 22;
         const bh = (bottom - top) / rows.length;
         const barH = Math.min(18, bh * 0.56);
-        const X = v => left + ((v - sc.min) / (sc.max - sc.min || 1)) * (right - left);
+        // Ticks thinned to what fits across the plot (5 crowded into 343 px read "2.2.4…").
+        ctx.font = MONO(10.5);
+        const tickW = v => ctx.measureText(f(v)).width;
+        let sc = fitTicks(lo, hi, right - left, tickW, { maxCount: 5, gap: 12 });
+        // Each bar's value label sits outside its end. Reserve room at both ends of the scale for
+        // the longest one that would run off the plot (the bars get a little shorter instead), up to
+        // 35% of the plot a side — always enough for the value alone, so no value is ever dropped.
+        const texts = [];
+        for (const r of rows) for (const [v, setting] of [[r.low, r.lowLabel], [r.high, r.highLabel]]) {
+            if (finite(v) && v !== s.center) texts.push({ v, tw: ctx.measureText(setting ? `${setting} · ${f(v)}` : f(v)).width });
+        }
+        let x0 = left, x1 = right;
+        for (let pass = 0; pass < 3; pass++) {
+            const X0 = v => x0 + ((v - sc.min) / (sc.max - sc.min || 1)) * (x1 - x0);
+            const cx0 = X0(s.center);
+            let needL = 0, needR = 0;
+            for (const { v, tw } of texts) {
+                const xb = X0(v);
+                if (xb > cx0) needR = Math.max(needR, xb + 6 + tw - (w - 4));
+                else needL = Math.max(needL, (left - 4) - (xb - 6 - tw));
+            }
+            if (needL <= 0.5 && needR <= 0.5) break;
+            const room = (right - left) * 0.35;   // never squeeze the bars below ~65% of the plot
+            x0 = Math.min(left + room, x0 + Math.max(0, needL));
+            x1 = Math.max(right - room, x1 - Math.max(0, needR));
+        }
+        // the labels now share a narrower axis: thin them for the width the bars actually got
+        if (x1 - x0 < right - left - 0.5) sc = fitTicks(lo, hi, x1 - x0, tickW, { maxCount: 5, gap: 12 });
+        const X = v => x0 + ((v - sc.min) / (sc.max - sc.min || 1)) * (x1 - x0);
         this.geo = { left, right, top, bottom, bh, rows };
         const cLow = this.color('--tornado-low'), cHigh = this.color('--tornado-high');
 
         if (this.hover != null) { ctx.fillStyle = 'rgba(255,255,255,0.035)'; ctx.fillRect(0, top + this.hover * bh, w, bh); }
         ctx.font = MONO(10.5); ctx.textAlign = 'center';
-        for (const v of sc.ticks) {
+        sc.ticks.forEach((v, i) => {
             const px = Math.round(X(v)) + 0.5;
             ctx.strokeStyle = t.grid; ctx.lineWidth = 1;
             ctx.beginPath(); ctx.moveTo(px, top); ctx.lineTo(px, bottom); ctx.stroke();
-            ctx.fillStyle = t.text; ctx.fillText(f(v), clamp(px, left + 14, right - 14), H - 6);
-        }
+            if (sc.show && !sc.show[i]) return;
+            const half = ctx.measureText(f(v)).width / 2;
+            ctx.fillStyle = t.text; ctx.fillText(f(v), clamp(px, left + half, w - half - 2), H - 6);
+        });
         const cx = Math.round(X(s.center)) + 0.5;
         rows.forEach((r, i) => {
             const cy = top + (i + 0.5) * bh;
@@ -1785,21 +2121,25 @@ class TornadoChart extends Chart {
                 const xa = X(s.center), xb = X(v);
                 barPath(ctx, Math.min(xa, xb), cy - barH / 2, Math.max(xa, xb), cy + barH / 2, 4, xb > xa ? 'right' : 'left');
                 ctx.fillStyle = c; ctx.fill();
-                // Value at the tip: outside the bar when it fits, else inside the end when the bar is
-                // long enough (white on these mid-lightness fills), else left to the tooltip and table.
-                const text = setting ? `${setting} · ${f(v)}` : f(v);
+                // Value at the tip, best first: "setting · value" outside the bar; just the value
+                // outside (the scale reserved room for that, so it always fits); the full text
+                // inside a long bar (white on these mid-lightness fills). The setting is always in
+                // the tooltip and the table.
                 ctx.font = MONO(10.5);
-                const tw = ctx.measureText(text).width;
                 const out = xb > xa ? xb + 6 : xb - 6;
-                if ((xb > xa && out + tw < right + 10) || (xb < xa && out - tw > left - 4)) {
+                const fitsOut = tw => (xb > xa ? out + tw <= w - 2 : out - tw >= left - 6);
+                const full = setting ? `${setting} · ${f(v)}` : f(v);
+                const fullW = ctx.measureText(full).width;
+                const text = fitsOut(fullW) ? full : fitsOut(ctx.measureText(f(v)).width) ? f(v) : null;
+                if (text) {
                     ctx.textAlign = xb > xa ? 'left' : 'right';
                     ctx.fillStyle = t.text;
                     ctx.fillText(text, out, cy);
-                } else if (Math.abs(xb - xa) > tw + 16) {
+                } else if (Math.abs(xb - xa) > fullW + 16) {
                     ctx.font = MONO(10.5, 600);
                     ctx.textAlign = xb > xa ? 'right' : 'left';
                     ctx.fillStyle = '#ffffff';
-                    ctx.fillText(text, xb > xa ? xb - 7 : xb + 7, cy);
+                    ctx.fillText(full, xb > xa ? xb - 7 : xb + 7, cy);
                 }
             }
             ctx.textBaseline = 'alphabetic';
@@ -1862,15 +2202,21 @@ const api = c => ({ update: s => c.update(s), destroy: () => c.destroy(), setTab
 
 /**
  * Line chart. x: { values, format, tipFormat, label, type: 'category'|'linear'|'time' }; y: { label, format, min, max, zero };
- * series: [{ key, label, color, values, dash, area, format }]; bands: [{ from, to, label }]; markers: [{ x, label }];
- * optional: height, title, note, endLabels (default on for 2–4 series), table, onTable(bool), printTable (default true).
+ * series: [{ key, label, color, values, dash, area, format }] — null/NaN values are gaps, never zeros;
+ *   a range band is a series with lo/hi instead of values: { key, label, color, lo: number[], hi: number[], format,
+ *   loLabel, hiLabel, opacity } — filled at ~15% of its colour behind the lines, tooltip 'lo–hi', two table columns;
+ * bands: [{ from, to, label }] (shaded x-ranges such as 4–7pm); markers: [{ x, label }];
+ * optional: height, title, ariaLabel, tableCaption, note, endLabels (default on for 2–4 series), table, onTable(bool),
+ * printTable (default true). A keyboard user's cursor survives update() while the chart has focus.
  * @param {HTMLElement} el @param {object} spec
  * @returns {{ update(spec: object): void, destroy(): void, setTable(on: boolean): void }}
  */
 export function createLine(el, spec) { return api(new LineChart(el, spec, 'line')); }
 
 /**
- * Stacked area: same spec as createLine; series stack in order (negatives stack below zero).
+ * Stacked area: same spec as createLine; series stack in order (negatives stack below zero; a
+ * zero half-hour of a below-zero layer stays below zero). A slot where every stacked layer is
+ * null is a gap in the whole stack.
  * A series with `line: true` is drawn as an unstacked 2px line on top (e.g. total load).
  * Joins are smooth; `steps: true` (category x only) draws each slot as a flat step. `total: false` hides the tooltip total.
  * Fills are full-strength palette colours separated by 2px surface gaps (the validated encoding).
@@ -1890,8 +2236,10 @@ export function createBars(el, spec) { return api(new BarChart(el, spec, 'bars')
 /**
  * Heatmap. { rows, cols, values: Float32Array (row-major, NaN = no data), rowLabels, colLabels,
  * scale: { min, max, ramp: 'sequential'|'diverging'|'solar', hue?: 'solar', mid? }, format, height,
- * transpose (rows run along x — e.g. days across, half-hours down), valueLabel, yLabel, scaleLabel }.
- * ISO-date labels get month ticks automatically.
+ * transpose (rows run along x — e.g. days across, half-hours down), valueLabel, yLabel, scaleLabel,
+ * mask (Uint8Array, same layout as values: truthy cells are hatched), maskLabel (default 'Estimated':
+ * the hatch's key, tooltip note and table marker) }.
+ * ISO-date labels get month ticks automatically, thinned to every 2nd/3rd… month when they'd collide.
  * @param {HTMLElement} el @param {object} spec
  * @returns {{ update(spec: object): void, destroy(): void, setTable(on: boolean): void }}
  */
@@ -1900,8 +2248,9 @@ export function createHeatmap(el, spec) { return api(new HeatmapChart(el, spec, 
 /**
  * The solar rose: azimuth around the dial (N up, E right), tilt as radius from flat at the centre to
  * vertical at the rim. If every azimuth lies within 90–270° only the southern fan is drawn.
- * { azimuths, tilts, values (az-major: values[i*tilts.length + j]), markers: [{ az, tilt, label, kind: 'best'|'current'|'reference' }],
- *   format, metricLabel, scale (default solar ramp), onPick(az, tilt), tipRows(az, tilt) → extra tooltip rows }.
+ * { azimuths, tilts, values (az-major: values[i*tilts.length + j]), markers: [{ az, tilt, label, kind: 'best'|'current'|'pick'|'reference' }],
+ *   format, metricLabel (scale caption), tipLabel (first tooltip row's label; default metricLabel), scale (default solar ramp),
+ *   onPick(az, tilt), tipRows(az, tilt) → extra tooltip rows }. 'pick' (the user's choice) is a gold ring.
  * @param {HTMLElement} el @param {object} spec
  * @returns {{ update(spec: object): void, destroy(): void, setTable(on: boolean): void }}
  */
@@ -1919,6 +2268,7 @@ export function createScatter(el, spec) { return api(new ScatterChart(el, spec, 
 /**
  * Tornado (sensitivity) chart: horizontal bars from `center` to each driver's low and high result.
  * { center, centerLabel, rows: [{ label, low, high, lowLabel, highLabel }], format, legend: [lowName, highName] }.
+ * Ticks are thinned to the plot width and the scale leaves room for every bar-end label.
  * @param {HTMLElement} el @param {object} spec
  * @returns {{ update(spec: object): void, destroy(): void, setTable(on: boolean): void }}
  */

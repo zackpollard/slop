@@ -23,24 +23,31 @@
  * compare (store.scenarios.saved / pinned / activeId). The hash carries ?scenario=<id> for saved
  * and ready-made options, so links from Verdict, Compare and Orientation land on the right build.
  *
- * Engine work: validate, applyFix, runScenario (through ctx.data.scenario, so runs are memoised
- * and the user's finance settings merge in) and typicalDay all run in the worker. Runs are
- * debounced and coalesced (the worker is single-threaded, and runScenario cannot be cancelled
- * mid-flight), staged: rules → a fast run without the weather band → the typical day → the band.
- * While a run is in flight the previous results stay on screen at reduced opacity.
+ * Engine work: catalog, buildSystem (a catalog product → System, exactly as the worker builds the
+ * ready-made options), validate, applyFix (every rules fix, removing a battery with its cost lines,
+ * and the staged plan's 'have an electrician fit it' — rules.js raises LATER_WHATIF for a later
+ * plug-in battery), runScenario (through ctx.data.scenario, so runs are memoised and the user's
+ * finance settings merge in) and typicalDay all run in the worker. Edits that need the worker
+ * (changeVia) are computed from the draft as it is and re-computed if another edit lands first.
+ * Runs are debounced and coalesced (the worker is single-threaded, and runScenario cannot be
+ * cancelled mid-flight), staged: rules → a fast run without the weather band → the typical day →
+ * the band. While a run is in flight the previous results stay on screen at reduced opacity.
  *
- * Main-thread engine imports (pure, cheap — no simulation): kits.js to turn a catalog product into
- * a System, system.js to keep the draft canonical, scenarios.js for the default mount spots,
- * vat.js and finance.js for the first-year month split and the finance defaults shown. The worker's
- * catalog() result drops the catalog's electrician/limits/parts, so the view normalises the same
- * data/*.json files itself (see engineRequests in the report).
+ * Main-thread engine imports (pure, cheap — no simulation, no catalog loading): kits.js helpers that
+ * read the worker's catalog (findProduct, layoutPanels, mountingForSpot, electricianCost), system.js
+ * to keep the draft canonical, scenarios.js for the default mount spots, vat.js and finance.js for
+ * the first-year month split and the finance defaults shown.
+ *
+ * Price overrides from Compare (a saved System with the ready-made option's id and priceOverride)
+ * are that ready-made option at the user's price: it opens as "Ready-made · Your price", and saving
+ * an edit makes a new option of your own.
  *
  * View-local components (candidates for ui.js — see the report): dvBandStrip() (the 20 weather
  * years as ticks with the p10–p90 range, the typical year and the last 12 months marked) and the
  * numbered build step (dv-step). Their CSS lives in the injected <style id="style-design">.
  */
 
-import { normalizeCatalog, findProduct, kitToSystem, stationToSystem, bundleToSystem, layoutPanels, mountingForSpot, electricianCost } from '../kits.js';
+import { findProduct, layoutPanels, mountingForSpot, electricianCost } from '../kits.js';
 import { normalizeSystem } from '../system.js';
 import { DEFAULT_SPOTS, normalizeSpot } from '../scenarios.js';
 import { vatAt, vatSchedule } from '../vat.js';
@@ -435,30 +442,50 @@ function scaleTo(rows, total) {
 }
 
 /**
- * Split one day's half-hours into what met the home's use (solar, battery, grid — sums to the use)
- * and where everything else went (export, battery charging, lost), in average watts.
+ * Split one day's half-hours (core.typicalDay slots) into what met the home's use and where
+ * everything else went, in average watts.
+ *  - Above zero, summing to the use: solar used at home (grid-tied panels straight to the house,
+ *    plus a power station's own panels running the servers live), from the battery or power
+ *    station (stored energy), from the grid.
+ *  - Below zero: sent to the grid, stored (battIn — the stored side, whatever charged it: surplus
+ *    or dc-side solar, a station's own panels or cheap grid), lost (clipped by the inverter, or a
+ *    station's own solar with the station full).
+ * A power station's output to the servers comes from the house-bus balance (load + grid charging
+ * = grid-tied solar + import − export + what the station gives); battNet (> 0) is the stored part
+ * of it and the rest came live from its own panels. Without a station, battNet (> 0) is what the
+ * battery gave the house.
+ * @param {Array<object>} slots typicalDay slots
+ * @param {{ ups?: boolean }} [opts] ups: the system's battery is a power station
+ * @returns {{ use, solar, own, batt, grid, exp, chg, lost, clipped, waste, price, xprice: number[] }} own: the
+ *   station's own panels' share of `solar`; clipped + waste = −lost
  */
-function dayLayers(slots) {
-    const L = { use: [], solar: [], batt: [], grid: [], exp: [], chg: [], lost: [], price: [], xprice: [] };
-    for (const s of slots) {
-        const load = Math.max(0, s.load || 0);
-        const fromBatt = Math.min(load, Math.max(0, s.battNet || 0));
-        // into the battery: AC-side charging (grid or surplus solar) plus solar a dc-coupled unit
-        // stores before its inverter (the part of the no-battery AC output that never reached AC)
-        const charge = Math.max(0, -(s.battNet || 0)) + Math.max(0, (s.pvAc || 0) - (s.pvDirectAc ?? s.pvAc ?? 0));
-        // solar meets the home first, the grid tops up; grid charging shows up below zero as charging
-        const solarToLoad = Math.min(Math.max(0, load - fromBatt), Math.max(0, s.pvDirectAc ?? s.pvAc ?? 0));
-        const gridToLoad = Math.max(0, load - fromBatt - solarToLoad);
-        const w = kwh => kwh * 2000;
+export function dayLayers(slots, { ups = false } = {}) {
+    const L = { use: [], solar: [], own: [], batt: [], grid: [], exp: [], chg: [], lost: [], clipped: [], waste: [], price: [], xprice: [] };
+    const pos = v => Math.max(0, v || 0);
+    const w = kwh => kwh * 2000;
+    for (const s of slots || []) {
+        const load = pos(s.load);
+        const direct = pos(s.pvDirectAc ?? s.pvAc);
+        let fromBatt;
+        let own = 0;
+        if (ups) {
+            const gave = Math.min(load, pos(load + pos(s.gridChg) - direct - pos(s.imp) + pos(s.exp)));
+            fromBatt = Math.min(gave, pos(s.battNet));
+            own = gave - fromBatt;
+        } else fromBatt = Math.min(load, pos(s.battNet));
+        // the rest of the use: grid-tied solar first, the grid tops up (grid charging shows below zero as stored)
+        const solarToLoad = Math.min(pos(load - fromBatt - own), direct);
+        const gridToLoad = pos(load - fromBatt - own - solarToLoad);
         L.use.push(w(load));
-        L.solar.push(w(solarToLoad));
+        L.solar.push(w(solarToLoad + own));
+        L.own.push(w(own));
         L.batt.push(w(fromBatt));
         L.grid.push(w(gridToLoad));
-        // below-zero layers stay a hair negative when empty, so charts.js stacks them from zero
-        // (an exact 0 would sit on top of the positive stack and draw a sliver down to the next value)
-        L.exp.push(-w(Math.max(0, s.exp || 0)) || -1e-9);
-        L.chg.push(-w(charge) || -1e-9);
-        L.lost.push(-w(Math.max(0, s.clipped || 0)) || -1e-9);
+        L.exp.push(-w(pos(s.exp)));
+        L.chg.push(-w(pos(s.battIn)));
+        L.clipped.push(-w(pos(s.clipped)));
+        L.waste.push(-w(pos(s.upsPvWasted)));
+        L.lost.push(-w(pos(s.clipped) + pos(s.upsPvWasted)));
         L.price.push(s.price);
         L.xprice.push(s.exportPrice ?? 0);
     }
@@ -482,29 +509,6 @@ function panelPath(sys) {
 const kwhTag = (name, kwh, fmt) => (/\bkWh\b/.test(name || '') || !finite(kwh) ? '' : ` · ${fmt.num(kwh, kwh < 10 ? 2 : 1)} kWh`);
 
 const sourceKey = src => (!src ? '' : src.kind === 'saved' || src.kind === 'auto' ? `${src.kind}:${src.id}` : src.key || '');
-
-/* ── catalog (main thread: product → System needs the full normalised catalog) ── */
-
-let catalogPromise = null;
-function loadCatalog() {
-    if (!catalogPromise) {
-        catalogPromise = (async () => {
-            const base = new URL('../../data/', import.meta.url);
-            const get = async name => {
-                const res = await fetch(new URL(`${name}.json`, base).href, { credentials: 'same-origin' });
-                if (!res.ok) throw new Error(`Couldn’t load the product list (data/${name}.json, ${res.status}).`);
-                return res.json();
-            };
-            const [kits, stations, bundles, constants] = await Promise.all(['kits', 'stations', 'bundles', 'constants'].map(get));
-            return normalizeCatalog({
-                kits: kits?.kits ?? kits, stations: stations?.stations ?? stations, bundles: bundles?.bundles ?? bundles,
-                constants, stationDefaults: stations?.defaults ?? null,
-            });
-        })();
-        catalogPromise.catch(() => { catalogPromise = null; });
-    }
-    return catalogPromise;
-}
 
 function injectStyle(h) {
     if (typeof document === 'undefined' || document.getElementById(STYLE_ID)) return;
@@ -583,6 +587,8 @@ export default {
         this.dayMemo = new Map();
         this.running = false;
         this.timer = null;
+        this.editSeq = 0;              // edits computed in the worker (changeVia): the newest wins
+        this.startSeq = 0;             // "Start from" builds in the worker: the newest wins
         this.mapBox = null;
         this.picker = null;
         this.compass = null;
@@ -655,7 +661,7 @@ export default {
         this.teardown();
         this.el.replaceChildren(this.skeleton(summary));
         try {
-            const [catalog, autos] = await Promise.all([loadCatalog(), data.autoScenarios()]);
+            const [catalog, autos] = await Promise.all([this.loadCatalog(), data.autoScenarios()]);
             if (token !== this.token || data.summary()?.id !== summary.id) return;
             this.st.catalog = catalog;
             this.st.autos = autos || [];
@@ -688,6 +694,12 @@ export default {
             this.st.source = { kind: 'unsaved', key: '' };
             this.st.base = '';
         }
+        // A price set (or taken back) on Compare for the ready-made option on screen: show it at
+        // that price, unless it's being edited here.
+        if (src?.kind === 'auto' && !this.isDirty()) {
+            const over = this.overrideFor(src.id);
+            if (!!over !== !!src.priced || (over && sig(normalizeSystem(clone(over))) !== this.st.base)) { this.loadById(src.id, { quiet: true }); return; }
+        }
         this.renderBar();
         this.renderEditor();
     },
@@ -704,7 +716,21 @@ export default {
     /* ── state helpers ──────────────────────────────────────────────────── */
 
     store() { return this.ctx.store; },
-    savedList() { return (this.store().get().scenarios?.saved || []).filter(s => s && typeof s.id === 'string'); },
+    /** The user's own saved options (Compare's price overrides are ready-made options at their price, not these). */
+    savedList() { return (this.store().get().scenarios?.saved || []).filter(s => s && typeof s.id === 'string' && !s.priceOverride); },
+    /** Compare's price override for a ready-made option (the first saved entry with that id), if any. */
+    overrideFor(id) {
+        const hit = (this.store().get().scenarios?.saved || []).find(s => s && s.id === id);
+        return hit?.priceOverride ? hit : null;
+    },
+    /** The product list, from the worker (normalised there once; plain data here). */
+    loadCatalog() {
+        if (!this.catalogP) {
+            this.catalogP = this.ctx.engine.call('catalog');
+            this.catalogP.catch(() => { this.catalogP = null; });
+        }
+        return this.catalogP;
+    },
     pinnedList() { return this.store().get().scenarios?.pinned || []; },
     isDirty() { return !!this.st.draft && sig(this.st.draft) !== this.st.base; },
     persistentId() {
@@ -779,7 +805,19 @@ export default {
         if (this.loadById(DEFAULT_ID, { quiet: true })) return;
         const first = this.st.autos.find(s => s.route !== 'reference');
         if (first) this.setDraft(normalizeSystem(clone(first)), { kind: 'auto', id: first.id });
-        else this.setDraft(this.buildFrom('blank'), { kind: 'catalog', key: 'blank' });
+        else this.startBlank();
+    },
+
+    /** Start from a custom plug-in build (nothing else to start from). */
+    async startBlank() {
+        try {
+            const sys = await this.buildFrom('blank');
+            if (this.alive && this.v) this.setDraft(sys, { kind: 'catalog', key: 'blank' });
+        } catch (err) {
+            if (err?.name === 'AbortError' || !this.alive) return;
+            this.teardown();
+            this.el.replaceChildren(this.errorCard(err));
+        }
     },
 
     applyParams() {
@@ -795,7 +833,12 @@ export default {
         const saved = this.savedList().find(s => s.id === id);
         if (saved) { this.setDraft(normalizeSystem(clone(saved)), { kind: 'saved', id }); return true; }
         const auto = this.st.autos?.find(s => s.id === id);
-        if (auto) { this.setDraft(normalizeSystem(clone(auto)), { kind: 'auto', id }); return true; }
+        if (auto) {
+            // at the user's own price when Compare has one for it
+            const over = this.overrideFor(id);
+            this.setDraft(normalizeSystem(clone(over ?? auto)), { kind: 'auto', id, priced: !!over });
+            return true;
+        }
         if (!quiet) this.ctx.ui.toast(`Couldn’t find the option “${id}” — it may have been deleted.`, { tone: 'warn' });
         return false;
     },
@@ -838,52 +881,44 @@ export default {
         else if (!id && cur) router.replace('design', {});
     },
 
-    /** Build a fresh System from a "Start from" choice, keeping the panels where they are. */
-    buildFrom(value) {
-        const cat = this.st.catalog;
+    /**
+     * Build a fresh System from a "Start from" choice ('kit:<id>' | 'bundle:<id>' | 'station:<id>' |
+     * 'blank') in the worker, keeping the panels where they are.
+     * @param {string} value
+     * @returns {Promise<object>} System (normalised)
+     */
+    async buildFrom(value) {
         // where the panels are now; a battery-only or panel-less step in between keeps the last place
         const here = panelArrays(this.st.draft).length ? this.currentSpot() : null;
         if (here) this.st.lastSpot = here;
         const spot = here ?? this.st.lastSpot ?? this.currentSpot() ?? (() => { const s = this.spots()[0]; return s ? { ...s, azimuth: s.azimuth ?? 180, tilt: s.tilt ?? 35 } : null; })();
-        const ds = this.dsSource();
-        const loose = (count, sp) => ({ count, wp: cat.parts?.panel?.includedPanels?.wp ?? 460, catalogId: cat.parts?.panel?.id,
-            frameId: mountingForSpot(sp) === 'open' ? cat.parts?.frame?.id : undefined });
         const [kind, id] = value.split(/:(.*)/s);
-        if (kind === 'kit') {
-            const kit = findProduct(cat, id);
-            if (!kit) throw new Error(`Unknown product ${id}`);
-            if (kit.kind === 'battery-addon') return kitToSystem(kit, { catalog: cat, id: 'draft', dsSource: ds });
-            if (kit.kind === 'battery-inverter') return kitToSystem(kit, { catalog: cat, spot, id: 'draft', dsSource: ds, panels: loose(Math.min(4, Math.max(1, kit.inputs.length)), spot), name: `${kit.name} + ${Math.min(4, Math.max(1, kit.inputs.length))} panels` });
-            if (!kit.includedPanels) return kitToSystem(kit, { catalog: cat, spot, id: 'draft', dsSource: ds, panels: loose(2, spot), name: `${kit.name} + 2 panels` });
-            return kitToSystem(kit, { catalog: cat, spot, id: 'draft', dsSource: ds });
-        }
-        if (kind === 'bundle') return bundleToSystem(findProduct(cat, id), { catalog: cat, spot, id: 'draft' });
-        if (kind === 'station') return stationToSystem(findProduct(cat, id), { catalog: cat, id: 'draft' });
-        // a custom plug-in build: two panels on the generic dual-input 800 W micro-inverter
-        const o = spot ?? { azimuth: 180, tilt: 35, kind: 'ground', shadingPct: 3, horizon: [] };
-        return normalizeSystem({
-            id: 'draft', name: 'My own plug-in build', route: 'plugin', spotId: o.id ?? null,
-            arrays: layoutPanels(2, 460, 2, { azimuth: o.azimuth ?? 180, tilt: o.tilt ?? 35, mounting: mountingForSpot(o), shadingPct: o.shadingPct ?? 3, horizon: o.horizon ?? [] }),
-            costs: [{ label: 'Panels, micro-inverter and mounting', gbp: 600, year: 0, kind: 'hardware' }],
-            notes: ['A custom build: only legal as a plug-in kit if this exact kit is on the ENA register.'],
-        });
+        const req = kind === 'blank' ? { kind: 'blank', opts: { id: 'draft', spot } }
+            : { kind, id, opts: { id: 'draft', spot, dsSource: this.dsSource() } };
+        return normalizeSystem(await this.ctx.engine.call('buildSystem', req));
     },
 
-    startFrom(value) {
+    async startFrom(value) {
         if (!value || value === sourceKey(this.st.source)) return;
+        const ticket = ++this.startSeq;
         const prev = this.snapshot();
         const [kind, id] = value.split(/:(.*)/s);
-        let ok = true;
-        if (kind === 'saved' || kind === 'auto') ok = this.loadById(id, { quiet: false });
-        else {
-            try {
-                this.setDraft(this.buildFrom(value), { kind: 'catalog', key: value });
-            } catch (err) {
-                ok = false;
-                this.ctx.ui.toast(`Couldn’t start from that: ${err?.message || err}`, { tone: 'bad' });
-            }
+        if (kind === 'saved' || kind === 'auto') {
+            if (this.loadById(id, { quiet: false }) && prev.dirty) this.offerUndo(prev, `Started from “${this.st.draft.name}”.`);
+            return;
         }
-        if (ok && prev.dirty) this.offerUndo(prev, `Started from “${this.st.draft.name}”.`);
+        this.setStale(true);
+        try {
+            const sys = await this.buildFrom(value);
+            if (ticket !== this.startSeq || !this.alive || !this.v) return;
+            this.setDraft(sys, { kind: 'catalog', key: value });
+            if (prev.dirty) this.offerUndo(prev, `Started from “${this.st.draft.name}”.`);
+        } catch (err) {
+            if (ticket !== this.startSeq || !this.alive || !this.v) return;
+            if (!this.running && !this.timerPending) this.setStale(false);
+            this.renderEditor();   // the select goes back to what's on screen
+            if (err?.name !== 'AbortError') this.ctx.ui.toast(`Couldn’t start from that: ${err?.message || err}`, { tone: 'bad' });
+        }
     },
 
     /* ── editing ────────────────────────────────────────────────────────── */
@@ -911,10 +946,10 @@ export default {
         const { engine, ui } = this.ctx;
         if (button) button.disabled = true;
         try {
-            let next = await engine.call('applyFix', this.st.draft, fix.action);
+            // the rules do it all: removeBattery takes the battery's cost lines too, upgradeHardwired
+            // adds the electrician to the later step
+            const next = await engine.call('applyFix', this.st.draft, fix.action);
             if (!this.alive) return;
-            // rules.applyFix removeBattery leaves the battery's price line behind: take it out too
-            if (fix.action?.type === 'removeBattery') next = this.withoutBatteryCosts(next, this.st.draft);
             this.st.draft = normalizeSystem(next);
             this.renderBar();
             this.renderEditor();
@@ -928,18 +963,33 @@ export default {
         }
     },
 
-    /** Remove a battery product's own cost lines (and its sourceId) from a system. */
-    withoutBatteryCosts(sys, before = sys) {
-        const p = this.batteryProduct(before);
-        if (!p) return sys;
-        const s = clone(sys);
-        if (p.kind === 'power-station') {
-            s.costs = this.dropStationPanelLines(s.costs, countOf(before.battery?.ups?.pvArrays)).filter(c => c.label !== 'Smart plug for automation (enter yours)');
+    /**
+     * An edit that needs the worker (a product built from the catalog, a rules fix): computed from
+     * the draft as it is now and applied through change() — unless another edit landed while the
+     * worker was busy, in which case it is computed again from the newer draft (a few times at most).
+     * @param {(draft: object) => Promise<object>} compute gets a copy of the draft, returns the new System
+     * @param {{ what?: string }} [o] for the error toast ("Couldn’t <what>")
+     * @returns {Promise<boolean>} applied
+     */
+    async changeVia(compute, { what = 'make that change' } = {}) {
+        const ticket = ++this.editSeq;
+        this.setStale(true);
+        for (let attempt = 0; attempt < 3; attempt++) {
+            const base = this.st.draft;
+            let next;
+            try {
+                next = await compute(clone(base));
+            } catch (err) {
+                if (ticket !== this.editSeq || !this.alive || !this.v) return false;
+                if (!this.running && !this.timerPending) this.setStale(false);
+                this.renderEditor();   // controls go back to the draft as it is
+                if (err?.name !== 'AbortError') this.ctx.ui.toast(`Couldn’t ${what}: ${err?.message || err}`, { tone: 'bad' });
+                return false;
+            }
+            if (ticket !== this.editSeq || !this.alive || !this.v) return false;
+            if (this.st.draft === base) { this.change(() => next); return true; }
         }
-        const idx = s.costs.map(c => c.label).lastIndexOf(p.name);
-        if (idx >= 0) s.costs.splice(idx, 1);
-        s.sourceIds = s.sourceIds.filter(id => id !== p.id);
-        return this.pruneParts(s);
+        return false;
     },
 
     /** Drop the loose panel / frame ids from sourceIds once no cost line buys them any more. */
@@ -950,34 +1000,40 @@ export default {
         return s;
     },
 
-    /** Battery select: none, a catalog add-on battery or power station. */
+    /**
+     * Battery select: none, a catalog add-on battery or power station. The battery there now goes
+     * first through the rules' removeBattery (its cost lines, a station's own panels and frames and
+     * its catalog ids with it); a power station comes from the worker's buildSystem.
+     */
     setBattery(value) {
+        const { engine } = this.ctx;
         const cat = this.st.catalog;
-        this.change(d => {
-            let s = this.withoutBatteryCosts(d, d);
-            if (value === 'none' || value === 'builtin') return { ...s, battery: value === 'none' ? null : s.battery };
-            const [kind, id] = value.split(/:(.*)/s);
-            const p = findProduct(cat, id);
-            if (!p) return s;
+        const [kind, id] = String(value).split(/:(.*)/s);
+        // 'custom' / 'Current battery' are what's there already: nothing to change
+        if (value !== 'none' && !((kind === 'station' || kind === 'kit') && id)) return Promise.resolve(false);
+        return this.changeVia(async d => {
+            const s = d.battery ? await engine.call('applyFix', d, { type: 'removeBattery' }) : d;
+            if (value === 'none') return s;
             const strategy = d.battery?.strategy && d.battery.strategy !== 'fixed' ? d.battery.strategy : 'threshold';
             if (kind === 'station') {
-                const sub = stationToSystem(p, { catalog: cat, strategy });
-                s = { ...s, battery: sub.battery, costs: [...s.costs, ...sub.costs], sourceIds: [...s.sourceIds, p.id] };
-            } else {
-                s = { ...s, battery: { ...clone(p.battery), strategy }, costs: [...s.costs, { label: p.name, gbp: p.priceGbp ?? 0, year: 0, kind: 'hardware' }], sourceIds: [...s.sourceIds, p.id] };
+                const sub = await engine.call('buildSystem', { kind: 'station', id, opts: { strategy } });
+                return { ...s, battery: sub.battery, costs: [...s.costs, ...sub.costs], sourceIds: [...new Set([...s.sourceIds, ...sub.sourceIds])] };
             }
-            return s;
-        });
+            const p = findProduct(cat, id);
+            if (!p?.battery) return s;
+            return { ...s, battery: { ...clone(p.battery), strategy }, costs: [...s.costs, { label: p.name, gbp: p.priceGbp ?? 0, year: 0, kind: 'hardware' }], sourceIds: [...s.sourceIds, p.id] };
+        }, { what: 'change the battery' });
     },
 
-    /** Panels on a power station's own solar inputs (0 … what can really be wired). */
+    /** Panels on a power station's own solar inputs (0 … what can really be wired), built by the worker. */
     setStationPanels(n) {
         const cat = this.st.catalog;
         const st = this.mainProduct()?.kind === 'power-station' ? this.mainProduct() : this.batteryProduct();
         if (!st) return;
-        this.change(d => {
+        return this.changeVia(async d => {
             const spot = (panelArrays(d).length ? this.currentSpot(d) : this.st.lastSpot ?? this.currentSpot(d)) ?? this.spots()[0];
-            const sub = stationToSystem(st, { catalog: cat, panels: n > 0 ? { count: n, spot } : null, dedicatedW: d.battery?.ups?.dedicatedW ?? 'baseload', strategy: d.battery?.strategy ?? 'threshold' });
+            const sub = await this.ctx.engine.call('buildSystem', { kind: 'station', id: st.id,
+                opts: { panels: n > 0 ? n : 0, spot, dedicatedW: d.battery?.ups?.dedicatedW ?? 'baseload', strategy: d.battery?.strategy ?? 'threshold' } });
             const costs = this.dropStationPanelLines(d.costs, countOf(d.battery?.ups?.pvArrays));
             const panel = cat.parts?.panel?.name;
             const frame = cat.parts?.frame?.name;
@@ -989,7 +1045,7 @@ export default {
                 sourceIds: [...new Set([...d.sourceIds, ...sub.sourceIds.filter(id => id !== st.id)])],
                 spotId: n > 0 ? (spot?.id ?? d.spotId) : d.spotId,
             });
-        });
+        }, { what: 'change the panels' });
     },
 
     /** Cost lines minus the last "N × panel" and "N × frame" lines stationToSystem added for N station panels. */
@@ -1114,20 +1170,6 @@ export default {
         });
     },
 
-    /** The later battery of a staged plan, wired in by an electrician instead of waiting for plug-in rules. */
-    laterHardwired() {
-        const cat = this.st.catalog;
-        this.change(d => {
-            if (!d.upgrade) return d;
-            d.upgrade.route = 'hardwired';
-            const hasInstall = d.costs.some(c => c.kind === 'install') || d.upgrade.costs.some(c => c.kind === 'install');
-            if (!hasInstall) d.upgrade.costs.push(electricianCost(cat));
-            return d;
-        });
-        this.ctx.ui.toast('Done: the later battery is wired in by an electrician.', { tone: 'good', timeoutMs: 3000 });
-        this.focusRules = true;
-    },
-
     setStrategy(strategy) {
         this.change(d => {
             if (d.battery) d.battery.strategy = strategy;
@@ -1208,7 +1250,7 @@ export default {
                     onClick: () => {
                         const before = store.get().scenarios;
                         store.update('scenarios', s => ({ ...s, saved: (s.saved || []).filter(x => x?.id !== victim.id), pinned: (s.pinned || []).filter(x => x !== victim.id), activeId: null }));
-                        this.loadById(DEFAULT_ID, { quiet: true }) || this.setDraft(this.buildFrom('blank'), { kind: 'catalog', key: 'blank' });
+                        if (!this.loadById(DEFAULT_ID, { quiet: true })) this.startBlank();
                         this.focusBar();
                         ui.toast(`Deleted “${victim.name}”.`, {
                             timeoutMs: 12000,
@@ -1509,6 +1551,7 @@ export default {
         if (saved) badges.push(ui.badge({ text: 'Saved', tone: 'good' }));
         else if (src.kind === 'auto') badges.push(ui.badge({ text: 'Ready-made', tone: 'accent' }));
         else badges.push(ui.badge({ text: 'Not saved' }));
+        if (src.kind === 'auto' && src.priced) badges.push(ui.badge({ text: 'Your price', tone: 'info', title: 'The price you set on Compare' }));
         if (dirty && src.kind !== 'catalog' && src.kind !== 'unsaved') badges.push(ui.badge({ text: 'Edited', tone: 'warn' }));
         const actions = [
             dirty && this.st.origin ? ui.button({ label: 'Undo changes', kind: 'ghost', size: 'sm', icon: 'refresh', onClick: () => this.revert() }) : null,
@@ -1578,25 +1621,18 @@ export default {
             ui.icon(tone === 'info' ? 'info' : 'alert'),
             h('div', { class: 'dv-issue-text' }, it.message),
             it.fixes?.length ? h('div', { class: 'dv-issue-fixes' }, it.fixes.map((f, i) => {
-                const b = ui.button({ label: f.label, size: 'sm', kind: tone === 'bad' && i === 0 ? 'primary' : 'default', onClick: () => (f.local ? f.local() : this.applyFix(f, b)) });
+                const b = ui.button({ label: f.label, size: 'sm', kind: tone === 'bad' && i === 0 ? 'primary' : 'default', onClick: () => this.applyFix(f, b) });
                 return b;
             })) : null);
-        // rules.js checks stage 2 of a staged plan for errors only, so a later plug-in battery
-        // (legal 'whatif') passes silently: say it here, next to the rules, with a way out
-        const d = this.st.draft;
-        const later = d?.upgrade?.battery && d.upgrade.route === 'whatif' && d.route !== 'whatif' ? {
-            message: `Later step: plug-in batteries aren’t legal yet, so the battery at the end of year ${d.upgrade.atYear} counts on the rules changing first (Octopus hopes for early 2027).`,
-            fixes: [{ label: 'Have an electrician fit it instead', local: () => this.laterHardwired() }],
-        } : null;
-        host.replaceChildren(...[
+        // a staged plan's later step is checked by the rules too (LATER_WHATIF: a later plug-in
+        // battery isn't legal today; HARDWIRED_NO_INSTALL at stage 2), each with its one-click fix
+        ui.put(host,
             h('div', { class: 'dv-legal', tabindex: '-1' },
                 ui.badge({ text: legal.label, tone: legal.tone }),
                 h('span', null, next),
                 checking ? h('span', { class: 'dv-checking' }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'checking…') : null),
-            ...(r.errors || []).map(it => issue(it, 'bad')),
-            later ? issue(later, 'warn') : null,
-            ...(r.warnings || []).filter(w => w.code !== 'WHATIF').map(it => issue(it, it.fixes?.length ? 'warn' : 'info')),
-        ].filter(Boolean));   // replaceChildren would print a null as the text "null"
+            (r.errors || []).map(it => issue(it, 'bad')),
+            (r.warnings || []).filter(w => w.code !== 'WHATIF').map(it => issue(it, it.fixes?.length ? 'warn' : 'info')));
         if (!checking && this.focusRules) {
             this.focusRules = false;
             host.querySelector('.dv-legal')?.focus({ preventScroll: true });
@@ -2519,10 +2555,12 @@ export default {
         const lostWhy = [T.clippedKwh > 0.5 ? (finite(lim) && res.system.route === 'plugin' ? `to the ${fmt.num(lim)} W limit` : 'to the inverter’s limits') : null,
             T.curtailedKwh > 0.5 ? 'switched off at negative prices' : null, T.upsPvWastedKwh > 0.5 ? 'with the station already full' : null].filter(Boolean).join(', ');
         const perKwh = this.solarPPerKwh(res);
+        // 4–7pm share of everything made, a power station's own panels included
+        const peak = finite(hl.peakGenShareAllPct) ? hl.peakGenShareAllPct : hl.peakGenSharePct;
         p.energy.replaceChildren(
             h('div', { class: 'dv-group' }, 'Energy'),
             h('div', { class: 'tiles', style: { marginTop: '14px' } },
-                ui.statTile({ label: 'Solar made', value: fmt.num(hl.pvKwh), unit: 'kWh a year', sub: T.pvAcKwh > 0.5 ? `${fmt.p(perKwh)} saved per kWh · ${fmt.pct(hl.peakGenSharePct)} of it 4–7pm` : `${fmt.p(perKwh)} saved per kWh · all into the power station` }),
+                ui.statTile({ label: 'Solar made', value: fmt.num(hl.pvKwh), unit: 'kWh a year', sub: `${fmt.p(perKwh)} saved per kWh · ${fmt.pct(peak)} of it 4–7pm${T.pvAcKwh > 0.5 ? '' : ', all into the power station'}` }),
                 ui.statTile({ label: 'Used at home', value: fmt.pct(hl.selfUsePct, { dp: hl.selfUsePct > 99 && hl.selfUsePct < 100 ? 1 : undefined }), tone: hl.selfUsePct >= 90 ? 'good' : 'default', sub: hl.exportKwh > 0.5 ? `${fmt.kwh(hl.exportKwh)} sent to the grid${hl.exportUnpaidKwh > 0.5 ? ` (${fmt.kwh(hl.exportUnpaidKwh)} unpaid)` : ''}` : 'Nothing sent to the grid' }),
                 ui.statTile({ label: 'Lost', value: fmt.num(lost), unit: 'kWh a year', tone: lost > 0.05 * hl.pvKwh ? 'warn' : 'default', sub: lost > 0.5 ? lostWhy : 'Nothing clipped or switched off' })));
     },
@@ -2555,7 +2593,9 @@ export default {
                 row('Sent to the grid, unpaid', kw(hl.exportUnpaidKwh));
             }
             row('Each kWh made is worth', fmt.p(this.solarPPerKwh(res)), res.battery ? 'the solar’s share of the saving, not the battery’s cheap-slot charging' : null);
-            if (gridPv) row('Made between 4 and 7pm', fmt.pct(hl.peakGenSharePct));
+            const stationPv = (T.upsPvKwh || 0) > 0.5;
+            row('Made between 4 and 7pm', fmt.pct(finite(hl.peakGenShareAllPct) ? hl.peakGenShareAllPct : hl.peakGenSharePct),
+                stationPv ? (gridPv ? 'plug-in and station panels together' : 'by the power station’s own panels') : null);
         }
         row('Share of your use it covers', fmt.pct(T.selfSufficiencyPct));
         if (sys.battery) {
@@ -2756,22 +2796,25 @@ export default {
         if (!day) return;
         if (!p.dayFlows.querySelector('.chart')) p.dayFlows.replaceChildren();
         const sys = this.st.result?.system ?? this.st.draft;
-        const L = dayLayers(day.slots);
+        const ups = sys?.battery?.coupling === 'ups';
+        const L = dayLayers(day.slots, { ups });
         const x = day.slots.map(s => s.time);
         const date = fmt.date(Date.parse(`${day.date}T12:00:00Z`), { year: true });
         p.daySub.textContent = (day.which === 'summer' ? `A clear day near midsummer — ${date}` : day.which === 'winter' ? `A clear day near midwinter — ${date}` : date)
             + '. Average watts each half-hour, typical weather.';
         const lim = sys?.inverter?.acLimitW;
-        const lostLabel = finite(lim) && sys.route === 'plugin' ? `Lost to the ${fmt.num(lim)} W limit` : 'Lost to the inverter’s limits';
-        const ups = sys?.battery?.coupling === 'ups';
+        const clipLabel = finite(lim) && sys.route === 'plugin' ? `Lost to the ${fmt.num(lim)} W limit` : 'Lost to the inverter’s limits';
+        const clipped = anyNonZero(L.clipped), waste = anyNonZero(L.waste);
+        const lostLabel = clipped && waste ? 'Lost (inverter limit, power station full)' : waste ? 'Lost: the power station was full' : clipLabel;
         const stationPv = ups && countOf(sys.battery.ups?.pvArrays) > 0;
+        const ownLive = anyNonZero(L.own);
         const wf = v => fmt.w(Math.abs(v));
         const series = [
             { key: 'solar', label: 'Solar used at home', color: 'pv', values: L.solar },
-            { key: 'batt', label: stationPv ? 'From the power station (its solar + stored)' : ups ? 'From the power station' : 'From the battery', color: 'battery', values: L.batt },
+            { key: 'batt', label: ups ? 'From the power station (stored)' : 'From the battery', color: 'battery', values: L.batt },
             { key: 'grid', label: 'From the grid', color: 'import', values: L.grid },
             { key: 'exp', label: 'Sent to the grid', color: 'export', values: L.exp },
-            { key: 'chg', label: ups ? 'Charging the power station' : 'Charging the battery', color: 'battery', values: L.chg },
+            { key: 'chg', label: ups ? 'Stored in the power station' : 'Stored in the battery', color: 'battery', values: L.chg },
             { key: 'lost', label: lostLabel, color: 'clipped', values: L.lost },
         ].filter(s => s.key === 'grid' || anyNonZero(s.values)).map(s => ({ ...s, format: wf }));
         series.push({ key: 'use', label: 'Your use', color: '--chart-front', values: L.use, line: true, format: wf });
@@ -2792,7 +2835,7 @@ export default {
             bands: [{ from: '16:00', to: '19:00' }],
             printTable: false,   // 48 rows of prices would add two pages; the chart prints
         });
-        p.dayNote.replaceChildren(h('p', { class: 'dv-band-note' }, 'Above zero: how your home’s use was met. Below zero: where the rest went. Prices as billed that day.',
-            stationPv ? ' The power station’s own panels charge it directly, so their solar shows up as what it gives the servers.' : ''));
+        p.dayNote.replaceChildren(h('p', { class: 'dv-band-note' }, 'Above zero: how your home’s use was met. Below zero: where the rest went — stored is what went into the cells. Prices as billed that day.',
+            stationPv ? ` The power station’s own panels feed it directly: ${ownLive ? 'what they give the servers there and then counts as solar used at home, ' : ''}what they store shows below zero, and the stored energy comes back as “from the power station”.` : ''));
     },
 };

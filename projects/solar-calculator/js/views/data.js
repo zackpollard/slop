@@ -71,7 +71,7 @@ const CSS = `
 .dv-file-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .dv-file-name { font-family: var(--font-mono); font-size: 13px; color: var(--text); overflow-wrap: anywhere; }
 .dv-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px 16px; margin: 0; }
-.dv-facts dt { font-family: var(--font-mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
+.dv-facts dt { font-family: var(--font-mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
 .dv-facts dd { margin: 2px 0 0; font-family: var(--font-mono); font-size: 13px; color: var(--text); }
 .dv-warns { margin: 0; padding-left: 18px; font-size: 12.5px; color: var(--warn); display: grid; gap: 3px; }
 
@@ -192,8 +192,9 @@ const SOURCES = [
 const MAX_CSV_BYTES = 25 * 1024 * 1024;
 
 /* Survives re-renders and tab switches, never a page reload: the CSV text is only ever in memory.
- * mpan: the import meter picked when a property has several, so re-fetches don't ask again. */
-const mem = { csv: null, region: '', mpan: null };
+ * (The meter picked on an account and a region chosen by hand live in store.connection — mpan,
+ * region — which DataHub.load writes, so they survive a reload too.) */
+const mem = { csv: null };
 
 const finite = v => typeof v === 'number' && Number.isFinite(v);
 const isoDay = s => (s ? Date.parse(`${s}T12:00:00Z`) : NaN);
@@ -316,7 +317,7 @@ export default {
         this.draft = {
             key: '', account: conn.accountNumber || '', remember: !!conn.rememberKey,
             postcode: conn.location?.postcode || '', lat: conn.location?.lat ?? null, lon: conn.location?.lon ?? null,
-            region: mem.region || '', basis: conn.priceBasis || 'mine', flatP: conn.flatP ?? 25,
+            region: conn.region || '', basis: conn.priceBasis || 'mine', flatP: conn.flatP ?? 25,
             installed: conn.installedSolarDate || '', baseW: conn.manual?.baseW ?? 400, otherKwhYr: conn.manual?.otherKwhYr ?? 2700,
             serverW: conn.demoServerW || 500,
         };
@@ -641,7 +642,7 @@ export default {
                 input: ui.select({
                     value: d.region, ariaLabel: 'Electricity region',
                     options: [{ value: '', label: 'Work it out for me' }].concat(Object.entries(REGIONS).map(([k, v]) => ({ value: k, label: `${k} · ${v}` }))),
-                    onChange: v => { d.region = v; mem.region = v; },
+                    onChange: v => { d.region = v; },
                 }),
             }));
         }
@@ -694,9 +695,12 @@ export default {
             if (!a.valid) { this.showFormError('Account numbers look like A-1234ABCD.', () => acct.focus()); return; }
             if (a.value) { d.account = a.value; acct.value = a.value; }
             try { store.setApiKey(key, d.remember); } catch { /* storage blocked: key stays in memory */ }
+            const before = store.get().connection;
             store.set({ connection: { accountNumber: a.value, rememberKey: d.remember } });
             const spec = { kind: 'octopus', apiKey: key };
             if (a.value) spec.accountNumber = a.value;
+            // the meter picked last time, while it's the same account (an unknown meter is ignored upstream)
+            if (before.kind === 'octopus' && before.mpan && (a.value ?? null) === (before.accountNumber ?? null)) spec.mpan = String(before.mpan);
             const loc = this.locationSpec();
             if (loc) spec.location = loc;
             if (d.basis !== 'mine') { spec.priceBasis = d.basis; if (d.basis === 'flat') spec.flatP = d.flatP; }
@@ -889,7 +893,6 @@ export default {
         try {
             await data.load(spec, { onProgress: this.progressHandler(pl, run) });
             store.set({ connection: this.extraConnection(spec) });
-            if (spec.kind === 'octopus') mem.mpan = spec.mpan ?? null;
             this.connectOpen = false;
             this.editing = null;
             this.busy = false;
@@ -900,7 +903,7 @@ export default {
             if (isAbort(err)) { this.render(); return; }
             // A key Octopus rejected is no use to keep (it stays in the field to correct).
             if (err?.code === 'AUTH') { try { store.clearApiKey(); } catch { /* storage blocked */ } }
-            this.settle(pl, run.failed || err?.step);
+            pl.settle(run.failed || err?.step || null);
             form?.classList.remove('dv-stale');
             this.el.querySelectorAll('.dv-source, button[type="submit"]').forEach(b => { b.disabled = false; });
             const panel = this.failure(err, spec, { onRetry: s => this.connect(s) });
@@ -913,34 +916,30 @@ export default {
         }
     },
 
-    /** Connection fields DataHub.load doesn't persist itself. */
+    /**
+     * Connection fields DataHub.load doesn't persist itself. It writes the price basis, flat price,
+     * existing-solar date, meter and region from the spec; it only adds a location, never clears
+     * one — so a load without a location (the account's own postcode) clears the stored one here.
+     */
     extraConnection(spec) {
         const extra = {};
         if (spec.kind === 'demo') return extra;
-        extra.priceBasis = spec.priceBasis || (spec.kind === 'octopus' ? 'mine' : 'agile');
-        extra.flatP = spec.priceBasis === 'flat' ? spec.flatP ?? null : null;
-        extra.installedSolarDate = spec.installedSolarDate || null;
         if (!spec.location) extra.location = { postcode: null, lat: null, lon: null };
         return extra;
     },
 
     /**
-     * loadDataset progress → the progress list. A step's error text is left off its row: the
-     * failure panel underneath says it once, in full.
+     * loadDataset progress → the progress list (ui.progressList keeps an error row's detail empty:
+     * the failure panel underneath says it once, in full). Remembers which step failed, for
+     * pl.settle() when the run stops.
      */
     progressHandler(pl, run) {
         const { ui } = this.ctx;
         return p => {
             if (!p?.step) return;
-            if (p.status === 'error') { run.failed = p.step; pl.set(p.step, 'error', ''); return; }
+            if (p.status === 'error') run.failed = p.step;
             pl.set(p.step, p.status, ui.progressDetail(p));
         };
-    },
-
-    /** A run that stopped: mark the failed step, and put any step still spinning back to waiting. */
-    settle(pl, failedStep) {
-        if (failedStep) pl.set(failedStep, 'error', '');
-        for (const row of pl.el.querySelectorAll('.pl-row.is-active')) pl.set(row.dataset.key, 'pending', '');
     },
 
     /**
@@ -1242,16 +1241,18 @@ export default {
         const state = !key ? 'No Octopus API key is stored in this browser.'
             : conn.rememberKey ? 'Your API key is remembered on this device until you forget it.'
                 : 'Your API key is kept for this tab only — it is forgotten when you close it.';
+        // data-fk: refreshDevice() rebuilds the card, and focus goes back to the same control
+        const fk = (el, k) => { el.dataset.fk = k; return el; };
         const acts = [];
         if (key) {
-            acts.push(ui.toggle({
+            acts.push(fk(ui.toggle({
                 label: 'Remember my key on this device', checked: !!conn.rememberKey,
                 onChange: v => { store.setApiKey(key, v); ui.toast(v ? 'Your key will be remembered on this device.' : 'Your key is now kept for this tab only.', { tone: 'good' }); this.refreshDevice(); },
-            }));
+            }), 'dev-remember'));
         }
         const btns = [];
         if (key) {
-            btns.push(ui.button({
+            btns.push(fk(ui.button({
                 label: 'Forget my key', icon: 'x', size: 'sm',
                 onClick: () => {
                     store.clearApiKey();
@@ -1259,9 +1260,9 @@ export default {
                     ui.toast('Your API key has been removed from this browser. The data already loaded stays until you leave.', { tone: 'good', timeoutMs: 6000 });
                     this.refreshDevice();
                 },
-            }));
+            }), 'dev-forget-key'));
         }
-        btns.push(ui.button({ label: 'Forget this device…', size: 'sm', kind: 'danger', onClick: () => this.forgetDevice() }));
+        btns.push(fk(ui.button({ label: 'Forget this device…', size: 'sm', kind: 'danger', onClick: () => this.forgetDevice() }), 'dev-forget-device'));
         return ui.h('div', { class: 'dv-device' },
             ui.h('div', { class: 'dv-device-state' }, ui.icon('lock'), ui.h('span', null, state)),
             acts.length ? acts : null,
@@ -1269,17 +1270,24 @@ export default {
             ui.h('p', { class: 'dv-hint' }, 'To also clear your settings and saved scenarios, use ', ui.h('a', { href: '#method?s=reset' }, 'Method → Reset everything'), '.'));
     },
 
-    /** Rebuild the device card after a change; the pressed control may be gone, so focus moves to the card's first control. */
+    /**
+     * Rebuild the device card after a change (ui.keepFocus): focus goes back to the rebuilt twin of
+     * the control that was pressed, or — when that control has gone (Forget my key) — the card's
+     * first control. After the "Forget this device" dialog, focus that fell to <body> lands there too.
+     */
     refreshDevice() {
+        const { ui } = this.ctx;
         const host = this.el.querySelector('.dv-device');
         const s = this.ctx.data.summary();
         if (!host || !s) return;
         const fresh = this.deviceBody(s);
-        host.replaceWith(fresh);
+        const first = () => fresh.querySelector('input, button');
+        if (host.parentElement) ui.keepFocus(host.parentElement, () => host.replaceWith(fresh), null, { fallback: first });
+        else host.replaceWith(fresh);
         requestAnimationFrame(() => {
             const a = document.activeElement;
             if (a && a !== document.body && a.isConnected && !a.closest('dialog')) return;
-            fresh.querySelector('input, button')?.focus({ preventScroll: true });
+            first()?.focus({ preventScroll: true });
         });
     },
 
@@ -1288,7 +1296,7 @@ export default {
         ui.modal({
             title: 'Forget this device?',
             body: [
-                ui.h('p', null, 'This removes your Octopus API key, account number, postcode and existing-solar date from this browser, and deletes the cached weather and price downloads.'),
+                ui.h('p', null, 'This removes your Octopus API key, account number, meter, postcode and existing-solar date from this browser, and deletes the cached weather and price downloads.'),
                 ui.h('p', { style: { marginTop: '10px' } }, 'Your saved scenarios and assumptions stay. The data on screen stays until you close the tab.'),
             ],
             actions: [
@@ -1297,7 +1305,7 @@ export default {
                     label: 'Forget this device', danger: true,
                     onClick: () => {
                         store.clearApiKey();
-                        store.set({ connection: { accountNumber: null, rememberKey: false, location: { postcode: null, lat: null, lon: null }, installedSolarDate: null } });
+                        store.set({ connection: { accountNumber: null, rememberKey: false, location: { postcode: null, lat: null, lon: null }, installedSolarDate: null, mpan: null } });
                         this.draft.key = '';
                         this.draft.account = '';
                         this.draft.postcode = '';
@@ -1328,7 +1336,7 @@ export default {
                 ariaLabel: `${open ? 'Close' : 'Change'} ${key.toLowerCase()}`,
                 onClick: () => { if (this.busy) return; if (open) this.closeEditor(id); else this.openEditor(id); },
             }) : null;
-            if (act) { act.setAttribute('aria-expanded', String(open)); act.setAttribute('aria-controls', edId); }
+            if (act) { act.setAttribute('aria-expanded', String(open)); act.setAttribute('aria-controls', edId); act.dataset.fk = `row-${id}`; }
             rows.push(ui.h('div', { class: 'dv-row', dataset: { row: id } },
                 ui.h('div', { class: 'dv-key' }, key),
                 ui.h('div', { class: 'dv-val' }, value, hint ? (Array.isArray(hint) ? hint : [hint]).filter(Boolean).map(x => (x instanceof Node ? x : ui.h('div', { class: 'dv-hint' }, x))) : null),
@@ -1448,13 +1456,14 @@ export default {
         this.maps.forEach(m => { try { m.destroy(); } catch { /* gone */ } });
         this.maps = [];
         const fresh = this.ledger(s);
-        this.ledgerEl.replaceWith(fresh);
-        this.ledgerEl = fresh;
-        const ed = fresh.querySelector('.dv-editor');
-        requestAnimationFrame(() => {
-            if (ed) ed.querySelector('input, select, button')?.focus();
-            else if (focusRow) fresh.querySelector(`[data-row="${focusRow}"] .dv-act .btn`)?.focus();
-        });
+        const old = this.ledgerEl;
+        const swap = () => { old.replaceWith(fresh); this.ledgerEl = fresh; };
+        // ui.keepFocus: an open editor's first field, else the row asked for, else the rebuilt twin
+        // of whatever had focus in the ledger (row buttons carry data-fk)
+        const target = () => fresh.querySelector('.dv-editor')?.querySelector('input, select, button')
+            ?? (focusRow ? fresh.querySelector(`[data-row="${focusRow}"] .dv-act .btn`) : null);
+        if (old.parentElement) this.ctx.ui.keepFocus(old.parentElement, swap, target, { preventScroll: false });
+        else swap();
     },
 
     /** Close an editor without changing anything: the draft goes back to what is loaded. */
@@ -1475,6 +1484,7 @@ export default {
         d.basis = (s && s.source !== 'demo' ? s.priceBasis : null) || c.priceBasis || 'mine';
         d.flatP = c.flatP ?? 25;
         d.installed = c.installedSolarDate || '';
+        d.region = c.region || '';
         d.serverW = s?.source === 'demo' ? s.serverW ?? c.demoServerW ?? 500 : c.demoServerW || 500;
         d.baseW = c.manual?.baseW ?? 400;
         d.otherKwhYr = c.manual?.otherKwhYr ?? 2700;
@@ -1510,7 +1520,9 @@ export default {
             this.editorActions('Use this location', () => {
                 const loc = this.locationSpec();
                 if (!loc && summary.source !== 'octopus') { ui.toast('Enter a postcode or drop a pin first.', { tone: 'warn' }); return; }
-                this.refetch({ location: loc }, box, { row: 'location', editLabel: 'Try another postcode' });
+                // CSV / by hand: the region picked here goes with the new location ('' = work it out)
+                const over = summary.source === 'octopus' ? { location: loc } : { location: loc, region: d.region || null };
+                this.refetch(over, box, { row: 'location', editLabel: 'Try another postcode' });
             }));
         return box;
     },
@@ -1597,8 +1609,9 @@ export default {
             spec = { kind: 'octopus', apiKey: key };
             const acct = over.accountNumber || conn.accountNumber;
             if (acct) spec.accountNumber = acct;
-            const mpan = over.mpan ?? mem.mpan;
-            if (mpan) spec.mpan = mpan;
+            // the meter picked last time belongs to the stored account; a picker's choice wins
+            const mpan = over.mpan ?? ((acct ?? null) === (conn.accountNumber ?? null) ? conn.mpan : null);
+            if (mpan) spec.mpan = String(mpan);
         } else if (kind === 'csv') {
             if (!mem.csv?.text) {
                 if (quiet) return null;
@@ -1615,7 +1628,9 @@ export default {
         } else return null;
         if (location) spec.location = location;
         else if (kind !== 'octopus') spec.location = { lat: summary?.lat, lon: summary?.lon };
-        if (kind !== 'octopus' && mem.region) spec.region = mem.region;
+        // a region chosen by hand (CSV / by hand): the editor's choice, else the one loaded
+        const region = 'region' in over ? over.region : conn.region;
+        if (kind !== 'octopus' && region) spec.region = region;
         if (basis && !(kind === 'octopus' && basis === 'mine')) spec.priceBasis = basis;
         if (basis === 'flat' && finite(flatP)) spec.flatP = flatP;
         if (installed && kind !== 'manual') spec.installedSolarDate = installed;
@@ -1653,7 +1668,6 @@ export default {
             const extra = this.extraConnection(spec);
             if ('location' in over && !over.location && spec.kind === 'octopus') extra.location = { postcode: null, lat: null, lon: null };
             store.set({ connection: extra });
-            if (spec.kind === 'octopus') mem.mpan = spec.mpan ?? null;
             this.editing = null;
             this.busy = false;
             this.focusRow = row;
@@ -1667,7 +1681,7 @@ export default {
             if (isAbort(err)) { this.render(); return; }
             rows.forEach(r => r.classList.remove('dv-stale'));
             this.el.querySelectorAll('.dv-stale').forEach(x => x.classList.remove('dv-stale'));
-            this.settle(pl, state.failed || err?.step);
+            pl.settle(state.failed || err?.step || null);
             const panel = this.failure(err, spec, {
                 // A picker's choice (meter or account) comes back in the spec it retries with.
                 onRetry: s => this.refetch({ ...over, ...(s?.mpan ? { mpan: s.mpan } : {}), ...(s?.accountNumber ? { accountNumber: s.accountNumber } : {}) }, box, { row, editLabel }),

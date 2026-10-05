@@ -5,8 +5,11 @@
  * scenarios (store.scenarios.saved), each run through ctx.data.scenario(system) — the same call
  * and options the verdict uses, so the engine's result cache is shared between the tabs. Curves
  * come straight from the worker (engine.call 'panelCountCurve' | 'batterySizeCurve' |
- * 'baseLoadCurve'), and the Verdict's bestBuyId is used for the "Best buy" badge and the default
- * pins when a verdict can be had (the critique's own rule is the fallback).
+ * 'baseLoadCurve', each with the user's money settings as { finance: ctx.data.finance() }), and
+ * the Verdict's bestBuyId is used for the "Best buy" badge and the default pins when a verdict can
+ * be had (the critique's own rule is the fallback). The Verdict prices every option with the
+ * user's own prices from here (DataHub passes the overrides), so the two tabs only differ when
+ * saved options of the user's own are in the running — the Verdict ranks the ready-made ones.
  *
  * Layout, top to bottom:
  *   1. head: basis line ("your last N days, typical-year sunshine, e% price rise, r% discount")
@@ -77,8 +80,8 @@ const STYLES = `
 .cv.is-stale .cv-stale-wrap { opacity: .5; }
 .cv .chart-tip:not(.show) { transform: none !important; transition: opacity .1s, transform 0s .1s; }
 .cv-untitled .chart-title { display: none; }
-/* scenario names are long: let legend entries wrap instead of widening the page */
-.cv .chart-legend li { white-space: normal; max-width: 100%; align-items: flex-start; }
+/* scenario names are long and wrap (shared CSS): keep each key beside the first line */
+.cv .chart-legend li { align-items: flex-start; }
 .cv .chart-legend li .key { margin-top: 6px; }
 .cv-lg { display: inline; }
 .cv-sm { display: none; }
@@ -458,8 +461,9 @@ export function rowModel(entry, res, env = {}) {
         pvKwh: num(h?.pvKwh), selfUse: num(h?.selfUsePct), exportKwh: num(h?.exportKwh), unpaidKwh: num(h?.exportUnpaidKwh),
         exportIncome: num(h?.exportIncomeGbp),
         clipped: num(A?.clippedKwh) ?? 0, curtailed: num(A?.curtailedKwh) ?? 0, upsWasted: num(A?.upsPvWastedKwh) ?? 0,
-        // the engine's 4–7pm share counts grid-tied panels only (a station's own panels aren't in it)
-        peakShare: num(h?.peakGenSharePct), cycles: num(A?.battCycles) ?? 0,
+        // 4–7pm share of everything the option's panels make, a power station's own panels included
+        // (peakGenSharePct counts grid-tied panels only)
+        peakShare: num(h?.peakGenShareAllPct) ?? num(h?.peakGenSharePct), cycles: num(A?.battCycles) ?? 0,
         pvAcKwh: num(A?.pvAcKwh) ?? 0, upsPvKwh: num(A?.upsPvKwh) ?? 0,
         batteryEndYear: num(res?.finance?.batteryEndYear),
         hasBattery: !!sys.battery, coupling: sys.battery?.coupling ?? null,
@@ -482,6 +486,47 @@ function costsLater(costs) { return (costs || []).filter(c => Number(c?.year) > 
 
 /** Rows that compete on price and savings: not future rules, not yardsticks. */
 export const isMain = r => r.legal !== 'whatif' && r.legal !== 'reference';
+
+/**
+ * The price overrides as the Verdict receives them (app.js priceOverrides: the first saved entry
+ * per id that carries priceOverride), as a stable string: when it changes, the Verdict's pick has
+ * to be asked for again.
+ * @param {object[]} saved store.scenarios.saved
+ * @returns {string}
+ */
+export function overrideSig(saved) {
+    const seen = new Set();
+    const out = [];
+    for (const s of Array.isArray(saved) ? saved : []) {
+        if (!s || typeof s !== 'object' || typeof s.id !== 'string' || seen.has(s.id)) continue;
+        seen.add(s.id);
+        if (s.priceOverride) out.push([s.id, s.costs ?? []]);
+    }
+    return stableJson(out);
+}
+
+/**
+ * Does the leaderboard hold options the Verdict doesn't rank? Price overrides ('price' rows) reach
+ * the Verdict, so they don't count; saved options of the user's own ('saved') and saved edits of a
+ * ready-made option ('edited') do — then the best-buy rule is run on the rows shown here.
+ * @param {Array<{ kind: string }>} rows
+ * @returns {boolean}
+ */
+export function hasOwnOptions(rows) {
+    return (rows || []).some(r => r.kind === 'saved' || r.kind === 'edited');
+}
+
+/**
+ * Can the 'More panels?' card vary this row? A plug-in kit (alone or beside a power station —
+ * the engine prices the station into every kit it lists), wired-in panels or a power station's
+ * own inputs. Future-rules rows without a battery are two kits or a staged plan, not one kit, and
+ * yardsticks have nothing to vary.
+ * @param {object} r row
+ * @returns {boolean}
+ */
+export function canVaryPanels(r) {
+    return !!r && r.ready && r.legal !== 'reference' && (!!r.sys?.arrays?.length || r.coupling === 'ups') && !(r.legal === 'whatif' && !r.hasBattery);
+}
 
 /**
  * Dominance (UX critique Compare §2) among the given non-whatif, non-reference rows: s is beaten by
@@ -749,17 +794,11 @@ export default {
     },
 
     /**
-     * Re-render a region without dropping keyboard focus: a control the user just pressed is
-     * usually rebuilt, so focus the rebuilt twin (same data-fk), else a fallback in the region.
+     * Re-render a region without dropping keyboard focus (ui.keepFocus): a control the user just
+     * pressed is usually rebuilt, so focus the rebuilt twin (same data-fk), else a fallback.
      */
-    keepFocus(container, fn, fallback) {
-        const a = typeof document !== 'undefined' ? document.activeElement : null;
-        const inside = !!(a && a !== document.body && container.contains(a));
-        const key = inside ? a.dataset?.fk : null;
-        fn();
-        if (!inside || container.contains(a)) return;
-        const twin = key ? container.querySelector(`[data-fk="${cssEscape(key)}"]`) : null;
-        (twin && !twin.disabled && twin.offsetParent !== null ? twin : fallback?.() || null)?.focus?.();
+    keepFocus(container, fn, fallback = null) {
+        this.ctx.ui.keepFocus(container, fn, null, { fallback });
     },
 
     /** Track a direct engine call so a re-render or teardown can cancel it. */
@@ -804,7 +843,6 @@ export default {
             years: finite(f.years) ? Math.round(f.years) : DEFAULT_FINANCE.years,
             installDate: typeof s.finance?.installDate === 'string' ? s.finance.installDate : nextMonthIso(),
             vatReturns: s.vatReturns !== false,
-            customFinance: Object.keys(s.finance || {}).length > 0 || s.vatReturns === false,
             projectBaseW: finite(s.projectBaseW) ? s.projectBaseW : null,
             sig: stableJson({ f: s.finance, v: s.vatReturns, p: s.projectBaseW, m: s.maxPaybackYears, sp: s.spots }),
         };
@@ -964,20 +1002,36 @@ export default {
     /* ── verdict pick ───────────────────────────────────────────────────── */
 
     /**
+     * What the Verdict's pick depends on: the data, the settings and the user's own prices (which
+     * the DataHub hands the Verdict). `base` leaves the prices out.
+     * @returns {{ key: string, base: string }}
+     */
+    pickKey() {
+        const base = `${this.ctx.data.summary()?.id}|${this.settings().sig}`;
+        return { base, key: `${base}|${overrideSig(this.ctx.store.get().scenarios?.saved)}` };
+    },
+
+    /**
      * The "Best buy" is the Verdict's pick, so the two tabs never disagree. The verdict is asked for
      * once all rows are in (its scenario runs then hit the engine cache); if it isn't available
-     * within a few seconds (or js/verdict.js fails) the critique's rule picks instead.
+     * within a few seconds (or js/verdict.js fails) the critique's rule picks instead. When only
+     * your prices changed, the same rule picks at once while the Verdict re-runs with them, so the
+     * podium never blanks out.
      */
     requestPick(token) {
         const v = this.v;
-        const key = `${this.ctx.data.summary()?.id}|${this.settings().sig}`;
+        const { key, base } = this.pickKey();
         if (v.pick?.key === key && v.pick.source === 'verdict') { this.applyPick(); return; }
-        v.pick = { key, id: null, source: 'pending' };
+        if (v.pick && v.pick.source !== 'pending' && v.pick.base === base) {
+            const p = pickBestBuy(v.rows, this.settings().maxPayback);
+            v.pick = { key, base, id: p.best, most: p.most, source: 'rule' };
+            this.applyPick();
+        } else v.pick = { key, base, id: null, source: 'pending' };
         clearTimeout(v.pickTimer);
         v.pickTimer = setTimeout(() => {
             if (this.v !== v || v.pick.key !== key || v.pick.source !== 'pending') return;
             const p = pickBestBuy(v.rows, this.settings().maxPayback);
-            v.pick = { key, id: p.best, most: p.most, source: 'rule' };
+            v.pick = { key, base, id: p.best, most: p.most, source: 'rule' };
             this.applyPick();
         }, VERDICT_WAIT_MS);
         const take = (stage, verdict) => {
@@ -987,8 +1041,11 @@ export default {
             const id = verdict.bestBuyId == null ? null : String(verdict.bestBuyId);
             const most = verdict.stepUp?.id == null ? null : String(verdict.stepUp.id);
             if (v.pick.source === 'verdict' && v.pick.id === id && v.pick.most === most) return;
-            v.pick = { key, id: id && v.byId.has(id) ? id : null, most: most && v.byId.has(most) ? most : null, source: 'verdict' };
+            const was = v.pick;
+            v.pick = { key, base, id: id && v.byId.has(id) ? id : null, most: most && v.byId.has(most) ? most : null, source: 'verdict' };
             clearTimeout(v.pickTimer);
+            // the rule already on screen agreed: nothing to redraw
+            if (was.source === 'rule' && was.id === v.pick.id && was.most === v.pick.most) return;
             this.applyPick();
         };
         this.ctx.data.verdict({ onPartial: (stage, partial) => take(stage, partial) })
@@ -998,7 +1055,7 @@ export default {
                 if (err?.name === 'AbortError') return;
                 clearTimeout(v.pickTimer);
                 const p = pickBestBuy(v.rows, this.settings().maxPayback);
-                v.pick = { key, id: p.best, most: p.most, source: 'rule' };
+                v.pick = { key, base, id: p.best, most: p.most, source: 'rule' };
                 this.applyPick();
             });
     },
@@ -1006,12 +1063,12 @@ export default {
     onVerdict(verdict) {
         const v = this.v;
         if (!v?.final || !verdict || !('bestBuyId' in verdict)) return;
-        const key = `${this.ctx.data.summary()?.id}|${this.settings().sig}`;
+        const { key, base } = this.pickKey();
         const id = verdict.bestBuyId == null ? null : String(verdict.bestBuyId);
         const most = verdict.stepUp?.id == null ? null : String(verdict.stepUp.id);
-        if (v.pick?.source === 'verdict' && v.pick.id === id && v.pick.most === most) return;
+        if (v.pick?.source === 'verdict' && v.pick.key === key && v.pick.id === id && v.pick.most === most) return;
         clearTimeout(v.pickTimer);
-        v.pick = { key, id: id && v.byId.has(id) ? id : null, most: most && v.byId.has(most) ? most : null, source: 'verdict' };
+        v.pick = { key, base, id: id && v.byId.has(id) ? id : null, most: most && v.byId.has(most) ? most : null, source: 'verdict' };
         this.applyPick();
     },
 
@@ -1024,16 +1081,16 @@ export default {
     },
 
     /**
-     * The pick on screen: the Verdict's (or the same rule run here), unless your own prices or saved
-     * options change the answer — the Verdict only knows catalog prices, so then the rule is run on
-     * the rows shown here and the badge says so ('yours').
+     * The pick on screen: the Verdict's (or the same rule run here), unless saved options of your own
+     * change the answer — the Verdict ranks the ready-made options (at your prices), so then the
+     * rule is run on the rows shown here and the badge says so ('yours').
      * @returns {{ id: string|null, most: string|null, source: 'verdict'|'rule'|'yours' }|null}
      */
     pickNow() {
         const v = this.v;
         const p = v?.pick;
         if (!p || p.source === 'pending') return null;
-        if (!v.final || !v.rows.some(r => r.kind !== 'auto')) return p;
+        if (!v.final || !hasOwnOptions(v.rows)) return p;
         const mine = pickBestBuy(v.rows, this.settings().maxPayback);
         if (mine.best === p.id) return mine.most === p.most ? p : { ...p, most: mine.most };
         return { key: p.key, id: mine.best, most: mine.most, source: 'yours' };
@@ -1421,7 +1478,7 @@ export default {
         const shown = rows.length;
         const beatenN = rows.filter(r => r.dominatedBy).length;
         const pending = v.rows.filter(r => !r.ready && !r.failed).length;
-        put(v.parts.count,
+        ui.put(v.parts.count,
             h('b', null, shown === total ? `${total} options` : `${shown} of ${total} options`),
             pending && !v.final ? ` · ${pending} still working out` : '',
             v.final && beatenN ? ` · ${beatenN} beaten on both price and savings` : '',
@@ -1436,7 +1493,7 @@ export default {
         const pick = this.pickNow();
         const max = this.settings().maxPayback;
         add(pick?.id, { text: 'Best buy', tone: 'accent',
-            title: pick?.source === 'verdict' ? 'The Verdict tab’s pick' : pick?.source === 'yours' ? `At your prices. ${BEST_BUY_RULE(max)}. The Verdict tab still uses catalog prices.` : BEST_BUY_RULE(max) });
+            title: pick?.source === 'verdict' ? 'The Verdict tab’s pick' : pick?.source === 'yours' ? `Your saved options included. ${BEST_BUY_RULE(max)}. The Verdict tab ranks the ready-made options only.` : BEST_BUY_RULE(max) });
         if (pick?.most) add(pick.most, { text: 'Most over 10 yrs', tone: 'info', title: 'The highest 10-yr value of everything legal that pays back in time — but it costs more than the best buy' });
         const { fastest, cheapest } = quickest(eligible(v.rows, max));
         if (fastest) add(fastest.id, { text: 'Fastest payback', tone: 'good' });
@@ -1620,7 +1677,7 @@ export default {
         ].filter(Boolean);
         if (pick?.source === 'yours') {
             pods.push(h('p', { class: 'cv-pod-note' }, ui.icon('info'),
-                h('span', null, 'Best buy at your own prices and saved options. The Verdict tab still works from catalog prices, so it may pick differently.')));
+                h('span', null, 'Best buy with your saved options included. The Verdict tab ranks only the ready-made options (at your prices), so it may pick differently.')));
         }
         v.parts.podium.style.setProperty('--n', String(pods.length - (pick?.source === 'yours' ? 1 : 0)));
         v.parts.podium.replaceChildren(...pods);
@@ -1660,7 +1717,7 @@ export default {
             addBtn.dataset.fk = 'addbtn';
         }
         const custom = this.pref('pinsCustom', false);
-        this.keepFocus(p.sideActions, () => put(p.sideActions,
+        this.keepFocus(p.sideActions, () => ui.put(p.sideActions,
             add ? h('div', { class: 'cv-add no-print' }, add, addBtn) : null,
             custom && v.final && v.pick?.source !== 'pending' ? ui.button({
                 label: 'Suggested', kind: 'ghost', size: 'sm', title: 'Pin the suggested options: best buy, west wall, best battery, best power station',
@@ -1820,10 +1877,11 @@ export default {
                 diff: (b, a) => kwhD(b, a, 'lost') },
             { label: 'Value per kWh made', help: 'first-year £ ÷ kWh', value: r => r.pPerKwh, better: 'high', tie: 0.05, render: r => (finite(r.pPerKwh) ? fmt.p(r.pPerKwh) : '—'),
                 diff: (b, a) => (finite(b.pPerKwh) && finite(a.pPerKwh) ? sgn(b.pPerKwh - a.pPerKwh, x => fmt.p(x)) : '—') },
-            { label: 'Made between 4 and 7pm', help: 'when Agile is dearest', value: r => (r.pvAcKwh > 0.5 && !(r.upsPvKwh > 0.5) ? r.peakShare : null), better: 'high', tie: 0.2,
-                render: r => (r.pvAcKwh > 0.5 && finite(r.peakShare) ? fmt.pct(r.peakShare) : '—'),
-                sub: r => (r.upsPvKwh > 0.5 ? sub(r.pvAcKwh > 0.5 ? 'the plug-in panels only' : 'not worked out for a power station’s own panels') : null),
-                diff: (b, a) => (b.pvAcKwh > 0.5 && a.pvAcKwh > 0.5 && !(b.upsPvKwh > 0.5) && !(a.upsPvKwh > 0.5) ? sgn(b.peakShare - a.peakShare, x => `${fmt.num(x, 1)} pts`) : '—') },
+            { label: 'Made between 4 and 7pm', help: 'when Agile is dearest', value: r => (r.pvKwh > 0.5 ? r.peakShare : null), better: 'high', tie: 0.2,
+                render: r => (r.pvKwh > 0.5 && finite(r.peakShare) ? fmt.pct(r.peakShare) : '—'),
+                // a power station's own panels count too (they charge it; the share is when they make it)
+                sub: r => (r.upsPvKwh > 0.5 ? sub(r.pvAcKwh > 0.5 ? 'plug-in and station panels together' : 'by its own panels') : null),
+                diff: (b, a) => (b.pvKwh > 0.5 && a.pvKwh > 0.5 && finite(b.peakShare) && finite(a.peakShare) ? sgn(b.peakShare - a.peakShare, x => `${fmt.num(x, 1)} pts`) : '—') },
             { label: 'Battery cycles a year', value: r => (r.hasBattery ? r.cycles : null), render: r => (r.hasBattery ? fmt.num(r.cycles) : 'no battery') },
             { label: 'How it’s installed', text: true, value: () => null, render: r => [h('b', { style: { color: 'var(--text)', fontWeight: 600 } }, routeLabel(r)), ' — ', howText(r)] },
             { label: 'How sure', text: true, value: () => null, render: r => {
@@ -1881,7 +1939,7 @@ export default {
         else v.charts.base.el?.classList.add('is-stale');
         const token = this.token;
         try {
-            const data = await this.engineCall('baseLoadCurve', rows.map(r => engineSystem(r.sys)));
+            const data = await this.engineCall('baseLoadCurve', rows.map(r => engineSystem(r.sys)), null, { finance: this.ctx.data.finance() });
             if (this.v !== v || v.base?.key !== key || token !== this.token) return;
             v.base.data = data;
             this.drawBase(data, rows, pins);
@@ -1917,7 +1975,7 @@ export default {
         else if (finite(recentW) && finite(baseW) && Math.abs(recentW - baseW) / Math.max(1, baseW) >= 0.15) markers.push({ x: recentW, label: 'last 2 months' });
         const xMax = Math.max(...xs);
         const bands = rows.some(r => r.route === 'plugin') && xMax > 800 ? [{ from: 800, to: xMax, label: 'all of a plug-in kit’s output used at home' }] : [];
-        v.parts.baseSub.textContent = `£ saved in the first year if your always-on load were different — your pinned options, same weather and prices.${set.customFinance ? ' Paybacks here use the standard money assumptions, not your edited ones.' : ''}`;
+        v.parts.baseSub.textContent = '£ saved in the first year if your always-on load were different — your pinned options, same weather, prices and money settings.';
         if (!v.charts.base) host.replaceChildren();
         this.chart('base', charts.createLine, host, {
             title: 'Saves a year at different always-on loads',
@@ -2016,14 +2074,10 @@ export default {
     },
 
     curveCandidates(kind) {
-        const v = this.v;
         // Panels: the engine answers a plug-in build with the list of single kits on sale, each at its
-        // own price. That only describes a build that IS one kit: a kit plus a power station (C1)
-        // would get the station's savings without its cost, and two kits (W3) or a staged plan (W2)
-        // aren't a single kit at all — so those are left out of this picker.
-        return v.rows.filter(r => r.ready && r.legal !== 'reference' && (kind === 'panels'
-            ? (r.sys.arrays?.length || r.coupling === 'ups') && !(r.route === 'plugin' && r.coupling === 'ups') && !(r.legal === 'whatif' && !r.hasBattery)
-            : r.hasBattery));
+        // own price (with a power station beside the kit, C1, the station's price in every one). Two
+        // kits (W3) or a staged plan (W2) aren't a single kit at all, so those are left out.
+        return this.v.rows.filter(r => (kind === 'panels' ? canVaryPanels(r) : r.ready && r.legal !== 'reference' && r.hasBattery));
     },
 
     curveDefault(kind, cands) {
@@ -2085,7 +2139,7 @@ export default {
         const token = this.token;
         try {
             try { state.job?.cancel?.(); } catch { /* finished */ }
-            const job = state.job = this.engineCall(kind === 'panels' ? 'panelCountCurve' : 'batterySizeCurve', engineSystem(row.sys));
+            const job = state.job = this.engineCall(kind === 'panels' ? 'panelCountCurve' : 'batterySizeCurve', engineSystem(row.sys), { finance: this.ctx.data.finance() });
             const data = await job;
             if (this.v !== v || state.key !== key || token !== this.token) return;
             state.data = data || [];
@@ -2106,14 +2160,9 @@ export default {
         const h = ui.h;
         const set = this.settings();
         const max = set.maxPayback;
-        const note = set.customFinance ? ' These steps use the standard money assumptions, not your edited ones.' : '';
+        // a power station's list starts at 'No panels' (the station on its own), so none → the
+        // first panel is a step like any other
         const kitList = kind === 'panels' && pts.some(p => p.kitId);
-        // A power station with no panels yet: the engine's list starts at one panel, so the step
-        // that matters most (none → the first) would be missing. The option itself is that point.
-        if (kind === 'panels' && !kitList && pts.length && row.ready && finite(row.sav)
-            && !pts.some(p => Math.abs(p.capexGbp - row.capex) < 0.01) && row.capex < Math.min(...pts.map(p => p.capexGbp)) - EPS && !(row.pvKwh > 0.5)) {
-            pts = [{ x: 0, label: 'No panels (now)', capexGbp: row.capex, savingsGbp: row.sav, paybackYears: row.payback }, ...pts];
-        }
         if (!pts.length || (!kitList && pts.length < 2)) {
             v.charts[kind]?.destroy(); delete v.charts[kind];
             lede.textContent = kind === 'panels'
@@ -2128,8 +2177,9 @@ export default {
             const list = [...pts].sort((a, b) => a.x - b.x || a.capexGbp - b.capexGbp);
             const here = list.find(p => p.kitId && p.kitId === row.sys.kitId);
             const bestPb = list.filter(p => finite(p.paybackYears)).sort((a, b) => a.paybackYears - b.paybackYears)[0];
-            put(lede, 'A plug-in kit has to be used exactly as sold, so the only way to change the panel count is a different kit. Each kit on sale, on the same spot: ',
-                bestPb ? [h('b', null, bestPb.label), ` pays back fastest (${fmt.years(bestPb.paybackYears)}).`] : 'none pays back.', note);
+            const beside = row.coupling === 'ups' ? ` Each one is priced with ${row.sys.battery?.ups?.pvArrays?.length ? 'the power station and its own panels' : 'the power station'} beside it.` : '';
+            ui.put(lede, 'A plug-in kit has to be used exactly as sold, so the only way to change the panel count is a different kit. Each kit on sale, on the same spot: ',
+                bestPb ? [h('b', null, bestPb.label), ` pays back fastest (${fmt.years(bestPb.paybackYears)}).`] : 'none pays back.', beside);
             spec = {
                 title: 'Plug-in kits on sale, by panel size',
                 ariaLabel: 'First-year savings of each plug-in kit against what it would need to save to pay back in time',
@@ -2144,12 +2194,9 @@ export default {
                 y: { format: x => fmt.gbp(x) },
             };
         } else {
-            // A plug-in kit plus a station with its own panels (C1): the engine's 'No battery' point
-            // keeps the station's panels and frames in its cost although they do nothing without the
-            // station, which understates the station step (+£599 where it really is +£841). The
-            // step-up ladder has that comparison right, so the base step is left out here.
-            const stationPanelsToo = row.coupling === 'ups' && (row.sys.arrays?.length ?? 0) > 0 && (row.sys.battery?.ups?.pvArrays?.length ?? 0) > 0;
-            const steps = curveSteps(pts, max, { capexNow: row.capex }).filter(s => !(stationPanelsToo && s.role === 'base'));
+            // the engine's 'No battery' point costs what removing the battery leaves (a power
+            // station's own panels and frames go with it), so the base step is the station's real price
+            const steps = curveSteps(pts, max, { capexNow: row.capex });
             if (!steps.length) { v.charts[kind]?.destroy(); delete v.charts[kind]; lede.textContent = 'Nothing to step through.'; host.replaceChildren(); return; }
             const ok = s => finite(s.years) && s.years <= max;
             const yrs = s => h('b', null, finite(s.years) ? fmt.years(s.years) : 'for ever');
@@ -2163,7 +2210,7 @@ export default {
             for (const s of bigger) { if (!ok(s)) break; run.push(s); }
             const firstBad = bigger[run.length] ?? null;
             const thing = row.coupling === 'ups' ? 'The power station' : 'The battery';
-            put(lede,
+            ui.put(lede,
                 base ? [`${thing} as configured: +${fmt.gbp(base.dCapex)} for +${fmt.gbp(base.dSav)}/yr — `,
                     ok(base) ? ['pays back in ', yrs(base)] : finite(base.years) ? ['takes ', yrs(base), ' to pay back'] : h('b', null, 'never pays back'), '. '] : null,
                 !bigger.length ? (kind === 'panels' ? `${row.name} already has as many panels as its solar inputs take. ` : 'No bigger size of it is on sale. ')
@@ -2175,7 +2222,7 @@ export default {
                                     : ['worth it up to ', h('b', null, run[run.length - 1].label), '; ', h('b', null, firstBad.label), ' would take ', yrs(firstBad), ' to pay back its extra.'],
                         ' '],
                 alts.map(s => [h('b', null, s.label), ' instead: +', fmt.gbp(s.dCapex), ' for +', fmt.gbp(s.dSav), '/yr — ', ok(s) ? ['pays back in ', yrs(s)] : finite(s.years) ? ['takes ', yrs(s)] : h('b', null, 'never pays back'), '. ']),
-                'Solid bar: what each step adds a year. Outline: what it would need to add to pay back in time.', note);
+                'Solid bar: what each step adds a year. Outline: what it would need to add to pay back in time.');
             spec = {
                 title: kind === 'panels' ? 'What each extra panel adds' : 'What each battery step adds',
                 ariaLabel: `Extra first-year savings of each ${kind === 'panels' ? 'panel' : 'battery step'} against what it would need to save to pay back within ${max} years`,
@@ -2190,10 +2237,7 @@ export default {
                 y: { format: x => fmt.gbp(x) },
             };
         }
-        // keep the last axis label inside the plot (it is centred on its tick)
-        const vals = spec.series.flatMap(se => se.values).filter(finite);
-        const hi = Math.max(0, ...vals), lo = Math.min(0, ...vals);
-        spec.y = { ...spec.y, max: hi > 0 ? hi * 1.12 : 0, min: lo < 0 ? lo * 1.12 : 0 };
+        // charts.js fits the value axis to the plot width and keeps its end labels inside it
         this.chart(kind, charts.createBars, host, spec);
         v.charts[kind]?.el?.classList.remove('is-stale');
     },
@@ -2256,7 +2300,7 @@ export default {
         paint();
         const sources = r.products.filter(p => p.priceGbp != null).map(p => `${p.name || p.id}: ${fmt.gbp(p.priceGbp, { dp: Number.isInteger(p.priceGbp) ? 0 : 2 })}${p.priceDate ? ` on ${fmt.date(Date.parse(`${p.priceDate}T12:00:00Z`))}` : ''}`);
         const body = h('div', { class: 'stack-sm' },
-            h('p', null, 'Found it cheaper, or got a quote? Put in what you’d really pay. This option is then worked out again with your price, here and in Design.'),
+            h('p', null, 'Found it cheaper, or got a quote? Put in what you’d really pay. This option is then worked out again with your price — here, in Design and in the Verdict.'),
             fields, total, error,
             sources.length ? h('p', { class: 'field-hint', style: { marginTop: '6px' } }, `Prices we found: ${sources.join(' · ')}.`) : null);
         const isOverride = r.kind === 'price';
@@ -2463,12 +2507,6 @@ function firstYearLabel(iso, fmt) {
     const y = +m[1], mo = +m[2] - 1;
     const end = mo === 0 ? `${y}-12` : `${y + 1}-${String(mo).padStart(2, '0')}`;
     return `${fmt.month(`${y}-${m[2]}`)} – ${fmt.month(end)}`;
-}
-
-/** replaceChildren that flattens arrays and skips null/false (replaceChildren would print "null"). */
-function put(el, ...parts) {
-    el.replaceChildren(...parts.flat(Infinity).filter(x => x != null && x !== false && x !== ''));
-    return el;
 }
 
 function cssEscape(s) {

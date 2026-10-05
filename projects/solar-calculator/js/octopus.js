@@ -822,6 +822,29 @@ export async function fetchStandingCharges(client, { agreements, region, start, 
 }
 
 /**
+ * The region's Octopus Flexible (standard variable) prices for the window, as interval records —
+ * the "same usage on Flexible" comparison in insights. One request for the unit rates and one for
+ * the standing charges (a year is a handful of quarterly records); Direct Debit records are
+ * preferred, and the first/last record is stretched over any hole at the window's edges.
+ *
+ * @param {OctopusClient} client
+ * @param {{ region: string, start: number, n: number, product?: string }} p
+ * @returns {Promise<{ product: string, code: string, unit: Array<{ fromMs, toMs, exc }>, standing: Array<{ fromMs, toMs, pPerDayExc }> }|null>}
+ *   null when Octopus has no unit rates for the window
+ */
+export async function fetchFlexibleRates(client, { region, start, n, product = CURRENT.flexible }) {
+    const end = start + n * SLOT_MS;
+    const code = `E-1R-${product}-${region}`;
+    // clipStanding/coverStanding do the payment-method choice, clipping and edge stretching for
+    // any interval records; unit rates are carried through them under the same field name
+    const fit = recs => coverStanding(clipStanding(recs, start, end), start, end);
+    const unit = fit(await client.unitRates(product, code, start, end)).map(r => ({ fromMs: r.fromMs, toMs: r.toMs, exc: r.pPerDayExc }));
+    if (!unit.length) return null;
+    const standing = fit(await client.standingCharges(product, code, start, end));
+    return { product, code, unit, standing };
+}
+
+/**
  * Price the window as if on one product throughout (the 'agile' and 'flexible' bases,
  * CSV and manual sources). Returns the same shape as fetchAgreementPrices.
  *

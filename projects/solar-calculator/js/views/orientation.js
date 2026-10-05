@@ -7,10 +7,14 @@
  *   - ctx.data.scenario(system, { withBand:false }) to find the best plug-in kit (same rule as the
  *     verdict: highest 10-year NPV among eligible plug-in rows, £25 tie → cheaper), and for the
  *     full simulations behind the hour-of-day lines, the monthly 4–7pm shares and a picked cell
- *   - ctx.engine.call('orientationSweep', system, arrayId, { finance })   the solar rose (649-cell
- *     proxy grid + starred full-fidelity points), with progress; cancelled when superseded
- *   - ctx.data.verdict()  only to reuse answers.orientation (flip conditions C1–C4) when it is about
- *     the same kit; started after this view's own work so it never delays the rose
+ *   - ctx.data.orientationSweep(system, arrayId, { onProgress })   the solar rose (649-cell proxy
+ *     grid + starred full-fidelity points; the hub merges the money settings and cancels it on
+ *     invalidate()); this view also cancels it when superseded
+ *   - ctx.engine.call('answerOrientation', system, { finance, tieBandPct, flips })   the flip
+ *     conditions C1–C4 for whichever kit is on screen, after the rose and the named runs
+ *   - ctx.data.verdictIfReady()  a finished verdict, if there is one, for its best buy (the default
+ *     kit) — never starts one
+ * Price overrides saved on Compare count here: a ready-made option is pointed at your price.
  *
  * Layout, top to bottom:
  *   1. head + context line, then the controls bar: kit picker (saved scenarios, then the catalog
@@ -30,6 +34,10 @@
  * Re-rendering: the DOM is built once per dataset; recomputes keep the previous figures at reduced
  * opacity (no layout jump). While the tab is hidden, dataset/settings changes only mark it dirty,
  * so a background sweep never competes with the tab the user is on.
+ *
+ * A power station's own panels get the same treatment as grid-tied ones: their 4–7pm share, their
+ * time-of-day profile (Profile48.upsPv) and their monthly 4–7pm share (MonthRow upsPvKwh /
+ * peakUpsPvKwh) — they charge the station, but when they make their power is the same question.
  *
  * View-local components (candidates for ui.js/charts.js — see the report): orientationDial() (the
  * tie band as a wedge on a mini fan — "anything in here is fine"), and the Top-10 list.
@@ -60,7 +68,8 @@ const METRICS = [
     { id: 'gbp', key: 'gbp', label: '£ saved', short: '£', unit: '£ a year', tip: 'saved a year', ramp: 'solar', best: 'bestGbp' },
     { id: 'kwh', key: 'kwh', label: 'kWh', short: 'kWh', unit: 'kWh a year', tip: 'made a year', ramp: 'solar', best: 'bestKwh' },
     { id: 'ppk', key: 'pPerKwh', label: 'p per kWh made', short: 'p/kWh', unit: 'p per kWh made', tip: 'per kWh made', ramp: 'sequential', best: 'bestGbp' },
-    { id: 'peak', key: 'peakSharePct', label: '4–7pm share', short: '4–7pm', unit: '% made 4–7pm', tip: 'made 4–7pm', ramp: 'sequential', best: 'bestGbp' },
+    // grid-tied panels' share; a power station's own panels use the all-panels share (stationKey)
+    { id: 'peak', key: 'peakSharePct', stationKey: 'peakShareAllPct', label: '4–7pm share', short: '4–7pm', unit: '% made 4–7pm', tip: 'made 4–7pm', ramp: 'sequential', best: 'bestGbp' },
 ];
 
 const FLIP_SHORT = {
@@ -70,7 +79,7 @@ const FLIP_SHORT = {
     C4: 'a battery',
 };
 
-const CSS = `
+const STYLES = `
 .ov { display: flex; flex-direction: column; gap: 20px; }
 .ov .view-title:focus { outline: none; }
 .ov .view-title:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 2px; }
@@ -145,6 +154,7 @@ const CSS = `
 .ov-k-best { background: var(--accent); }
 .ov-k-west { background: var(--series-import); }
 .ov-k-now { border: 2px solid var(--text); width: 10px; height: 10px; }
+.ov-k-pick { border: 2px solid var(--accent); width: 10px; height: 10px; }
 .ov-readout-label { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
 .ov-readout-fig { font-family: var(--font-mono); font-size: 46px; font-weight: 600; letter-spacing: -.05em; line-height: 1; margin-top: 6px; color: var(--text); }
 .ov-readout-fig small { font-family: var(--font-body); font-size: 15px; font-weight: 500; letter-spacing: 0; color: var(--muted); margin-left: 7px; }
@@ -394,19 +404,61 @@ export function roseGrid(sweep, key, sunSide) {
     return { azimuths: az, tilts, values };
 }
 
-/** Month-of-year share (%) of PV output made 4–7pm from MonthRows (NaN where nothing was made). */
-export function monthlyPeakShare(monthly) {
+/**
+ * Month-of-year share (%) of PV output made 4–7pm from MonthRows (NaN where nothing was made):
+ * the grid-tied panels', or with station: true a power station's own panels' (upsPvKwh).
+ * @param {object[]} monthly SimResult.monthly
+ * @param {{ station?: boolean }} [opts]
+ * @returns {number[]} 12 values, January first
+ */
+export function monthlyPeakShare(monthly, { station = false } = {}) {
     const pv = new Float64Array(12), pk = new Float64Array(12);
+    const [all, peak] = station ? ['upsPvKwh', 'peakUpsPvKwh'] : ['pvAcKwh', 'peakPvAcKwh'];
     for (const m of monthly || []) {
         if (!finite(m?.month0)) continue;
-        pv[m.month0] += m.pvAcKwh || 0;
-        pk[m.month0] += m.peakPvAcKwh || 0;
+        pv[m.month0] += m[all] || 0;
+        pk[m.month0] += m[peak] || 0;
     }
     return Array.from(pv, (v, i) => (v > 1e-6 ? (100 * pk[i]) / v : NaN));
 }
 
-/** Average W by half-hour from a Profile48 (mean kWh per half-hour). */
-export const profileW = profile => Array.from(profile?.pvAc || [], v => (finite(v) ? v * 2000 : NaN));
+/**
+ * Average W by half-hour from a Profile48 (mean kWh per half-hour): the grid-tied panels' AC
+ * output, or with station: true what a power station's own panels make (profile.upsPv).
+ * @param {object} profile Profile48
+ * @param {{ station?: boolean }} [opts]
+ * @returns {number[]} 48 values
+ */
+export const profileW = (profile, { station = false } = {}) => Array.from((station ? profile?.upsPv : profile?.pvAc) || [], v => (finite(v) ? v * 2000 : NaN));
+
+/**
+ * The cell / starred-point field a metric reads: a power station's own panels have no grid-tied
+ * output, so their 4–7pm share is the all-panels one.
+ * @param {{ key: string, stationKey?: string }} metric
+ * @param {boolean} station
+ * @returns {string}
+ */
+export const metricKey = (metric, station) => (station && metric?.stationKey ? metric.stationKey : metric?.key);
+
+/**
+ * The saved price overrides (Compare's convention: a saved System with an auto scenario's id and
+ * priceOverride: true) laid over the ready-made options, so a kit is pointed at the user's price.
+ * @param {object[]} autos
+ * @param {object[]} saved
+ * @returns {object[]}
+ */
+export function withPriceOverrides(autos, saved) {
+    const over = new Map();
+    for (const s of Array.isArray(saved) ? saved : []) if (s?.priceOverride && typeof s.id === 'string' && !over.has(s.id)) over.set(s.id, s);
+    return (autos || []).map(a => over.get(a?.id) ?? a);
+}
+
+/** A saved copy without Compare's override markers (it is a new option, not a price for an old one). */
+export function plainCopy(sys) {
+    const { priceOverride, overrideOf, ...rest } = sys || {};
+    void priceOverride; void overrideOf;
+    return rest;
+}
 
 /** Mean of a W profile over half-hour indices [a, b). */
 const meanOver = (w, a, b) => { let s = 0, n = 0; for (let i = a; i < b; i++) if (finite(w[i])) { s += w[i]; n++; } return n ? s / n : NaN; };
@@ -462,14 +514,13 @@ export default {
         this.pick = null;              // { az, tilt, cell, run, savedId }
         this.metric = 'gbp';
         this.view = 'sun';
-        this.verdict = null;           // { key, v } — the last verdict seen for this dataset/settings
-        this.verdictState = 'idle';    // 'idle' | 'pending' | 'done' | 'unavailable'
+        this.flips = null;             // { key, state: 'pending'|'done'|'failed', a } — answerOrientation for this.sel
         this.bestMemo = null;          // { key, id }
         this.params = ctx.router?.params?.() || {};
         this.dirty = false;            // a change arrived while the tab was hidden: render on show()
         injectStyle(ctx.ui.h);
         const onChange = reason => () => {
-            if (reason !== 'status') { this.bestMemo = null; this.verdict = null; this.verdictState = 'idle'; }
+            if (reason !== 'status') { this.bestMemo = null; this.flips = null; }
             if (this.el.hidden && this.v) { this.dirty = true; return; }
             this.render();
         };
@@ -492,18 +543,26 @@ export default {
 
     /** Leaving the tab mid-render: stop our own sweep so the tab the user went to gets the worker. */
     hide() {
-        if (!this.busy) return;
+        if (!this.busy && this.flips?.state !== 'pending') return;
         this.token++;
         this.busy = false;
-        this.sweepJob?.cancel?.();
-        this.sweepJob = null;
+        this.cancelJobs();
         this.dirty = true;
     },
 
     unmount() {
         this.offs?.forEach(off => off());
-        this.sweepJob?.cancel?.();
+        this.cancelJobs();
         this.teardown();
+    },
+
+    /** Stop this view's own engine work (the sweep, the flip checks). */
+    cancelJobs() {
+        this.sweepJob?.cancel?.();
+        this.sweepJob = null;
+        this.flipJob?.cancel?.();
+        this.flipJob = null;
+        if (this.flips?.state === 'pending') this.flips = null;
     },
 
     teardown() {
@@ -571,8 +630,7 @@ export default {
         // The connect card shows its own progress and errors: leave it alone until data arrives.
         if (!data.summary() && this.el.querySelector('.connect-card')) return;
         const token = ++this.token;
-        this.sweepJob?.cancel?.();
-        this.sweepJob = null;
+        this.cancelJobs();
         const summary = data.summary();
 
         if (data.status() === 'loading') {
@@ -630,7 +688,6 @@ export default {
                 const cur = this.starred('current');
                 if (cur && !cur.mixed && cur.tilt > 0 && (cur.az < 90 || cur.az > 270)) this.view = 'all';
             }
-            if (sweep.station && this.metric === 'peak') this.metric = 'gbp';
             this.status('', false);
             this.v.root.classList.remove('is-old', 'is-empty');
             this.fillAnswer();
@@ -649,8 +706,8 @@ export default {
             this.fillLines();
             this.fillMonthly();
 
-            // 4. the verdict's flip checks, when it's about this kit (never delays the above)
-            this.loadVerdict(token);
+            // 4. would Outgoing Prime, more panels or a battery change the answer? (never delays the above)
+            this.loadFlips(token);
         } catch (err) {
             if (err?.name === 'AbortError' || token !== this.token) return;
             this.busy = false;
@@ -686,7 +743,9 @@ export default {
     async resolveSelection(scenarios, token) {
         const { store } = this.ctx;
         const saved = (store.get().scenarios?.saved || []).filter(s => s && s.id);
-        const all = [...saved, ...scenarios.filter(s => !saved.some(x => x.id === s.id))];
+        // ready-made options at the user's own price (Compare's overrides), then the saved ones
+        const priced = withPriceOverrides(scenarios, saved);
+        const all = [...saved, ...priced.filter(s => !saved.some(x => x.id === s.id))];
         // A scenario this view just saved becomes the active one, but it shouldn't swap the kit on
         // screen at the next re-render: the user is still looking at the kit they re-pointed.
         const active = store.get().scenarios?.activeId || null;
@@ -706,12 +765,13 @@ export default {
         let isDefault = false;
         if (!sys) {
             this.status('Finding the best plug-in kit for you…', true);
-            const id = await this.bestPlugin(scenarios, token);
+            const id = await this.bestPlugin(priced, token);
             if (token !== this.token) return null;
-            sys = scenarios.find(s => s.id === id) || scenarios.find(hasPanels);
+            sys = priced.find(s => s.id === id) || priced.find(hasPanels);
             isDefault = true;
         }
         if (!sys) throw Object.assign(new Error('None of the options has panels to point.'), { code: 'NO_PANELS' });
+        const raw = sys;   // as stored: what onScenarios compares a changed save against
         if (saved.some(s => s.id === sys.id)) {
             // saved scenarios may predate defaults: let the engine fill them in, as Design would
             try { sys = await this.ctx.engine.call('normalizeSystem', sys); } catch { /* use as stored */ }
@@ -728,7 +788,7 @@ export default {
         const station = !!tg?.station;
         const ownStation = stationArrays(sys).some(panelsOf);
         return {
-            id: sys.id, sys, arrayId, tg, isDefault,
+            id: sys.id, sys, raw, arrayId, tg, isDefault,
             saved: saved.some(s => s.id === sys.id),
             station,
             battery: !!sys.battery && !station,
@@ -762,8 +822,9 @@ export default {
         return id;
     },
 
+    /** The finished Verdict's best plug-in kit, if a verdict for these settings and prices is in. */
     verdictBestPlugin(scenarios) {
-        const v = this.verdict?.key === this.settingsKey() ? this.verdict.v : null;
+        const v = this.ctx.data.verdictIfReady?.() ?? null;
         if (!v?.ranked?.length) return null;
         const ok = id => scenarios.some(s => s.id === id && s.route === 'plugin' && !s.battery && hasPanels(s));
         if (v.bestBuyId && ok(v.bestBuyId)) return v.bestBuyId;
@@ -774,10 +835,9 @@ export default {
         const key = `${this.settingsKey()}|${sel.key}`;
         const hit = this.sweeps.get(key);
         if (hit) return hit;
-        // The verdict yields to other calls between its steps, so the sweep starts within a step even
-        // while the verdict is being worked out — no "waiting for the verdict" here.
-        this.status(this.verdictState === 'pending' ? 'Trying every direction and tilt (the Verdict is being worked out alongside)…' : 'Trying every direction and tilt…', true);
-        const job = this.ctx.engine.call('orientationSweep', sel.sys, sel.arrayId, { finance: this.financeOpts() }, {
+        this.status('Trying every direction and tilt…', true);
+        // the hub merges the money settings and cancels the sweep when the data or settings change
+        const job = this.ctx.data.orientationSweep(sel.sys, sel.arrayId, {
             onProgress: p => {
                 if (token !== this.token || !p) return;
                 const pct = finite(p.pct) ? p.pct : null;
@@ -835,7 +895,6 @@ export default {
     /** Full simulations of the line directions (memoised by the DataHub). */
     async runNamed(token) {
         const sel = this.sel;
-        if (sel.station) return;
         const pts = this.namedPoints().filter(p => p.keys.some(k => LINE_KEYS.includes(k)));
         const jobs = pts.map(async p => {
             // a mixed 'current' is the system exactly as configured
@@ -846,27 +905,40 @@ export default {
         await Promise.all(jobs);
     },
 
-    async loadVerdict(token) {
-        if (this.verdictState === 'pending' || this.verdictState === 'unavailable') return;
-        if (this.verdict?.key === this.settingsKey()) { this.fillAnswer(); return; }
-        this.verdictState = 'pending';
+    /**
+     * The flip conditions C1–C4 (engine answerOrientation) for the kit on screen. They move every
+     * panel together, so they're checked for '*' only — and not for a power station's own panels,
+     * which the engine doesn't check. Cached in the worker per system and money settings: the
+     * Verdict's own kit comes back at once once the Verdict has run.
+     */
+    async loadFlips(token) {
+        const sel = this.sel;
+        if (!sel || sel.station || sel.arrayId !== '*') { this.flips = null; this.fillAnswer(); return; }
+        const key = this.runKey;
+        if (this.flips?.key === key && this.flips.state !== 'failed') { this.fillAnswer(); return; }
+        this.flips = { key, state: 'pending', a: null };
         this.fillAnswer();
+        const job = this.ctx.engine.call('answerOrientation', sel.sys, { finance: this.ctx.data.finance?.() ?? this.financeOpts(), tieBandPct: TIE_PCT, flips: true });
+        this.flipJob = job;
         try {
-            const v = await this.ctx.data.verdict();
-            this.verdict = { key: this.settingsKey(), v };
-            this.verdictState = 'done';
+            const a = await job;
+            if (this.flips?.key !== key) return;
+            this.flips = { key, state: 'done', a };
         } catch (err) {
-            if (err?.name === 'AbortError') { this.verdictState = 'idle'; return; }
-            this.verdictState = 'unavailable';
+            if (this.flips?.key !== key) return;
+            if (err?.name === 'AbortError') { this.flips = null; return; }
+            console.warn('orientation: flip checks failed', err);
+            this.flips = { key, state: 'failed', a: null };
+        } finally {
+            if (this.flipJob === job) this.flipJob = null;
         }
         if (token === this.token || this.sweep) this.fillAnswer();
     },
 
+    /** A verdict finished: its kit may be the one on screen (the footnote says so). */
     onVerdict(v) {
-        if (!v) return;
-        this.verdict = { key: this.settingsKey(), v };
-        this.verdictState = 'done';
-        if (this.sweep && this.v) this.fillAnswer();
+        if (!v || !this.sweep || !this.v) return;
+        this.fillAnswer();
     },
 
     onScenarios() {
@@ -876,22 +948,18 @@ export default {
         // open) — except the copies this tab saves itself, which shouldn't swap the kit on screen.
         const active = this.ctx.store.get().scenarios?.activeId || null;
         if (!this.params?.scenario && active && active !== this.lastActive && active !== this.sel?.id && !this.ownSaves?.has(active)) { rerender(); return; }
-        // A saved scenario changed under us (edited in Design or deleted): re-point the new version.
+        // A saved scenario changed under us (edited in Design, deleted, or a price set or taken
+        // back on Compare): re-point the new version.
         const saved = this.ctx.store.get().scenarios?.saved || [];
-        if (this.sel?.saved) {
-            const now = saved.find(s => s.id === this.sel.id);
-            if (!now || stable(now) !== stable(this.sel.sys)) {
-                if (this.el.hidden) { this.dirty = true; return; }
-                this.render();
-                return;
-            }
-        }
+        const now = this.sel ? saved.find(s => s?.id === this.sel.id) : null;
+        if (this.sel && (this.sel.saved ? !now || stable(now) !== stable(this.sel.raw) : !!now)) { rerender(); return; }
         this.fillControls();
     },
 
     /**
-     * The orientation answer: the verdict's answers.orientation when it is about this kit (same
-     * flips everywhere), otherwise composed from this sweep (tie band from the proxy cells).
+     * The orientation answer: composed from this sweep (tie band from the proxy cells), with the
+     * engine's answerOrientation for this kit laid over it once it's in (the same answer — and the
+     * same flips — the Verdict gives for its own kit).
      */
     answer() {
         const st = k => this.starred(k);
@@ -902,51 +970,27 @@ export default {
             tie: tieBand(this.sweep.cells), tieBandPct: TIE_PCT,
             westPays: best.az >= 240, flips: null, checked: [], source: 'sweep',
         };
-        const va = this.verdict?.key === this.settingsKey() ? this.verdict.v?.answers?.orientation : null;
-        if (va && !this.sel.station && this.sel.arrayId === '*' && this.matchesVerdict(va)) {
-            return { ...own, ...pickFields(va), current, bestKwh: most, source: 'verdict' };
-        }
+        const f = this.flips?.key === this.runKey && this.flips.state === 'done' ? this.flips.a : null;
+        if (f && !this.sel.station && this.sel.arrayId === '*') return { ...own, ...pickFields(f), current, bestKwh: most, source: 'engine' };
         return own;
     },
 
-    /** Is the verdict's orientation answer about the kit on screen? (id, or same current point). */
-    matchesVerdict(va) {
-        if (va.status && va.status !== 'ready') return false;
-        const id = va.forId ?? va.systemId ?? va.scenarioId ?? null;
-        if (id != null && id === this.sel.id) return true;
-        // The same kit pointed another way — a re-pointed copy saved from this tab, or a split kit
-        // swept as a whole — has the same answer: the verdict moves every panel together too. Its
-        // fixed-direction points (west wall, due south) then match the verdict's to the penny.
-        const same = (p, q) => !!p && !!q && [p.gbp, p.kwh, q.gbp, q.kwh].every(finite)
-            && Math.abs(p.gbp - q.gbp) <= 1e-6 * Math.max(1, Math.abs(q.gbp)) && Math.abs(p.kwh - q.kwh) <= 1e-6 * Math.max(1, Math.abs(q.kwh));
-        if (same(va.w90, this.starred('W90')) && same(va.s35, this.starred('S35'))) return true;
-        if (id != null) return false;
-        const c = va.current, mine = this.starred('current');
-        if (!c || !mine || mine.mixed) return false;
-        const close = (a, b) => finite(a) && finite(b) && Math.abs(a - b) <= Math.max(0.5, Math.abs(b) * 0.005);
-        return c.az === mine.az && c.tilt === mine.tilt && close(c.kwh, mine.kwh) && close(c.gbp, mine.gbp);
+    /** Is the finished Verdict's orientation answer about the kit on screen? */
+    sameAsVerdict() {
+        const va = this.ctx.data.verdictIfReady?.()?.answers?.orientation;
+        return !!va && (!va.status || va.status === 'ready') && va.forId === this.sel?.id && this.sel.arrayId === '*' && !this.sel.station;
     },
 
     /* ── pick (click to apply) ──────────────────────────────────────────── */
 
-    /**
-     * Make (az, tilt) the pick. fromRose: picked on the rose itself — when that was the keyboard
-     * (Enter/Space with focus on the rose), the rose's redraw waits until focus leaves it, because a
-     * chart update resets the keyboard cursor and the next arrow press would jump back to "Now".
-     */
-    choose(az, tilt, { fromRose = false } = {}) {
+    /** Make (az, tilt) the pick (charts.js keeps a keyboard user's cursor when the rose redraws). */
+    choose(az, tilt) {
         if (!this.sweep || !finite(az) || !finite(tilt)) return;
         const a = tilt === 0 ? 180 : ((Math.round(az) % 360) + 360) % 360;
         if (this.pick && this.pick.az === a && this.pick.tilt === tilt) return;
         this.pick = { az: a, tilt, cell: this.cellAt(a, tilt), run: null, savedId: null, failed: false };
         this.fillPick();
-        const roseHost = this.v.parts.rose;
-        if (fromRose && this.roseKbd && roseHost.contains(document.activeElement)) {
-            if (!this.roseDeferred) {
-                this.roseDeferred = true;
-                roseHost.addEventListener('focusout', () => { if (this.roseDeferred) { this.roseDeferred = false; this.fillRose(); } }, { once: true });
-            }
-        } else this.fillRose();
+        this.fillRose();
         this.fillScatter();
         this.fillNamed();
         this.announce(`Picked ${this.dirLabel(a, tilt)}.`);
@@ -994,7 +1038,7 @@ export default {
         do { id = `orient-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`; } while (taken.has(id));
         const where = this.shortDir(p.az, p.tilt);
         const sys = {
-            ...repoint(base, this.sel.tg, p.az, p.tilt),
+            ...plainCopy(repoint(base, this.sel.tg, p.az, p.tilt)),
             id,
             name: `${base.name} · ${where}`,
             featured: false,
@@ -1093,9 +1137,6 @@ export default {
         p.progressBar = h('div', { class: 'ov-progress-bar' });
         p.progress = h('div', { class: 'ov-progress', role: 'progressbar', 'aria-label': 'Comparing directions', 'aria-valuemin': 0, 'aria-valuemax': 100, hidden: true }, p.progressBar);
         p.rose = h('div', { class: 'ov-untitled' }, ui.skeleton({ height: 380 }));
-        // was the last pick on the rose made from the keyboard? (see choose())
-        p.rose.addEventListener('keydown', e => { this.roseKbd = e.key === 'Enter' || e.key === ' '; }, true);
-        p.rose.addEventListener('pointerdown', () => { this.roseKbd = false; }, true);
         p.roseKey = h('div', { class: 'ov-key' });
         p.roseNote = h('p', { class: 'ov-note' });
         p.roseWrap = h('div', { class: 'ov-rose-wrap' }, p.rose, p.roseKey, p.roseNote);
@@ -1203,7 +1244,8 @@ export default {
         const P = this.v.parts;
         const sel = this.sel;
         if (!sel || !this.scenarios) return;
-        const saved = (store.get().scenarios?.saved || []).filter(hasPanels);
+        // a price override from Compare is the ready-made option at your price: it stays in its route's group
+        const saved = (store.get().scenarios?.saved || []).filter(s => s && !s.priceOverride && hasPanels(s));
         const groups = [
             ['Your saved scenarios', saved],
             ['Plug-in kits', this.scenarios.filter(s => s.route === 'plugin' && hasPanels(s))],
@@ -1283,7 +1325,8 @@ export default {
                 }
                 if (w90.pPerKwh > best.pPerKwh + 0.05) {
                     body.push(sel.partial ? 'Each kWh is worth more (' : 'Each of those kWh is worth more (', B(fmt.p(w90.pPerKwh)), ' vs ', B(fmt.p(best.pPerKwh)), ')');
-                    if (!sel.station && !sel.partial && finite(w90.peakSharePct) && w90.peakSharePct > 0) body.push(' because ', B(fmt.pct(w90.peakSharePct, { dp: 0 })), ' lands in the 4–7pm peak');
+                    const share = sel.station ? w90.peakShareAllPct : w90.peakSharePct;
+                    if (!sel.partial && finite(share) && share > 0) body.push(' because ', B(fmt.pct(share, { dp: 0 })), ' lands in the 4–7pm peak');
                     body.push(', but that doesn’t make up for the lost energy: ');
                 } else body.push('Each of those kWh is worth about the same (', B(fmt.p(w90.pPerKwh)), ' vs ', B(fmt.p(best.pPerKwh)), '), so the lost energy is lost money: ');
                 body.push(B(fmt.gbp(w90.gbp)), ' vs ', B(fmt.gbp(best.gbp)), ' a year. ');
@@ -1347,25 +1390,16 @@ export default {
                 const names = a.checked.filter(c => c !== 'C2' || !a.checked.includes('C1')).map(c => FLIP_SHORT[c]).filter(Boolean);
                 if (names.length) more.push(h('span', { class: 'ov-flip' }, `${cap(listJoin(names))} wouldn’t change it.`));
             }
-        } else if (this.verdictState === 'pending' && !sel.station && sel.arrayId === '*' && (sel.isDefault || sel.id === 'S01')) {
-            // the verdict answers for its best buy (else S01), so only promise flips for that kit
+        } else if (!sel.station && sel.arrayId === '*' && this.flips?.key === this.runKey && this.flips.state === 'pending') {
             more.push(h('span', { class: 'ov-pending' }, h('span', { class: 'spinner', 'aria-hidden': 'true' }),
                 'Checking whether Outgoing Prime, more panels or a battery would change this…'));
-        } else {
-            // The flip checks only exist for the Verdict's kit: say where they are, don't go silent.
-            const va = this.verdict?.key === this.settingsKey() ? this.verdict.v?.answers?.orientation : null;
-            if (va?.status === 'ready' && va.forId && !sel.station) {
-                if (sel.arrayId !== '*' && this.matchesVerdict(va)) {
-                    more.push(h('span', { class: 'ov-flip' }, 'Whether Outgoing Prime, more panels or a battery would change the answer is checked with every panel moving together — choose ',
-                        h('b', null, 'All together'), ' above to see.'));
-                } else if (va.forId !== sel.id) {
-                    more.push(h('span', { class: 'ov-flip' }, 'Whether Outgoing Prime, more panels or a battery would change the answer is checked for the Verdict’s kit, ',
-                        h('b', null, va.forName || va.forId), ' — pick it above to see.'));
-                }
-            }
+        } else if (!sel.station && sel.arrayId !== '*') {
+            // the flip checks move every panel together
+            more.push(h('span', { class: 'ov-flip' }, 'Whether Outgoing Prime, more panels or a battery would change the answer is checked with every panel moving together — choose ',
+                h('b', null, 'All together'), ' above to see.'));
         }
 
-        put(P.answer,
+        ui.put(P.answer,
             h('div', { class: 'ov-q' }, question),
             h('h2', { class: 'ov-answer' }, title),
             h('p', { class: 'ov-body' }, body),
@@ -1379,7 +1413,7 @@ export default {
         if (s35 && !sameDir(s35, best)) rows.push(['Due south', 'S 180° · 35°', s35]);
         if (nowDiffers) rows.push(['As set now', this.pointLabel(current), current]);
         const pctOf = x => (best.gbp > 0 ? Math.round((100 * (x.gbp - best.gbp)) / best.gbp) : 0);
-        put(P.side,
+        ui.put(P.side,
             orientationDial(h, fmt, { best, tie, w90, current }),
             h('div', { class: 'ov-dial-key', 'aria-hidden': 'true' },
                 h('span', null, h('span', { class: 'ov-k ov-k-tie' }), `within ${a.tieBandPct ?? TIE_PCT}%`),
@@ -1394,7 +1428,7 @@ export default {
                 h('dt', null, lab, h('small', null, sub)),
                 h('dd', null, fmt.gbp(x.gbp), h('small', null, pctOf(x) === 0 ? 'same' : `${pctOf(x) > 0 ? '+' : '−'}${Math.abs(pctOf(x))}%`))))) : null);
 
-        const src = a.source === 'verdict' ? 'Same answer as the Verdict' : 'Named directions fully simulated';
+        const src = a.source === 'engine' && this.sameAsVerdict() ? 'Same answer as the Verdict' : 'Named directions fully simulated';
         // Method's "Where panels can go" section (#method?s=spots) holds the mount-spot editor
         const spots = (this.ctx.store.get().settings?.spots || []).length;
         P.heroFoot.replaceChildren(
@@ -1411,8 +1445,8 @@ export default {
         if (!P || !sw) return;
         const sel = this.sel;
         const station = !!sw.station;
-        // metric + view toggles
-        const metrics = METRICS.filter(m => !(station && m.id === 'peak'));
+        // metric + view toggles (a power station's own panels have a 4–7pm share too)
+        const metrics = METRICS;
         // phones: short labels keep the four options on one row — swapped by CSS, so a resize
         // (or a phone turned sideways) gets the right ones without a re-render
         const label = m => [h('span', { class: 'ov-xs-long' }, m.label),
@@ -1430,7 +1464,7 @@ export default {
         const m = this.metricDef();
         const f = this.fmtMetric(m.id);
         const sun = this.view === 'sun' || station;
-        const grid = roseGrid(sw, m.key, sun);
+        const grid = roseGrid(sw, metricKey(m, station), sun);
         const inView = (az, tilt) => tilt === 0 || !sun || (az >= 90 && az <= 270);
         const bestKey = m.best;
         const markers = [];
@@ -1448,32 +1482,33 @@ export default {
         add(this.starred(bestKey === 'bestKwh' ? 'bestGbp' : 'bestKwh'), bestKey === 'bestKwh' ? 'Best £' : 'Most kWh', 'reference');
         add(this.starred('W90'), 'W wall', 'reference');
         add(this.starred('S35'), 'S 35°', 'reference');
-        if (this.pick) add(this.pick, 'Picked', 'reference');
-        const unit = sel.battery && m.id !== 'kwh' ? `${m.unit}, panels alone` : m.unit;
-        const others = METRICS.filter(x => x.id !== m.id && !(station && x.id === 'peak'));
+        if (this.pick) add(this.pick, 'Picked', 'pick');
+        const alone = sel.battery && m.id !== 'kwh' ? ', panels alone' : '';
+        const unit = `${m.unit}${alone}`;
+        const others = METRICS.filter(x => x.id !== m.id);
         this.chart('rose', charts.createPolar, P.rose, {
             title: `${m.unit} by direction and tilt`,
             // no closing full stop: charts.js appends ". Use the arrow keys…"
             ariaLabel: `Solar rose: ${unit} for every direction and tilt. Centre is flat, the rim is vertical`,
             azimuths: grid.azimuths, tilts: grid.tilts, values: grid.values,
-            metricLabel: unit, format: f, scale: m.ramp === 'solar' ? { hue: 'solar' } : { ramp: 'sequential' },
+            metricLabel: unit, tipLabel: `${m.tip}${alone}`, format: f, scale: m.ramp === 'solar' ? { hue: 'solar' } : { ramp: 'sequential' },
             markers, legendMin: 99, height: undefined,
             tipRows: (az, tilt) => {
                 const c = this.cellAt(tilt === 0 ? 180 : az, tilt);
-                return c ? others.map(o => ({ value: this.fmtMetric(o.id)(c[o.key]), label: o.tip })) : [];
+                return c ? others.map(o => ({ value: this.fmtMetric(o.id)(c[metricKey(o, station)]), label: o.tip })) : [];
             },
-            onPick: (az, tilt) => this.choose(az, tilt, { fromRose: true }),
+            onPick: (az, tilt) => this.choose(az, tilt),
         });
         const what = { gbp: '£ saved a year', kwh: 'kWh made a year', ppk: 'What each kWh made is worth', peak: 'Share of the output made 4–7pm' }[m.id];
-        put(P.roseSub, `${what}${sel.battery && m.id !== 'kwh' ? ' by the panels alone' : ''} for every direction (around) and tilt (flat in the middle, vertical at the rim)${sun ? ', east through south to west' : ''}. `,
+        ui.put(P.roseSub, `${what}${sel.battery && m.id !== 'kwh' ? ' by the panels alone' : ''} for every direction (around) and tilt (flat in the middle, vertical at the rim)${sun ? ', east through south to west' : ''}. `,
             h('span', { class: 'ov-xs-long' }, 'Click a cell to try it.'), h('span', { class: 'ov-xs-short' }, 'Tap one to try it.'));
-        put(P.roseKey,
+        ui.put(P.roseKey,
             h('span', null, h('span', { class: 'ov-k ov-k-best' }), bestKey === 'bestKwh' ? 'Most energy' : 'Best for £'),
             h('span', null, h('span', { class: 'ov-k ov-k-now' }), 'As set now'),
             h('span', null, h('span', { class: 'ov-k ov-k-ref' }), 'Named directions'),
-            this.pick ? h('span', null, h('span', { class: 'ov-k ov-k-ref' }), 'Picked') : null);
+            this.pick ? h('span', null, h('span', { class: 'ov-k ov-k-pick' }), 'Your pick') : null);
         P.roseNote.textContent = station
-            ? `Each cell is a full run of the power station with ${sel.tg.index < 0 ? 'its own panels' : 'that panel'} pointed that way (15° steps)${sel.partial ? `, ${sel.fixed} staying as they are` : ''}. Those panels charge the station’s battery, so their output isn’t split by time of day here.`
+            ? `Each cell is a full run of the power station with ${sel.tg.index < 0 ? 'its own panels' : 'that panel'} pointed that way (15° steps)${sel.partial ? `, ${sel.fixed} staying as they are` : ''}. Those panels charge the station’s battery; the 4–7pm share is when they make their power.`
             : `Cells are a quick estimate${sel.battery ? ` of the panels alone (without ${sel.batteryNoun})` : ''}, one sun position per half-hour; the named directions are full simulations${sel.battery ? ` including ${sel.batteryNoun}` : ''}.`;
         this.fillTop();
     },
@@ -1488,25 +1523,27 @@ export default {
         const m = this.metricDef();
         const f = this.fmtMetric(m.id);
         const sun = this.view === 'sun' || sw.station;
-        const cells = sw.cells.filter(c => finite(c[m.key]) && (c.tilt === 0 || !sun || (c.az >= 90 && c.az <= 270)))
-            .sort((a, b) => b[m.key] - a[m.key]).slice(0, 10);
+        const key = metricKey(m, !!sw.station);
+        const peakKey = metricKey(METRICS.find(x => x.id === 'peak'), !!sw.station);
+        const cells = sw.cells.filter(c => finite(c[key]) && (c.tilt === 0 || !sun || (c.az >= 90 && c.az <= 270)))
+            .sort((a, b) => b[key] - a[key]).slice(0, 10);
         const items = cells.map((c, i) => {
             const on = this.pick && this.pick.az === c.az && this.pick.tilt === c.tilt;
-            const sub = m.id === 'gbp' ? `${fmt.num(c.kwh)} kWh${sw.station ? '' : ` · ${fmt.pct(c.peakSharePct, { dp: 0 })} at 4–7pm`}`
+            const sub = m.id === 'gbp' ? `${fmt.num(c.kwh)} kWh${finite(c[peakKey]) ? ` · ${fmt.pct(c[peakKey], { dp: 0 })} at 4–7pm` : ''}`
                 : `${fmt.gbp(c.gbp)} a year · ${fmt.num(c.kwh)} kWh`;
             return h('li', null, h('button', {
                 type: 'button', class: 'ov-top-btn', 'aria-pressed': on ? 'true' : 'false',
-                'aria-label': `${i + 1}. ${this.dirLabel(c.az, c.tilt)}: ${f(c[m.key])}, ${sub}`,
+                'aria-label': `${i + 1}. ${this.dirLabel(c.az, c.tilt)}: ${f(c[key])}, ${sub}`,
                 on: { click: () => this.choose(c.az, c.tilt) },
             }, h('span', { class: 'ov-top-rank' }, String(i + 1)),
             h('span', { class: 'ov-top-dir' }, this.dirLabel(c.az, c.tilt), h('small', null, sub)),
-            h('span', { class: 'ov-top-val' }, f(c[m.key]))));
+            h('span', { class: 'ov-top-val' }, f(c[key]))));
         });
         // The top of the rose is usually flat: say so, or ten identical-looking £ figures read as a bug.
         const first = cells[0]?.[m.key], last = cells[cells.length - 1]?.[m.key];
         P.topCap.textContent = m.id === 'gbp' && finite(first) && finite(last) && first > 0 && first - last < 0.03 * first
             ? `All ten are within ${fmt.gbp(Math.max(1, first - last))} a year of each other — the top of the rose is flat, so pick what fits.` : '';
-        put(P.top, items);
+        ui.put(P.top, items);
         P.top.setAttribute('aria-label', `Top 10 directions by ${m.unit}`);
     },
 
@@ -1526,14 +1563,14 @@ export default {
             { key: 'kwh', label: 'kWh', align: 'right', format: v => fmt.num(v) },
             { key: 'pPerKwh', label: 'p/kWh', align: 'right', format: v => fmt.num(v, 1) },
         ];
-        if (!station) columns.push({ key: 'peakSharePct', label: '4–7pm', align: 'right', format: v => fmt.pct(v, { dp: 0 }) });
+        columns.push({ key: station ? 'peakShareAllPct' : 'peakSharePct', label: '4–7pm', align: 'right', format: v => (finite(v) ? fmt.pct(v, { dp: 0 }) : '—') });
         P.named.replaceChildren(ui.table({
             columns, rows, dense: true, caption: 'Named directions, full simulation',
             onRowClick: r => (r.mixed ? this.ctx.ui.toast('Those panels face different ways — pick one set under “Which panels” to move it.') : this.choose(r.az, r.tilt)),
             rowClass: r => (sameDir(this.pick, r) ? 'is-highlight' : ''),
         }));
         const sel = this.sel;
-        put(P.namedSub, `Full simulations${sel.partial ? ' of the whole system' : ''}${sel.battery ? ` with ${sel.batteryNoun}` : ''}: £ saved a year, kWh made a year, what each kWh is worth${station ? '' : ' and the share made 4–7pm'}${sel.partial ? ` — ${sel.fixed} stay as they are` : ''}. `,
+        ui.put(P.namedSub, `Full simulations${sel.partial ? ' of the whole system' : ''}${sel.battery ? ` with ${sel.batteryNoun}` : ''}: £ saved a year, kWh made a year, what each kWh is worth and the share made 4–7pm${sel.partial ? ` — ${sel.fixed} stay as they are` : ''}. `,
             h('span', { class: 'ov-xs-long' }, 'Click a row to try it.'), h('span', { class: 'ov-xs-short' }, 'Tap one to try it.'));
     },
 
@@ -1575,9 +1612,14 @@ export default {
             row('Makes', finite(hd?.pvKwh ?? c?.kwh) ? `${fmt.num(hd?.pvKwh ?? c?.kwh)} kWh` : '—',
                 quick && this.sel.battery ? 'panels alone' : hd && this.sel.partial ? 'whole system' : null),
             row('Each kWh is worth', finite(hd ? (100 * hd.savingsGbp) / hd.pvKwh : c?.pPerKwh) ? fmt.p(hd ? (100 * hd.savingsGbp) / hd.pvKwh : c?.pPerKwh) : '—'),
-            // the 4–7pm share counts every grid-tied panel: with one set of several moved, that's the kit's
-            station ? null : row('Made 4–7pm', finite(hd?.peakGenSharePct ?? c?.peakSharePct) ? fmt.pct(hd?.peakGenSharePct ?? c?.peakSharePct, { dp: 0 }) : '—',
-                this.sel.partial && this.sel.tg.index >= 0 ? 'whole kit' : null),
+            // the 4–7pm share counts every grid-tied panel: with one set of several moved, that's the
+            // kit's; a power station's own panels use the all-panels share (the whole system's when
+            // plug-in panels stay put beside them)
+            (() => {
+                const share = station ? (hd ? hd.peakGenShareAllPct : c?.peakShareAllPct) : (hd ? hd.peakGenSharePct : c?.peakSharePct);
+                return row('Made 4–7pm', finite(share) ? fmt.pct(share, { dp: 0 }) : '—',
+                    this.sel.partial && (station || this.sel.tg.index >= 0) ? (station ? 'whole system' : 'whole kit') : null);
+            })(),
         ];
         const tag = hd ? 'Full simulation' : p.failed ? 'Quick estimate (the full run failed)' : 'Quick estimate · full run on its way';
         const actions = p.savedId
@@ -1590,7 +1632,7 @@ export default {
                 isNow ? null : ui.button({ label: 'Open in Design', kind: 'ghost', icon: 'arrowRight', onClick: () => this.openInDesign() }),
                 ui.button({ label: 'Clear', kind: 'link', icon: 'x', onClick: () => this.clearPick() })),
             isNow ? h('p', { class: 'ov-note' }, 'That’s how this kit is set up now.') : null];
-        put(P.pick,
+        ui.put(P.pick,
             h('div', { class: 'ov-pick-head' },
                 h('div', { class: 'ov-pick-dir' }, this.dirLabel(p.az, p.tilt)),
                 named ? ui.badge({ text: named.shorts.join(' · '), tone: 'accent' }) : null),
@@ -1672,28 +1714,21 @@ export default {
         const P = this.v?.parts;
         if (!P || !this.sweep) return;
         const sel = this.sel;
-        // A station's own panels charge its battery: the profile has no time-of-day split for them
-        // (the rose note says so), so the card steps aside and the energy chart takes the row.
-        P.linesCard.hidden = !!sel.station;
-        P.scatterCard.classList.toggle('ov-span', !!sel.station);
-        if (sel.station) {
-            this.v.charts.lines?.destroy();
-            delete this.v.charts.lines;
-            return;
-        }
+        // the moved panels' output: grid-tied panels' AC, or a power station's own panels (upsPv)
+        const station = !!sel.station;
         const pts = this.namedPoints().filter(p => p.keys.some(k => LINE_KEYS.includes(k)));
         const series = [];
         for (const p of pts) {
             const run = this.runs.get(p.key);
             if (!run) continue;
-            const w = profileW(run.typical?.profile).slice(DAY[0], DAY[1]);
+            const w = profileW(run.typical?.profile, { station }).slice(DAY[0], DAY[1]);
             const isNowOnly = p.keys.length === 1 && p.key === 'current';
             series.push({ key: p.key, label: p.shorts.join(' · '), color: p.color, values: w, dash: isNowOnly ? [5, 4] : undefined });
         }
         // a pick on a drawn direction is that line already: name it there instead of drawing it twice
         const onLine = this.pick ? series.find(s => sameDir(pts.find(p => p.key === s.key), this.pick)) : null;
         if (onLine) onLine.label += ' · picked';
-        else if (this.pick?.run) series.push({ key: 'pick', label: PICK.label, color: PICK.color, values: profileW(this.pick.run.typical?.profile).slice(DAY[0], DAY[1]) });
+        else if (this.pick?.run) series.push({ key: 'pick', label: PICK.label, color: PICK.color, values: profileW(this.pick.run.typical?.profile, { station }).slice(DAY[0], DAY[1]) });
         if (!series.length) return;
         this.chart('lines', charts.createLine, P.lines, {
             title: 'Average output by time of day',
@@ -1702,17 +1737,21 @@ export default {
             y: { label: 'average W', format: v => fmt.num(v) },
             series, bands: [{ from: '16:00', to: '19:00', label: '4–7pm' }],
         });
-        // A power station's own panels charge its battery and have no time-of-day split: these
-        // lines are the plug-in (grid-tied) panels only.
+        // The lines are the panels being pointed; panels that stay put are left out (they'd be the
+        // same line in every direction).
         const ownStation = stationArrays(sel.sys).some(panelsOf);
-        P.linesSub.textContent = `Average watts across the year${ownStation ? ' from the plug-in panels (the power station’s own panels aren’t split by time of day)' : ''}, by half-hour (local time). Shaded: 4–7pm.`;
+        const gridToo = (sel.sys.arrays || []).some(panelsOf);
+        P.linesSub.textContent = station
+            ? `Average watts the power station’s own panels make across the year${gridToo ? ' (the plug-in panels stay where they are and are left out)' : ''}, by half-hour (local time). Shaded: 4–7pm.`
+            : `Average watts across the year${ownStation ? ' from the plug-in panels (the power station’s own panels stay where they are and are left out)' : ''}, by half-hour (local time). Shaded: 4–7pm.`;
         const best = this.runs.get('bestGbp'), west = this.runs.get('W90');
         if (best && west) {
-            const bw = profileW(best.typical.profile), ww = profileW(west.typical.profile);
+            const bw = profileW(best.typical.profile, { station }), ww = profileW(west.typical.profile, { station });
             const bp = meanOver(bw, PEAK[0], PEAK[1]), wp = meanOver(ww, PEAK[0], PEAK[1]);
-            // the year-round comparison on the lines' own basis (grid-tied output), not the system's
-            // kWh: with a power station's panels in the mix those differ (46% vs 24% on C1)
-            const bk = best.typical?.annual?.pvAcKwh, wk = west.typical?.annual?.pvAcKwh;
+            // the year-round comparison on the lines' own basis (the moved panels' output), not the
+            // system's kWh: with fixed panels in the mix those differ (46% vs 24% on C1)
+            const kwh = r => (station ? r.typical?.annual?.upsPvKwh : r.typical?.annual?.pvAcKwh);
+            const bk = kwh(best), wk = kwh(west);
             const peakWord = Math.abs(wp - bp) < 0.05 * Math.max(bp, 1) ? 'about the same in the peak' : wp > bp ? 'more in the peak' : 'not even more in the peak';
             P.linesTake.replaceChildren('Between 4 and 7pm the west wall averages ', h('b', null, fmt.w(wp)), ' against ', h('b', null, fmt.w(bp)),
                 ' for the best direction — ', peakWord,
@@ -1726,25 +1765,20 @@ export default {
         const P = this.v?.parts;
         if (!P || !this.sweep) return;
         const sel = this.sel;
-        P.monthlyCard.hidden = !!sel.station;
-        if (sel.station) {
-            this.v.charts.monthly?.destroy();
-            delete this.v.charts.monthly;
-            return;
-        }
+        const station = !!sel.station;
         const pts = this.namedPoints().filter(p => p.keys.some(k => ['bestGbp', 'W90', 'current'].includes(k)));
         const series = [];
         const shares = {};
         for (const p of pts) {
             const run = this.runs.get(p.key);
             if (!run) continue;
-            const s = monthlyPeakShare(run.typical?.monthly);
+            const s = monthlyPeakShare(run.typical?.monthly, { station });
             for (const k of p.keys) shares[k] = s;
             series.push({ key: p.key, label: p.shorts.join(' · '), color: p.color, values: s.map(v => (finite(v) ? v : null)) });
         }
         const onBar = this.pick ? series.find(s => sameDir(pts.find(p => p.key === s.key), this.pick)) : null;
         if (onBar) onBar.label += ' · picked';
-        else if (this.pick?.run) series.push({ key: 'pick', label: PICK.label, color: PICK.color, values: monthlyPeakShare(this.pick.run.typical?.monthly).map(v => (finite(v) ? v : null)) });
+        else if (this.pick?.run) series.push({ key: 'pick', label: PICK.label, color: PICK.color, values: monthlyPeakShare(this.pick.run.typical?.monthly, { station }).map(v => (finite(v) ? v : null)) });
         if (!series.length) return;
         this.chart('monthly', charts.createBars, P.monthly, {
             title: 'Share of each month’s output made 4–7pm',
@@ -1780,10 +1814,10 @@ export default {
 
 function injectStyle(h) {
     if (typeof document === 'undefined' || document.getElementById(STYLE_ID)) return;
-    document.head.appendChild(h('style', { id: STYLE_ID }, CSS));
+    document.head.appendChild(h('style', { id: STYLE_ID }, STYLES));
 }
 
-/** Fields of a verdict orientation answer that replace the sweep's own. */
+/** Fields of the engine's orientation answer (answerOrientation) that replace the sweep's own. */
 function pickFields(va) {
     const out = {};
     for (const k of ['best', 'w90', 's35', 'tie', 'tieBandPct', 'westPays', 'flips', 'checked']) if (va[k] != null) out[k] = va[k];
@@ -1793,8 +1827,6 @@ function pickFields(va) {
 const cap = s => (s ? s[0].toUpperCase() + s.slice(1) : s);
 /** Same single direction? A mixed point (a split kit as configured) has none. */
 const sameDir = (a, b) => !!a && !!b && !a.mixed && !b.mixed && a.az === b.az && a.tilt === b.tilt;
-/** replaceChildren without the trap: null/false children are dropped (the DOM would print "null"), arrays flattened. */
-const put = (el, ...kids) => el.replaceChildren(...kids.flat(Infinity).filter(k => k != null && k !== false));
 const listJoin = a => (a.length <= 1 ? a.join('') : `${a.slice(0, -1).join(', ')} or ${a[a.length - 1]}`);
 
 /** Is az inside the arc lo → hi (clockwise, the tie band's contiguous range)? */

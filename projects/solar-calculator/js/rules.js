@@ -253,11 +253,26 @@ export function validate(system, catalog = null, ctx = {}) {
     const spot = sys.spotId && Array.isArray(ctx.spots) ? ctx.spots.find((s) => s.id === sys.spotId) : null;
     if (spot && spot.groundLevel === false && sys.arrays.length) warn('ABOVE_GROUND', 'Above ground level — get professional advice.');
 
-    // ── a staged plan: stage 2 must be legal under its own route
+    // ── a staged plan: stage 2 must be legal under its own route (it pays for its own parts too:
+    //    the later step's cost lines count, e.g. an electrician bought for it)
     if (sys.upgrade) {
         const s2 = upgradedSystem(sys);
-        const r2 = validate(s2, catalog, ctx);
+        const r2 = validate({ ...s2, costs: [...s2.costs, ...(sys.upgrade.costs ?? [])] }, catalog, ctx);
         for (const e of r2.errors) errors.push({ ...e, stage: 2, message: `Later: ${e.message}` });
+        const later = { label: 'Have an electrician fit it instead', action: { type: 'upgradeHardwired' } };
+        if (s2.route === 'whatif' && sys.route !== 'whatif') {
+            // a later step under future rules is a plan, not something legal today: say so (stage 2's
+            // WHATIF is only a warning, so it never shows up among the re-raised errors)
+            // (the battery wording is the one design.js used before the rule existed)
+            const message = sys.upgrade.battery
+                ? `Later step: plug-in batteries aren’t legal yet, so the battery at the end of year ${sys.upgrade.atYear} counts on the rules changing first (Octopus hopes for early 2027).`
+                : `Later step: this isn’t legal in GB today, so the step at the end of year ${sys.upgrade.atYear} counts on the rules changing first.`;
+            warnings.push({ code: 'LATER_WHATIF', stage: 2, message, fixes: [later] });
+        }
+        const noInstall = r2.warnings.find((w) => w.code === 'HARDWIRED_NO_INSTALL');
+        if (noInstall && s2.route === 'hardwired' && !warnings.some((w) => w.code === 'HARDWIRED_NO_INSTALL')) {
+            warnings.push({ ...noInstall, stage: 2, message: `Later: ${noInstall.message}`, fixes: [{ label: 'Add the electrician', action: { type: 'upgradeHardwired' } }] });
+        }
     }
 
     let banner = null;
@@ -271,6 +286,44 @@ export function validate(system, catalog = null, ctx = {}) {
     return { legal, errors, warnings, banner };
 }
 
+/**
+ * The system without its battery and without what the battery brought onto the bill: the battery
+ * product's own cost line (an add-on battery or a power station, named after the product — "X" or
+ * "X as a plug-in battery"), a power station's own panels and frames and its smart-plug line, the
+ * product ids no remaining line pays for, and kitId when the battery was the product itself. A
+ * battery inside an all-in-one unit has no line of its own, so the unit's price stays. A staged
+ * plan's later battery (its line is in upgrade.costs) is untouched.
+ * @param {Object} sys normalised
+ * @param {Object} [catalog]
+ * @returns {Object} System (not normalised)
+ */
+function withoutBattery(sys, catalog) {
+    const b = sys.battery;
+    if (!b) return sys;
+    const ids = [...new Set([sys.kitId, ...(sys.sourceIds ?? [])].filter(Boolean))];
+    const prods = ids.map((id) => findProduct(catalog, id)).filter((p) => p && (p.kind === 'power-station' || p.kind === 'battery-addon'));
+    let costs = [...sys.costs];
+    const dropLast = (match) => {
+        for (let i = costs.length - 1; i >= 0; i--) if (match(costs[i].label ?? '')) { costs.splice(i, 1); return true; }
+        return false;
+    };
+    const gone = new Set();
+    for (const p of prods) {
+        if (!dropLast((l) => l === p.name || l.startsWith(`${p.name} `))) continue;
+        gone.add(p.id);
+        if (p.kind === 'power-station' && b.coupling === 'ups') {
+            const n = (b.ups?.pvArrays ?? []).reduce((s, a) => s + (a.count > 0 ? a.count : 0), 0);
+            for (const part of [catalog?.parts?.panel, catalog?.parts?.frame]) if (part && n > 0) dropLast((l) => l === `${n} × ${part.name}`);
+            if (p.smartPlugOnly) dropLast((l) => l === 'Smart plug for automation (enter yours)');
+        }
+    }
+    let sourceIds = (sys.sourceIds ?? []).filter((id) => !gone.has(id));
+    for (const part of [catalog?.parts?.panel, catalog?.parts?.frame]) {
+        if (part && sourceIds.includes(part.id) && !costs.some((c) => String(c.label ?? '').endsWith(`× ${part.name}`))) sourceIds = sourceIds.filter((id) => id !== part.id);
+    }
+    return { ...sys, battery: null, costs, sourceIds, kitId: gone.has(sys.kitId) ? null : sys.kitId };
+}
+
 /** Panels of the system flattened to one entry per panel (orientation + input), for re-layouts. */
 function panelsOf(sys) {
     const out = [];
@@ -282,8 +335,10 @@ function panelsOf(sys) {
  * Apply a fix action from a validate() Issue. Unknown actions return the system unchanged.
  * Actions: setRoute {route, addElectrician?}, chooseKit {kitId, keepSplit?}, restoreKit, alignInput
  * {input}, splitInputs, clampInputs, setStrategy {strategy}, setDedicatedW {w}, capAcLimit {w},
- * addElectrician, setExport {kind}, removeBattery, removeStationPanels, capStationPanels (to what
- * the station's inputs can really take, one per input).
+ * addElectrician, setExport {kind}, removeBattery (with its cost lines and catalog ids),
+ * removeStationPanels, capStationPanels (to what the station's inputs can really take, one per
+ * input), upgradeHardwired (a staged plan's later step fitted by an electrician, who is added to
+ * the later step's costs unless one is already paid for).
  * @param {Object} system
  * @param {{ type: string }} action
  * @param {Object} [catalog]
@@ -388,7 +443,14 @@ export function applyFix(system, action, catalog = null) {
         case 'setExport':
             return normalizeSystem({ ...sys, export: { kind: a.kind ?? 'none', flatP: a.flatP ?? 0 } });
         case 'removeBattery':
-            return normalizeSystem({ ...sys, battery: null });
+            return normalizeSystem(withoutBattery(sys, catalog));
+        case 'upgradeHardwired': {
+            // the later step of a staged plan wired in by an electrician (design.js laterHardwired)
+            if (!sys.upgrade) return sys;
+            const has = sys.costs.some((c) => c.kind === 'install') || (sys.upgrade.costs ?? []).some((c) => c.kind === 'install');
+            const costs = has ? [...(sys.upgrade.costs ?? [])] : [...(sys.upgrade.costs ?? []), electricianCost(catalog)];
+            return normalizeSystem({ ...sys, upgrade: { ...sys.upgrade, route: 'hardwired', costs } });
+        }
         case 'removeStationPanels':
             return sys.battery?.ups ? normalizeSystem({ ...sys, battery: { ...sys.battery, ups: { ...sys.battery.ups, pvArrays: [] } } }) : sys;
         case 'capStationPanels': {

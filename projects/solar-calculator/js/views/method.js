@@ -26,7 +26,7 @@ const STYLE_ID = 'style-method';
 const CSS = `
 .mv-layout { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 36px; align-items: start; }
 .mv-toc { position: sticky; top: 70px; }
-.mv-toc-t { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); margin: 0 0 8px; }
+.mv-toc-t { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
 .mv-toc ol { list-style: none; margin: 0; padding: 0; border-left: 1px solid var(--border); }
 .mv-toc a {
     display: grid; grid-template-columns: 26px minmax(0, 1fr); align-items: center; min-height: 34px; margin-left: -1px; padding: 4px 8px 4px 12px;
@@ -34,7 +34,7 @@ const CSS = `
 }
 .mv-toc a:hover { color: var(--text); }
 .mv-toc a[aria-current='true'] { color: var(--text); border-left-color: var(--accent); }
-.mv-toc a span:first-child { font-family: var(--font-mono); font-size: 10.5px; color: var(--faint); }
+.mv-toc a span:first-child { font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); }
 .mv-toc a[aria-current='true'] span:first-child { color: var(--accent); }
 .mv-jump { display: none; }
 .mv-main { display: flex; flex-direction: column; gap: 56px; min-width: 0; max-width: 900px; }
@@ -48,7 +48,7 @@ const CSS = `
 .mv-prose b { color: var(--text); font-weight: 600; }
 
 .mv-chain { list-style: none; margin: 0; padding: 0; position: relative; }
-.mv-lane { display: flex; align-items: center; gap: 10px; margin: 18px 0 8px; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); }
+.mv-lane { display: flex; align-items: center; gap: 10px; margin: 18px 0 8px; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
 .mv-lane:first-child { margin-top: 0; }
 .mv-lane::after { content: ''; flex: 1; height: 1px; background: var(--hairline); }
 .mv-node { position: relative; display: grid; grid-template-columns: 34px minmax(0, 1fr) minmax(0, 190px); gap: 2px 16px; padding: 10px 0 12px; }
@@ -76,7 +76,7 @@ const CSS = `
 .mv-vat-seg.is-0 { background: var(--accent-dim); color: var(--accent-strong); border: 1px solid var(--accent-line); }
 .mv-vat-br { position: relative; height: 26px; margin-right: 2px; border: 1px solid var(--border-strong); border-top: 0; border-radius: 0 0 5px 5px; font-size: 11.5px; color: var(--text-2); display: flex; align-items: flex-end; justify-content: center; padding-bottom: 3px; white-space: nowrap; overflow: hidden; }
 .mv-vat-br.is-y1 { border-color: var(--accent-line); color: var(--accent-strong); }
-.mv-vat-ticks { display: grid; grid-template-columns: repeat(var(--months), minmax(0, 1fr)); font-family: var(--font-mono); font-size: 10.5px; color: var(--faint); margin-top: 4px; }
+.mv-vat-ticks { display: grid; grid-template-columns: repeat(var(--months), minmax(0, 1fr)); font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); margin-top: 4px; }
 .mv-vat-ticks span { white-space: nowrap; overflow: visible; }
 
 .mv-rules { list-style: none; margin: 0; padding: 0; display: grid; }
@@ -363,13 +363,6 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 const monthIndex = iso => { const m = /^(\d{4})-(\d{2})/.exec(iso || ''); return m ? +m[1] * 12 + (+m[2] - 1) : NaN; };
 const monthName = idx => `${MONTHS[idx % 12]} ${Math.floor(idx / 12)}`;
 
-/** The focusable control in (or at) a [data-fk] holder: a checked radio, a field, a button or a dial. */
-function controlIn(holder) {
-    if (!holder) return null;
-    if (holder.matches('input, select, textarea, button, [tabindex]:not([tabindex="-1"])')) return holder;
-    return holder.querySelector('[role="radio"][aria-checked="true"], input, select, textarea, button, [tabindex]:not([tabindex="-1"])');
-}
-
 /** 2 → '2', 0.4 → '0.4', 0.004 → '0.004' (no padding zeros in hints). */
 const plain = v => (Number.isFinite(v) ? String(+v.toFixed(4)) : '—');
 
@@ -491,6 +484,16 @@ export function sanitizeImport(json, { normalizeAccount = null } = {}) {
             const a = normalizeAccount ? normalizeAccount(c.accountNumber) : { value: null, valid: false };
             if (typeof c.accountNumber === 'string' && a.valid && a.value) connection.accountNumber = a.value; else skip('the account number (not like A-1234ABCD)');
         }
+        // the meter picked on that account: 13 digits, and only alongside the account it belongs to
+        if (c.mpan !== undefined && c.mpan !== null) {
+            const m = typeof c.mpan === 'string' || typeof c.mpan === 'number' ? String(c.mpan).replace(/\s+/g, '') : '';
+            if (/^\d{13}$/.test(m) && connection.accountNumber) connection.mpan = m; else skip('the meter number (not a 13-digit MPAN on the account in the file)');
+        }
+        // an electricity region chosen by hand: one letter A–P ('c' and '_C' count too)
+        if (c.region !== undefined && c.region !== null) {
+            const r = typeof c.region === 'string' ? c.region.trim().replace(/^_/, '').toUpperCase() : '';
+            if (/^[A-P]$/.test(r)) connection.region = r; else skip('the electricity region (not a letter A–P)');
+        }
         if ('apiKey' in c || 'key' in c) skip('an API key (keys are never imported)');
         if (!Object.keys(connection).length) connection = null;
     }
@@ -602,9 +605,10 @@ export default {
         shell.rerun.show({
             text: data.summary() ? 'Assumptions changed — results need a re-run' : 'Assumptions changed',
             actionLabel: data.summary() ? 'Apply & re-run' : 'Save',
+            // Dismissing only puts the bar away: the edits stay staged, and the bars in the
+            // Assumptions and spots cards still offer Apply and Discard — so the label says that.
+            dismissLabel: 'Later',
             onRun: () => this.apply(),
-            // "Not now" only puts the bar away: the edits stay staged, and the bars in the
-            // Assumptions and spots cards still offer Apply and Discard.
             onDismiss: () => this.refocus(),
         });
     },
@@ -632,15 +636,16 @@ export default {
     },
 
     /**
-     * After Apply / Discard / Not now the pressed button has gone (re-rendered or hidden), so put
-     * keyboard focus back on the field last edited — or the Assumptions heading.
+     * After Apply / Discard / Later the pressed button has gone (re-rendered or hidden), so
+     * put keyboard focus back on the field last edited — or the Assumptions heading.
      */
     refocus() {
+        const { ui } = this.ctx;
         requestAnimationFrame(() => {
             const a = document.activeElement;
             if (a && a !== document.body && a.isConnected && !a.closest('#rerun-bar, [hidden]')) return;
             const holder = this.lastFk && this.el.querySelector(`[data-fk="${this.lastFk}"]`);
-            const target = holder ? controlIn(holder) : null;
+            const target = holder ? ui.controlIn(holder) : null;
             if (target) { target.focus({ preventScroll: false }); return; }
             const h = this.el.querySelector('#mv-h-assumptions');
             if (h) { h.tabIndex = -1; h.focus(); }
@@ -648,15 +653,22 @@ export default {
     },
 
     /**
-     * Re-render a section without losing keyboard focus: the control whose [data-fk] matches the
-     * one focused before (or `focus`, a selector for a deliberate new target) gets it back.
+     * Re-render a section without losing keyboard focus (ui.keepFocus): the control whose
+     * [data-fk] matches the one focused before gets it back, or `focus` (a selector for a
+     * deliberate new target). When neither survives (Discard, Apply, Restore all defaults), the
+     * field last edited in this section, else the section's heading.
      */
     keepFocus(host, build, focus = null) {
-        const a = document.activeElement;
-        const fk = a && host.contains(a) ? a.closest('[data-fk]')?.dataset.fk : null;
-        build();
-        const holder = (focus && host.querySelector(focus)) || (fk && host.querySelector(`[data-fk="${fk}"]`));
-        controlIn(holder)?.focus({ preventScroll: true });
+        const { ui } = this.ctx;
+        const sec = host.closest?.('.mv-sec');
+        const fallback = () => {
+            const last = this.lastFk ? host.querySelector(`[data-fk="${this.lastFk}"]`) : null;
+            if (last) return ui.controlIn(last);
+            const h = sec?.querySelector('h2');
+            if (h) h.tabIndex = -1;
+            return h ?? null;
+        };
+        ui.keepFocus(host, build, focus, { fallback });
     },
 
     paintStaged(d) {
@@ -1205,7 +1217,7 @@ export default {
             if (!opts.length) { selHost.replaceChildren(ui.h('span', { class: 'field-hint' }, 'No options to export yet.')); return; }
             chosen = list.find(s => s.id === chosen?.id) || list[0];
             const sel = ui.select({ ariaLabel: 'Option to export', value: chosen.id, options: opts, onChange: v => { chosen = list.find(s => s.id === v); } });
-            const btn = ui.button({ label: 'Download CSV', icon: 'table', onClick: () => this.exportCsv(chosen, btn) });
+            const btn = ui.button({ label: 'Download CSV', icon: 'download', onClick: () => this.exportCsv(chosen, btn) });
             selHost.replaceChildren(sel, btn);
         };
         const list = saved.map(s => ({ ...s, group: 'Your saved scenarios' }));
@@ -1229,7 +1241,7 @@ export default {
                 ui.h('div', { class: 'mv-x-t' }, 'Settings and scenarios (JSON)'),
                 ui.h('div', { class: 'mv-x-d' }, 'Your assumptions, mount spots, saved and pinned scenarios, and how you connect. Never your API key.'),
                 withAcct ? ui.h('div', { style: { marginTop: '6px' } }, withAcct) : null),
-            ui.h('div', { class: 'mv-x-acts' }, ui.button({ label: 'Download JSON', onClick: () => this.exportJson(!!withAcct?.input.checked) })));
+            ui.h('div', { class: 'mv-x-acts' }, ui.button({ label: 'Download JSON', icon: 'download', onClick: () => this.exportJson(!!withAcct?.input.checked) })));
 
         const file = ui.h('input', { type: 'file', accept: '.json,application/json', 'aria-label': 'Choose a settings file to import' });
         file.addEventListener('change', () => { const f = file.files?.[0]; file.value = ''; if (f) this.importJson(f); });
@@ -1274,7 +1286,10 @@ export default {
             connection: {
                 kind: c.kind, location: c.location, demoServerW: c.demoServerW, manual: c.manual,
                 installedSolarDate: c.installedSolarDate, priceBasis: c.priceBasis, flatP: c.flatP,
-                ...(includeAccount && c.accountNumber ? { accountNumber: c.accountNumber } : {}),
+                // the region picked by hand for a CSV or hand-entered profile (not personal)
+                ...(c.region ? { region: c.region } : {}),
+                // the account and the meter picked on it identify the household: only on request
+                ...(includeAccount && c.accountNumber ? { accountNumber: c.accountNumber, ...(c.mpan ? { mpan: c.mpan } : {}) } : {}),
             },
         };
         const text = JSON.stringify(out, null, 2);

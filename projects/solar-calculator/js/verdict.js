@@ -137,8 +137,10 @@ function panelsOf(sys) {
 /**
  * Dominance among comparable rows (UX critique Compare §2): s is beaten by t when t costs no more
  * and saves no less, one of them strictly. Future-rules plans, reference points and rows with
- * rule errors neither beat nor are beaten. Returns id → id of the strongest row that beats it.
- * @param {Array<{ id: string, legal: string, capexGbp: number, savings: { typical: number }, npv10Gbp: number, errors?: any[] }>} rows
+ * rule errors neither beat nor are beaten; a product that is not on sale (availableNow false) can
+ * be beaten but never beats another — you can't step down to something you can't buy (as
+ * Compare's markDominance). Returns id → id of the strongest row that beats it.
+ * @param {Array<{ id: string, legal: string, capexGbp: number, savings: { typical: number }, npv10Gbp: number, errors?: any[], availableNow?: boolean|null }>} rows
  * @returns {Map<string, string>}
  */
 export function dominance(rows) {
@@ -148,7 +150,7 @@ export function dominance(rows) {
     for (const s of pool) {
         let best = null;
         for (const t of pool) {
-            if (t === s) continue;
+            if (t === s || t.availableNow === false) continue;
             const cheaper = t.capexGbp < s.capexGbp - EPS;
             const saves = t.savings.typical > s.savings.typical + EPS;
             if (t.capexGbp <= s.capexGbp + EPS && t.savings.typical >= s.savings.typical - EPS && (cheaper || saves)) {
@@ -269,6 +271,7 @@ function rowOf(engine, sys, r, ctx) {
         exportKind: sys.export?.kind ?? 'none',
         pvKwh: hd.pvKwh,
         peakGenSharePct: hd.peakGenSharePct,
+        peakGenShareAllPct: hd.peakGenShareAllPct ?? hd.peakGenSharePct,
         equivalentWattsCut: ctx.gbpPer100W > 0 ? round10(hd.savingsGbp / (ctx.gbpPer100W / 100)) : null,
         battery: sys.battery ? { coupling: sys.battery.coupling, capacityKwh: sys.battery.capacityKwh, strategy: sys.battery.strategy } : null,
         panels,
@@ -286,30 +289,60 @@ function rowOf(engine, sys, r, ctx) {
         dominatedBy: null,
     };
     if (r.battery) {
-        // The engine's battery split is first-year money before battery ageing; the row's figure
-        // (finance year 1) includes the year-1 state of health. Scale the battery part so every
-        // battery figure the page shows adds up to the row's own saving.
+        // the engine reports every battery figure on the headline's basis (finance year 1, the
+        // battery's share aged): baseGbp + totalGbp is the row's own saving
         const bx = r.battery;
-        const f = batteryScale(hd.savingsGbp, bx.baseGbp, bx.totalGbp);
         row.batteryValue = {
-            scale: f, baseGbp: bx.baseGbp, totalGbp: bx.totalGbp * f,
-            split: { fromSolarGbp: bx.split.fromSolarGbp * f, fromGridGbp: bx.split.fromGridGbp * f, standbyGbp: bx.split.standbyGbp * f },
-            thresholdGbp: bx.thresholdGbp * f, optimalGbp: bx.optimalGbp * f,
-            thresholdSystemGbp: bx.baseGbp + bx.thresholdGbp * f, optimalSystemGbp: bx.baseGbp + bx.optimalGbp * f,
+            baseGbp: bx.baseGbp, totalGbp: bx.totalGbp,
+            split: { fromSolarGbp: bx.split.fromSolarGbp, fromGridGbp: bx.split.fromGridGbp, standbyGbp: bx.split.standbyGbp },
+            thresholdGbp: bx.thresholdGbp, optimalGbp: bx.optimalGbp,
+            thresholdSystemGbp: bx.thresholdSystemGbp, optimalSystemGbp: bx.optimalSystemGbp,
             cyclesPerYear: bx.cyclesPerYear,
         };
     }
+    if (ctx.overridden?.has(sys.id)) row.priceOverride = true;
     return row;
 }
 
+/** The power station in a system — U* rows are built around one (kitId), C1 adds one to a kit. */
+function stationOf(catalog, sys) {
+    if (sys?.battery?.coupling !== 'ups') return null;
+    return productsOf(catalog, sys).find((p) => p.kind === 'power-station') ?? null;
+}
+
 /**
- * Factor taking the engine's un-aged battery money onto the row's first-year basis:
- * (row saving − battery-less saving) / battery total, kept within [0.5, 1.2] (else 1).
+ * The user's own prices (Compare's price editor) applied to a system, the way Compare stores them:
+ * `costs` replaces the cost lines outright (Compare saves the whole edited list); `priceGbp` sets
+ * the upfront total, each year-0 line scaled in proportion (pennies; the rounding goes on the
+ * largest line so the total is exact) or one 'Your price' line when there were none. Later-year
+ * lines and a staged plan's later costs are never touched (Compare edits upfront lines only).
+ * Reference rows have no price. Invalid overrides are ignored.
+ * @param {Object} sys normalised System
+ * @param {{ priceGbp?: number, costs?: Object[] }|null|undefined} o
+ * @returns {Object|null} the re-priced System, or null when nothing applies
  */
-function batteryScale(rowGbp, baseGbp, totalGbp) {
-    if (!finite(rowGbp) || !finite(baseGbp) || !finite(totalGbp) || Math.abs(totalGbp) < 1) return 1;
-    const f = (rowGbp - baseGbp) / totalGbp;
-    return f >= 0.5 && f <= 1.2 ? f : 1;
+export function applyPriceOverride(sys, o) {
+    if (!o || typeof o !== 'object' || sys.route === 'reference') return null;
+    // Compare saves the whole list it edited, so an empty one never comes from it: it would make
+    // the build free, and is ignored like any other invalid list (priceGbp still applies)
+    if (Array.isArray(o.costs) && o.costs.length && o.costs.every((c) => c && finite(Number(c.gbp)) && Number(c.gbp) >= 0)) {
+        return { ...sys, costs: o.costs.map((c) => ({ ...c, gbp: Number(c.gbp) })) };
+    }
+    const want = Number(o.priceGbp);
+    if (!finite(want) || want < 0) return null;
+    const up = sys.costs.map((c, i) => ({ c, i })).filter(({ c }) => !(Number(c.year) > 0));
+    const total = up.reduce((s, { c }) => s + c.gbp, 0);
+    if (!(total > 0)) return { ...sys, costs: [...sys.costs, { label: 'Your price', gbp: Math.round(want * 100) / 100, year: 0, kind: 'hardware' }] };
+    const costs = sys.costs.map((c) => ({ ...c }));
+    let big = up[0].i;
+    let sum = 0;
+    for (const { c, i } of up) {
+        costs[i].gbp = Math.round(((c.gbp * want) / total) * 100) / 100;
+        sum += costs[i].gbp;
+        if (c.gbp > sys.costs[big].gbp) big = i;
+    }
+    costs[big].gbp = Math.round((costs[big].gbp + want - sum) * 100) / 100;
+    return { ...sys, costs };
 }
 
 /** A product name without a trailing "(electrician)" — for copy that already says so. */
@@ -317,20 +350,40 @@ const plainName = (name) => String(name ?? '').replace(/\s*\(electrician\)\s*$/i
 
 /* ── the builder ────────────────────────────────────────────────────────────── */
 
+/** The error a cancelled verdict throws (the worker's own cancellation error has the same shape). */
+const cancelled = () => Object.assign(new Error('Cancelled'), { name: 'AbortError', code: 'CANCELLED' });
+
 /**
  * Build the verdict for the engine's dataset.
  * @param {Object} engine SolarEngine (core.js)
  * @param {{ scenarios?: Object[], finance?: Object, maxPaybackYears?: number, tieBandPct?: number,
- *   onPartial?: (stage: string, partial: Object) => void, nowMs?: number }} [opts]
+ *   onPartial?: (stage: string, partial: Object) => void, nowMs?: number, isCancelled?: () => boolean,
+ *   overrides?: Object<string, { priceGbp?: number, costs?: Object[] }> }} [opts]
  *   scenarios default to engine.autoScenarios(); nowMs only stamps generatedAtMs (default now).
+ *   isCancelled is checked between options (and between the answers): once it returns true the
+ *   build stops there and rejects with an AbortError. overrides are the user's own prices by
+ *   scenario id, applied as Compare stores them (applyPriceOverride); those rows carry
+ *   priceOverride: true and context.priceOverrides lists their ids.
  * @returns {Promise<Object>} Verdict { stage, done, context, usage, ranked, excluded, bestBuyId, runnerUpId, stepUp,
  *   headline, answers: { orientation, battery, ups, growth, confidence, baseLoad }, tornado, scatter, generatedAtMs }
  */
-export async function buildVerdict(engine, { scenarios, finance = {}, maxPaybackYears = 10, tieBandPct = 3, onPartial, nowMs } = {}) {
+export async function buildVerdict(engine, { scenarios, finance = {}, maxPaybackYears = 10, tieBandPct = 3, onPartial, nowMs, isCancelled, overrides } = {}) {
     if (!engine) throw new Error('buildVerdict needs an engine');
     const fin = finance && typeof finance === 'object' ? finance : {};
     const maxYears = finite(maxPaybackYears) && maxPaybackYears > 0 ? maxPaybackYears : 10;
-    const list = (Array.isArray(scenarios) && scenarios.length ? scenarios : engine.autoScenarios()).map((s) => engine.normalizeSystem(s));
+    const check = () => { if (typeof isCancelled === 'function' && isCancelled()) throw cancelled(); };
+    /** Between options: let other work in, then stop here if the caller has cancelled. */
+    const pause = async () => { check(); await tick(); check(); };
+    check();
+    const overridden = new Set();
+    const list = (Array.isArray(scenarios) && scenarios.length ? scenarios : engine.autoScenarios()).map((s) => {
+        const sys = engine.normalizeSystem(s);
+        const o = overrides && typeof overrides === 'object' && Object.prototype.hasOwnProperty.call(overrides, sys.id) ? overrides[sys.id] : null;
+        const priced = o ? applyPriceOverride(sys, o) : null;
+        if (!priced) return sys;
+        overridden.add(sys.id);
+        return engine.normalizeSystem(priced);
+    });
     const byId = new Map(list.map((s) => [s.id, s]));
     const summary = engine.summary;
     const ins = engine.insights();
@@ -364,7 +417,7 @@ export async function buildVerdict(engine, { scenarios, finance = {}, maxPayback
     const r1Res = run(r1 ?? { id: '__cut100', name: 'Cut 100 W of always-on load', route: 'reference', arrays: [], costs: [], loadAdjustW: -100 }, false);
     const per100 = r1Res.headline.savingsGbp * (100 / Math.abs(r1Res.system.loadAdjustW || -100));
     if (!r1) results.delete('__cut100');
-    const ctxRow = { gbpPer100W: per100 };
+    const ctxRow = { gbpPer100W: per100, overridden };
     const cov = summary.coverage ?? {};
     const coveragePct = finite(cov.realPct) ? cov.realPct : 100;
     const estDays = finite(cov.extrapolatedSlots) ? Math.round(cov.extrapolatedSlots / 48) : 0;
@@ -412,6 +465,7 @@ export async function buildVerdict(engine, { scenarios, finance = {}, maxPayback
         tieBandPct,
         pricesChecked: catalogDates[catalogDates.length - 1] ?? null,
         options: list.length,
+        priceOverrides: [...overridden],
     };
     V.usage = {
         baseLoadW: bl.w ?? null, recentBaseW: bl.recentW ?? null, driftPct: bl.driftPct ?? 0,
@@ -427,25 +481,25 @@ export async function buildVerdict(engine, { scenarios, finance = {}, maxPayback
         rows.set(s.id, rowOf(engine, s, r, ctxRow));
     }
     emit('usage');
-    await tick();
+    await pause();
 
     /* ── stage 2: solar-only options → the best buy ── */
     const solarOnly = (s) => !s.battery && (s.route === 'plugin' || s.route === 'hardwired');
     for (const s of list.filter(solarOnly)) {
         rows.set(s.id, rowOf(engine, s, run(s, false), ctxRow));
-        await tick();
+        await pause();
     }
     const decide = () => decideRows(engine, rows, { maxYears });
     Object.assign(V, decide());
     V.headline = headlineFor(engine, V, rows, byId, results, { maxYears, per100 });
     emit('plugin');
-    await tick();
+    await pause();
 
     /* ── stage 3: storage, combinations, future rules ── */
     for (const s of list) {
         if (rows.has(s.id)) continue;
         rows.set(s.id, rowOf(engine, s, run(s, false), ctxRow));
-        await tick();
+        await pause();
     }
     Object.assign(V, decide());
     V.headline = headlineFor(engine, V, rows, byId, results, { maxYears, per100 });
@@ -454,7 +508,7 @@ export async function buildVerdict(engine, { scenarios, finance = {}, maxPayback
     V.answers.growth = guard(() => growthAnswer(engine, V, rows));
     V.scatter = scatterOf(V, rows);
     emit('all');
-    await tick();
+    await pause();
 
     /* ── stage 4: weather bands ── */
     const order = [V.bestBuyId, V.runnerUpId, V.stepUp?.id, ...V.ranked.map((r) => r.id)].filter((x, i, a) => x && a.indexOf(x) === i);
@@ -465,7 +519,7 @@ export async function buildVerdict(engine, { scenarios, finance = {}, maxPayback
         const row = rowOf(engine, s, r, ctxRow);
         row.confidence = confidenceFor(row, confidenceCtx(engine, s, row, summary, coveragePct));
         rows.set(id, row);
-        await tick();
+        await pause();
     }
     Object.assign(V, decide());
     V.headline = headlineFor(engine, V, rows, byId, results, { maxYears, per100 });
@@ -473,7 +527,7 @@ export async function buildVerdict(engine, { scenarios, finance = {}, maxPayback
     if (V.answers.battery?.status === 'ready') V.answers.battery = guard(() => batteryAnswer(engine, V, rows, results, ins));
     V.answers.confidence = guard(() => confidenceAnswer(V, rows, null));
     emit('bands');
-    await tick();
+    await pause();
 
     /* ── stage 5: orientation, tornado, always-on load ── */
     // the best buy, or — when nothing qualifies — the option that comes closest
@@ -481,7 +535,7 @@ export async function buildVerdict(engine, { scenarios, finance = {}, maxPayback
     const bestSys = best ? byId.get(best.id) : null;
     const orientSys = bestSys?.arrays?.length ? bestSys : byId.get('S01') ?? (best?.panels ? bestSys : null);
     V.answers.orientation = guard(() => orientationAnswer(engine, orientSys, rows.get(orientSys?.id), { tieBandPct, finance: fin }));
-    await tick();
+    await pause();
     if (bestSys) {
         V.tornado = guard(() => {
             const t = engine.tornado(bestSys, { finance: fin });
@@ -490,7 +544,7 @@ export async function buildVerdict(engine, { scenarios, finance = {}, maxPayback
         if (V.tornado?.status === 'error') V.tornado = null;
     }
     V.answers.confidence = guard(() => confidenceAnswer(V, rows, V.tornado));
-    await tick();
+    await pause();
     V.answers.baseLoad = guard(() => baseLoadAnswer(engine, V, rows, byId, { maxYears, finance: fin, per100 }));
     emit('answers');
     return plain(V);
@@ -508,7 +562,7 @@ function guard(fn) {
 
 function confidenceCtx(engine, sys, row, summary, coveragePct) {
     const products = productsOf(engine.catalog, sys);
-    const station = sys.battery?.coupling === 'ups' ? findProduct(engine.catalog, sys.kitId) : null;
+    const station = stationOf(engine.catalog, sys);
     const bv = row.batteryValue;
     return {
         coveragePct, days: summary.days, station, products,
@@ -611,7 +665,7 @@ function nextSteps(engine, row, sys) {
         if (hw > 0) steps.push({ text: `Buying the kit through the installer may qualify for 0% VAT until 31 Mar 2027 — about ${gbp(hw / 6)} less.`, href: LINKS.vat, label: 'VAT Notice 708/6' });
         if (where) steps.push({ text: `Mount the panels ${where}.`, href: null, label: null });
     } else if (row.route === 'ups') {
-        const st = findProduct(engine.catalog, sys.kitId);
+        const st = stationOf(engine.catalog, sys);
         const auto = st?.touMode ? 'its time-of-use mode' : 'a smart plug on its mains lead driven by Agile prices (e.g. Home Assistant)';
         steps.push({ text: `Put the servers on the power station’s outlets, keep bypass on, and set up ${auto}.`, href: null, label: null });
         if (where) steps.push({ text: `Stand its panels ${where}.`, href: null, label: null });
@@ -723,7 +777,7 @@ function orientationAnswer(engine, sys, row, { tieBandPct, finance }) {
         best: a.best, s35: a.s35, w45: a.w45, w90: a.w90, ssw45: a.ssw45, current: a.current,
         tie, tieBandPct: a.tieBandPct, westPays: a.westPays, flips: a.flips, checked: a.checked, compass: a.compass,
         proxyNote: a.proxyNote,
-        cells: a.cells.map((c) => ({ az: c.az, tilt: c.tilt, kwh: c.kwh, gbp: c.gbp, pPerKwh: c.pPerKwh, peakSharePct: c.peakSharePct })),
+        cells: a.cells.map((c) => ({ az: c.az, tilt: c.tilt, kwh: c.kwh, gbp: c.gbp, pPerKwh: c.pPerKwh, peakSharePct: c.peakSharePct, peakShareAllPct: c.peakShareAllPct ?? c.peakSharePct })),
     };
     const body = [];
     if (!a.westPays) {
@@ -801,13 +855,11 @@ function upsAnswer(engine, V, rows, byId, results, finance) {
     if (!main) return { status: 'none', summary: 'No power station option on your data.', body: [] };
     const sys = byId.get(main.id);
     const raw = engine.upsStrategies(sys, { finance });
-    const station = findProduct(engine.catalog, sys.kitId);
+    const station = stationOf(engine.catalog, sys);
     const pb = main.payback.typical;
-    // upsStrategies values the station before battery ageing; put every strategy on the row's
-    // first-year basis so the realistic figure is exactly the one in the options table
-    const f = main.batteryValue?.scale ?? batteryScale(main.savings.typical, 0, raw.realisticGbp);
-    const st = { ...raw, realisticGbp: main.savings.typical, bestCaseGbp: raw.bestCaseGbp * f, peakCutGbp: raw.peakCutGbp * f,
-        onlineGbp: raw.onlineGbp * f, onlinePenaltyGbp: raw.onlinePenaltyGbp * f };
+    // upsStrategies is on the headline's basis (its realistic figure is the station's headline);
+    // the row's own saving is used so the answer reads exactly as the options table does
+    const st = { ...raw, realisticGbp: main.savings.typical };
     const r = st.realisticGbp;
     const summary = finite(pb)
         ? `A power station running your servers saves ${em(`${gbp(r)}/yr`)} (pays back in ${years(pb, 'yrs')}).`

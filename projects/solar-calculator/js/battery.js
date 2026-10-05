@@ -16,7 +16,8 @@
  *  - 'threshold' (the realistic default) is, for dc/ac batteries, a day-ahead controller: a greedy
  *    plan per Agile day on the day's known prices, a 7-day load forecast and persistence PV,
  *    re-planned from the actual SoC when reality drifts off it (planBatteryDay, thresholdPlan).
- *    Power stations keep the sim_ups price-threshold rule (upsController).
+ *    Power stations use the same planner in their own terms (upsThresholdPlan): inverter slots
+ *    are the sinks, bypass charging and the station's own panels the sources.
  *
  * Energies are kWh per slot, prices p/kWh, Δt = 0.5 h. "Stored" energy s is the DC energy in the
  * cells; delta = Δs per slot. Every slot function answers: "the battery must change by delta —
@@ -28,6 +29,8 @@ import { DT_H, hhFromClock, replanStarts, horizonEnd } from './time.js';
 
 /** Feasibility tolerance (kWh): floating noise must never turn a valid move into null. */
 const TOL = 1e-9;
+/** Fewest SoC levels a power station's optimiser runs at (its grid is aligned to a whole inverter slot). */
+const UPS_MIN_N = 41;
 
 /** UI labels per strategy (UX critique). */
 export const STRATEGY_LABELS = Object.freeze({
@@ -655,6 +658,12 @@ export function newDayPlanBuffers() {
  * to the room left at the end of the day.
  * Each pairing step is O(T) and exhausts a sink, a source, a slot's charge power or an SoC bound,
  * so a day costs O(T log T + T·steps) with T ≤ 50.
+ *
+ * Shared sources (opts.shared, a bit mask over the source kinds; 0 for dc/ac batteries): a source
+ * kind that does not stop its slot discharging — a power station's own panels charge it while
+ * its inverter runs. A shared source may feed a sink slot, including the sink's own slot (energy
+ * straight through, no SoC change, credited opts.sameSlotCredit per kWh because it never cycles
+ * the cells), and a slot that only gave shared energy can still become a sink.
  * @param {Object} P buffers from newDayPlanBuffers, inputs filled for slots 0…T−1:
  *   sinkCap (stored kWh the slot's load can absorb), sinkV (p per stored kWh), chg (stored kWh the
  *   charge power allows, all sources together), srcCap/srcCost (NSRC × DAY_W: clipped DC, PV
@@ -663,14 +672,17 @@ export function newDayPlanBuffers() {
  * @param {number} soc0 SoC at the start (kWh)
  * @param {number} sMin
  * @param {number} sMax
+ * @param {{ shared?: number, sameSlotCredit?: number }} [opts]
  * @returns {Object} P with path (planned SoC at the end of each slot), dis (stored kWh
- *   discharged), grid (stored kWh charged from the grid by the AC charger) and divert (stored kWh
- *   of PV diverted from the house) for slots 0…T−1
+ *   discharged, or for a sink fed in its own slot the energy it used), grid (stored kWh charged
+ *   from source kind 2) and divert (source kind 3) for slots 0…T−1
  */
-export function planBatteryDay(P, T, soc0, sMin, sMax) {
+export function planBatteryDay(P, T, soc0, sMin, sMax, { shared = 0, sameSlotCredit = 0 } = {}) {
     const { sinkCap, sinkV, chg, srcCap, srcCost, path, dis, grid, divert, used } = P;
     const W = DAY_W;
     if (T > W) throw new RangeError(`planBatteryDay: ${T} slots > ${W}`);
+    // used: 0 free, 1 exclusive source, 2 sink, 3 shared source only
+    const isShared = (j) => ((shared >> j) & 1) === 1;
     for (let i = 0; i < T; i++) { path[i] = soc0; dis[i] = 0; grid[i] = 0; divert[i] = 0; used[i] = 0; }
     let k = 0;
     for (let i = 0; i < T; i++) if (sinkCap[i] > PLAN_EPS) P.order[k++] = i;
@@ -683,16 +695,27 @@ export function planBatteryDay(P, T, soc0, sMin, sMax) {
             let bk = -1;
             let bCost = sinkV[d] - PLAN_EPS;
             let bAmt = 0;
+            if (shared) {
+                // a shared source in the sink's own slot feeds it directly: no SoC change, no wear
+                for (let j = 0; j < NSRC; j++) {
+                    if (!isShared(j)) continue;
+                    const cap = srcCap[j * W + d];
+                    const cost = srcCost[j * W + d] - sameSlotCredit;
+                    if (cap > PLAN_EPS && cost < bCost) { bCost = cost; bc = d; bk = j; bAmt = cap; }
+                }
+            }
             // a charge earlier in the day: the SoC rises on [c, d)
             let mx = -Infinity;
             for (let c = d - 1; c >= 0; c--) {
                 if (path[c] > mx) mx = path[c];
                 const room = sMax - mx;
                 if (room <= PLAN_EPS) break;
-                if (used[c] === 2) continue;
+                const sinkSlot = used[c] === 2;
+                if (sinkSlot && !shared) continue;
                 const lim = room < chg[c] ? room : chg[c];
                 if (lim <= PLAN_EPS) continue;
                 for (let j = 0; j < NSRC; j++) {
+                    if (sinkSlot && !isShared(j)) continue;
                     const cap = srcCap[j * W + c];
                     const cost = srcCost[j * W + c];
                     if (cap > PLAN_EPS && cost < bCost) { bCost = cost; bc = c; bk = j; bAmt = cap < lim ? cap : lim; }
@@ -708,10 +731,12 @@ export function planBatteryDay(P, T, soc0, sMin, sMax) {
                     if (0 < bCost) { bCost = 0; bc = T; bk = -1; bAmt = room; }
                     break;
                 }
-                if (used[c] === 2) continue;
+                const sinkSlot = used[c] === 2;
+                if (sinkSlot && !shared) continue;
                 const lim = room < chg[c] ? room : chg[c];
                 if (lim <= PLAN_EPS) continue;
                 for (let j = 0; j < NSRC; j++) {
+                    if (sinkSlot && !isShared(j)) continue;
                     const cap = srcCap[j * W + c];
                     const cost = srcCost[j * W + c];
                     if (cap > PLAN_EPS && cost < bCost) { bCost = cost; bc = c; bk = j; bAmt = cap < lim ? cap : lim; }
@@ -726,8 +751,9 @@ export function planBatteryDay(P, T, soc0, sMin, sMax) {
             used[d] = 2;
             if (bc < T) {
                 srcCap[bk * W + bc] -= x;
-                chg[bc] -= x;
-                used[bc] = 1;
+                if (bc !== d) chg[bc] -= x;
+                if (!isShared(bk)) used[bc] = 1;
+                else if (used[bc] === 0) used[bc] = 3;
                 if (bk === 2) grid[bc] += x;
                 else if (bk === 3) divert[bc] += x;
             }
@@ -735,8 +761,10 @@ export function planBatteryDay(P, T, soc0, sMin, sMax) {
     }
     // sources left over that pay to charge (negative prices): charge for later, as room allows
     for (let c = 0; c < T; c++) {
-        if (used[c] === 2) continue;
+        const sinkSlot = used[c] === 2;
+        if (sinkSlot && !shared) continue;
         for (let j = 0; j < NSRC; j++) {
+            if (sinkSlot && !isShared(j)) continue;
             if (!(srcCost[j * W + c] < 0) || srcCap[j * W + c] <= PLAN_EPS || chg[c] <= PLAN_EPS) continue;
             let mx = -Infinity;
             for (let i = c; i < T; i++) if (path[i] > mx) mx = path[i];
@@ -745,7 +773,8 @@ export function planBatteryDay(P, T, soc0, sMin, sMax) {
             for (let i = c; i < T; i++) path[i] += x;
             srcCap[j * W + c] -= x;
             chg[c] -= x;
-            used[c] = 1;
+            if (!isShared(j)) used[c] = 1;
+            else if (used[c] === 0) used[c] = 3;
             if (j === 2) grid[c] += x;
             else if (j === 3) divert[c] += x;
         }
@@ -973,42 +1002,115 @@ function upsController(m, strategy) {
             return { f: 0, cc };
         };
     }
-    // threshold: sim_ups run_heur per Agile day, with persistence PV headroom by default
-    const usable = sMax - sMin;
-    const groups = groupBy(ad, n);
-    const hiP = new Float64Array(n);
-    const loP = new Float64Array(n);
-    const allow = new Uint8Array(n);
-    const tgt = new Float64Array(n);
-    const pvDay = groups.map((ts) => ts.reduce((a, t) => a + S[t].Pu, 0));
-    for (let di = 0; di < groups.length; di++) {
-        const ts = groups[di];
-        let needMean = 0;
-        let dMean = 0;
-        for (const t of ts) { needMean += needOf(S[t]); dMean += S[t].D; }
-        needMean /= ts.length;
-        dMean /= ts.length;
-        const mm = needMean > 0 ? Math.max(1, Math.floor(usable / needMean)) : 1;
-        const kk = c.chargeCap > 0 ? Math.max(1, Math.ceil(usable / (c.chargeCap * c.chargeEff))) : 1;
-        const sorted = ts.map((t) => S[t].p).sort((a, z) => a - z);
-        const hi = sorted[Math.max(0, sorted.length - Math.min(mm, sorted.length))];
-        const lo = sorted[Math.min(kk, sorted.length) - 1];
-        // AC in → AC out round trip at this load (VERIFY-ups corrected form)
-        const rte = dMean > 0 ? c.chargeEff * c.etaInv * dMean / (dMean + c.p0 * c.etaInv) : 0;
-        const ok = rte > 0 && hi > lo / rte + b.wearPPerKwh;
-        const fc = b.pvForecast === 'perfect' || di === 0 ? pvDay[di] : pvDay[di - 1];
-        const target = Math.min(sMax, Math.max(sMin + Math.min(usable, mm * needMean), sMax - 0.8 * fc));
-        for (const t of ts) { hiP[t] = hi; loP[t] = lo; allow[t] = ok ? 1 : 0; tgt[t] = target; }
-    }
+    return upsThresholdPlan(m);
+}
+
+/** Planner source kinds for a power station (buffer order; see planBatteryDay). */
+const UPS_SRC_PV = 0;       // its own panels: free, and they charge it while the inverter runs (shared)
+const UPS_SRC_SURPLUS = 2;  // bypass charging from grid-tied PV the house would otherwise export (export price)
+const UPS_SRC_GRID = 3;     // bypass charging from the grid (import price)
+
+/**
+ * Threshold ("Agile-aware automation (realistic)") for power stations: the same day-ahead plan
+ * as dc/ac batteries (planBatteryDay), in a station's own terms. At the start of each Agile day
+ * (and again whenever the SoC drifts off the plan, at most hourly) it plans the rest of the day
+ * from the SoC it has, the day's prices, a 7-day mean forecast of the house and server load and
+ * persistence PV (yesterday's same half-hour, or the real PV with pvForecast 'perfect'):
+ *  - sinks: half-hours on the inverter. A whole slot uses need = D/η_inv + P0·Δt of stored energy
+ *    and saves what the house would otherwise import for the servers and the bypass relay —
+ *    p·(D + bypass) when the house imports, the export price where grid-tied PV covers it — so
+ *    a sink is worth that saving / need − wear per stored kWh;
+ *  - sources: the station's own panels (free; they charge it even while it inverts, so they
+ *    are a shared source and can feed an inverter slot directly), and bypass charging — grid-tied
+ *    PV surplus first (export forgone), then the grid (import price) — at price / η_charge, within
+ *    the charger rating and the plug's input limit. A slot is never both bypass-charging and
+ *    inverting: a station cannot charge from a mains input it has cut.
+ * The plan drives: inverter slots run at their planned share; bypass-charging slots charge up to
+ *  the planned SoC; every other slot stays on the bypass (its own PV still charges it). When the
+ *  battery is full and its panels would otherwise be wasted, it inverts enough to use them.
+ * Pairs are added only while they pay, so extra capacity only adds trades: the value does not
+ * fall as capacity grows (the old sim_ups price-threshold rule earned 0.53–0.78 of hindsight and
+ * fell above ~4 kWh).
+ */
+function upsThresholdPlan(m) {
+    const { n, S, c, b, sMin, sMax, ad } = m;
+    const wear = b.wearPPerKwh;
+    const perfectPv = b.pvForecast === 'perfect';
+    const replanKwh = Math.min(REPLAN_TOL * (sMax - sMin), REPLAN_MAX_KWH);
+    const days = planningDays(ad, n);
+    const dayOf = new Int32Array(n);
+    days.forEach((ts, di) => { for (const t of ts) dayOf[t] = di; });
+    const role = new Int8Array(n);          // 1 inverter, −1 bypass charging, 0 bypass
+    const share = new Float64Array(n);      // planned inverter time share of an inverter slot
+    const planned = new Float64Array(n);    // planned SoC at the end of each slot
+    const P = newDayPlanBuffers();
+    const W = DAY_W;
+    const needF = new Float64Array(DAY_W);
+    const cost = (g, p, x) => (g >= 0 ? p * g : x * g);
+    const plan = (di, t0, soc0) => {
+        const ts = days[di];
+        const T = ts[0] + ts.length - t0;
+        for (let i = 0; i < T; i++) {
+            const t = t0 + i;
+            const s = S[t];
+            // forecasts only look at half-hours already past at t0 (see thresholdPlan)
+            let lag = 48;
+            while (t - lag >= t0) lag += 48;
+            let lf = 0;
+            let df = 0;
+            let k = 0;
+            for (let j = 0; j < LOAD_FORECAST_DAYS && t - lag - 48 * j >= 0; j++) { const q = S[t - lag - 48 * j]; lf += q.L; df += q.D; k++; }
+            lf = k ? lf / k : s.L;
+            df = k ? df / k : s.D;
+            const sPv = perfectPv || t - lag < 0 ? s : S[t - lag];
+            const need = df / c.etaInv + c.p0;
+            const g0 = lf + c.byp - sPv.Agt;          // house import on the bypass, before charging
+            const g1 = lf - df - sPv.Agt;             // … with the servers on the inverter
+            needF[i] = need;
+            P.sinkCap[i] = 0;
+            P.sinkV[i] = 0;
+            for (let j = 0; j < NSRC; j++) { P.srcCap[j * W + i] = 0; P.srcCost[j * W + i] = 0; }
+            if (df > 0 && df <= c.outletCap + TOL && need > PLAN_EPS) {
+                P.sinkCap[i] = need;
+                P.sinkV[i] = (cost(g0, s.p, s.x) - cost(g1, s.p, s.x)) / need - wear;
+            }
+            P.srcCap[UPS_SRC_PV * W + i] = sPv.Pu;
+            if (c.allowGridCharge) {
+                const capAc = pos(Math.min(c.chargeCap, c.inputCap - df - c.byp));
+                const surplus = Math.min(capAc, pos(-g0));
+                P.srcCap[UPS_SRC_SURPLUS * W + i] = surplus * c.chargeEff;
+                P.srcCost[UPS_SRC_SURPLUS * W + i] = s.x / c.chargeEff;
+                P.srcCap[UPS_SRC_GRID * W + i] = (capAc - surplus) * c.chargeEff;
+                // grid energy comes after the surplus is used up, so it is never cheaper than it
+                P.srcCost[UPS_SRC_GRID * W + i] = (surplus > 0 ? Math.max(s.p, s.x) : s.p) / c.chargeEff;
+            }
+            P.chg[i] = P.srcCap[UPS_SRC_PV * W + i] + P.srcCap[UPS_SRC_SURPLUS * W + i] + P.srcCap[UPS_SRC_GRID * W + i];
+        }
+        planBatteryDay(P, T, soc0, sMin, sMax, { shared: 1 << UPS_SRC_PV, sameSlotCredit: wear });
+        for (let i = 0; i < T; i++) {
+            const t = t0 + i;
+            planned[t] = P.path[i];
+            if (P.dis[i] > PLAN_EPS) { role[t] = 1; share[t] = needF[i] > 0 ? clamp01(P.dis[i] / needF[i]) : 0; }
+            else if (P.grid[i] + P.divert[i] > PLAN_EPS) { role[t] = -1; share[t] = 0; }
+            else { role[t] = 0; share[t] = 0; }
+        }
+    };
+    let day = -1;
+    let planAt = -1;
     return (t, soc) => {
+        if (dayOf[t] !== day) { day = dayOf[t]; plan(day, t, soc); planAt = t; }
+        else if (t - planAt >= REPLAN_MIN_SLOTS && Math.abs(soc - planned[t - 1]) > replanKwh) { plan(day, t, soc); planAt = t; }
         const s = S[t];
-        const need = needOf(s);
-        const batt = (allow[t] && s.p >= hiP[t]) || s.Pu >= 0.5 * need;
-        if (batt && soc + s.Pu - need >= sMin - TOL && s.D <= c.outletCap + TOL) return { f: 1, cc: 0 };
-        const s1 = Math.min(sMax, soc + s.Pu);
-        let cc = 0;
-        if (c.allowGridCharge && s.p <= loP[t] && s1 < tgt[t]) cc = Math.min(tgt[t] - s1, capB(s) * c.chargeEff) / c.chargeEff;
-        return { f: 0, cc };
+        const need = s.D / c.etaInv + c.p0;
+        if (role[t] === -1) {
+            const want = planned[t] - soc - s.Pu;
+            return { f: 0, cc: want > 0 ? Math.min(want / c.chargeEff, upsChargeCap(s, c)) : 0 };
+        }
+        let f = role[t] === 1 ? share[t] : 0;
+        // a full battery would waste its own panels' output: run the servers on it instead (free)
+        const over = soc + s.Pu - f * need - sMax;
+        if (over > TOL && need > 0 && cost(s.L + c.byp - s.Agt, s.p, s.x) > cost(s.L - s.D - s.Agt, s.p, s.x)) f = clamp01(f + over / need);
+        return { f, cc: 0 };
     };
 }
 
@@ -1127,11 +1229,16 @@ export function dispatch(inp, battery, opts = {}) {
         // A station's most valuable move is a whole slot on the inverter (f = 1, Δs = −need). On a
         // grid where need is not a multiple of dE that move is truncated to f < 1 every peak slot
         // (−2.7% on the 2 kWh/300 W case), so align dE to need and give up < dE of headroom at the top.
+        // A small station gets at least UPS_MIN_N levels. Its charger moves are truncated to whole
+        // steps too (~3% of a 1 kWh unit's charge rate at 41 levels), so on a station without
+        // panels — where the day-ahead planner is close to optimal anyway — the realistic figure
+        // can come out a little above this grid's 'perfect hindsight'; 81 levels would close most
+        // of that gap but cost ~4× the time in every station run (core.js floors best case instead).
         let needRef = 0;
         for (let t = 0; t < n; t++) needRef = Math.max(needRef, S[t].D / c.etaInv + c.p0 - S[t].Pu);
         if (needRef > 1e-9) {
             let q = Math.max(1, Math.ceil(needRef / delta - 1e-9));
-            if (Math.floor((range * q) / needRef + 1e-9) + 1 < 41) q = Math.ceil((needRef * 40) / range - 1e-9);
+            if (Math.floor((range * q) / needRef + 1e-9) + 1 < UPS_MIN_N) q = Math.ceil((needRef * (UPS_MIN_N - 1)) / range - 1e-9);
             const n2 = Math.floor((range * q) / needRef + 1e-9) + 1;
             if (n2 >= 2 && n2 <= 201) { N = n2; dE = needRef / q; }
         }

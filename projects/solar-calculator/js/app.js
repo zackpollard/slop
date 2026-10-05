@@ -8,7 +8,7 @@
  * The DataHub is the only thing that talks to the engine on a view's behalf for shared results.
  * It memoises insights / verdict / scenario runs by key, cancels in-flight work when the dataset or
  * settings change (views should ignore AbortError), and emits events so views can re-render:
- *   'dataset' | 'settings' | 'scenarios' | 'verdict' | 'status'
+ *   'dataset' | 'settings' | 'scenarios' | 'overrides' (Compare's price overrides changed) | 'verdict' | 'status'
  */
 
 import { store, getApiKey } from './store.js';
@@ -86,6 +86,83 @@ const noDataset = () => Object.assign(new Error('Load your data first.'), { name
 const SCENARIO_MEMO_MAX = 80;
 
 /**
+ * The price overrides Compare saved, as the verdict takes them: { [scenarioId]: { priceGbp, costs } }.
+ * Compare's convention (views/compare.js): a saved System with the auto scenario's id plus
+ * { priceOverride: true, overrideOf: id } whose `costs` carry the user's prices; the first saved
+ * entry per id wins (mergeSystems). priceGbp is the year-0 total of those costs, as Compare shows it.
+ * @param {object[]} saved store.scenarios.saved
+ * @returns {Record<string, { priceGbp: number, costs: object[] }>}
+ */
+export function priceOverrides(saved) {
+    const out = {};
+    const seen = new Set();
+    for (const s of Array.isArray(saved) ? saved : []) {
+        if (!s || typeof s !== 'object' || typeof s.id !== 'string' || seen.has(s.id)) continue;
+        seen.add(s.id);
+        if (!s.priceOverride) continue;
+        const costs = (Array.isArray(s.costs) ? s.costs : []).filter(c => c && typeof c === 'object').map(c => ({ ...c }));
+        const priceGbp = costs.filter(c => !(Number(c.year) > 0)).reduce((a, c) => a + (Number(c.gbp) || 0), 0);
+        out[s.id] = { priceGbp: Math.round(priceGbp * 100) / 100, costs };
+    }
+    return out;
+}
+
+/**
+ * The spec that reloads last visit's data without asking, or null when it can't: an Octopus key
+ * that wasn't remembered, a manual entry without a location, and every CSV (the file itself is
+ * never stored). Carries the user's price basis (and flat price), region and picked meter so a
+ * reload prices the data exactly as before.
+ * @param {object} conn store.connection
+ * @param {string|null} [apiKey] the remembered Octopus key, if any
+ * @returns {object|null} DatasetSpec
+ */
+export function autoReloadSpec(conn, apiKey = null) {
+    const c = conn || {};
+    const loc = c.location || {};
+    const location = loc.postcode ? { postcode: loc.postcode } : Number.isFinite(loc.lat) && Number.isFinite(loc.lon) ? { lat: loc.lat, lon: loc.lon } : null;
+    const priced = (spec, dflt) => {
+        // 'mine' (the account's own tariffs) only exists for Octopus; elsewhere the default is Agile.
+        const b = c.priceBasis;
+        if (b && b !== dflt && !(b === 'mine' && spec.kind !== 'octopus')) spec.priceBasis = b;
+        if (spec.priceBasis === 'flat' && Number.isFinite(c.flatP)) spec.flatP = c.flatP;
+        return spec;
+    };
+    if (c.kind === 'demo') return { kind: 'demo', serverW: c.demoServerW || 500 };
+    if (c.kind === 'octopus') {
+        if (!apiKey) return null;
+        const spec = { kind: 'octopus', apiKey };
+        if (c.accountNumber) spec.accountNumber = c.accountNumber;
+        if (c.mpan) spec.mpan = String(c.mpan);
+        if (location) spec.location = location;
+        if (c.installedSolarDate) spec.installedSolarDate = c.installedSolarDate;
+        return priced(spec, 'mine');
+    }
+    if (c.kind === 'manual' && location && Number.isFinite(c.manual?.baseW)) {
+        const spec = { kind: 'manual', baseW: c.manual.baseW, otherKwhYr: c.manual.otherKwhYr ?? 2700, location };
+        if (typeof c.region === 'string' && /^[A-P]$/.test(c.region)) spec.region = c.region;
+        return priced(spec, 'agile');
+    }
+    return null;
+}
+
+/* What DataHub.load remembers about a spec, so autoReloadSpec can rebuild it (the API key never). */
+function connectionFor(spec) {
+    const conn = { kind: spec.kind };
+    if (spec.kind === 'demo') { conn.demoServerW = spec.serverW ?? 500; return conn; }
+    if (spec.kind === 'manual') conn.manual = { baseW: spec.baseW, otherKwhYr: spec.otherKwhYr };
+    if (spec.location) conn.location = { postcode: spec.location.postcode ?? null, lat: spec.location.lat ?? null, lon: spec.location.lon ?? null };
+    if (spec.accountNumber) conn.accountNumber = spec.accountNumber;
+    conn.priceBasis = spec.priceBasis || (spec.kind === 'octopus' ? 'mine' : 'agile');
+    conn.flatP = conn.priceBasis === 'flat' && Number.isFinite(spec.flatP) ? spec.flatP : null;
+    conn.installedSolarDate = spec.installedSolarDate || null;
+    conn.mpan = spec.kind === 'octopus' && spec.mpan ? String(spec.mpan) : null;
+    // stored as autoReloadSpec reads it back: one region letter A–P ('c' and '_C' count too)
+    const region = typeof spec.region === 'string' ? spec.region.trim().replace(/^_/, '').toUpperCase() : '';
+    conn.region = spec.kind !== 'octopus' && /^[A-P]$/.test(region) ? region : null;
+    return conn;
+}
+
+/**
  * The shared data layer for views.
  * @param {{ engine: object, store: object, onNavigate?: (tab: string) => void }} deps
  * @returns {object} DataHub
@@ -124,6 +201,43 @@ export function createDataHub({ engine, store: st, onNavigate }) {
     const dsId = () => st.get().dataset?.id ?? null;
     // Shared memo promises are handed out as derived promises so one caller can't cancel another's.
     const share = p => p.then(v => v);
+    const overrides = () => priceOverrides(st.get().scenarios?.saved);
+    const verdictKey = ov => `${dsId()}|${settingsSig()}|${stableKey(ov)}`;
+    let lastOverridesSig = stableKey(overrides());
+
+    /*
+     * Run the verdict into `entry` (a memo entry whose promise callers already hold). A restart —
+     * the user changed a price on Compare while it ran — swaps the job underneath: the old job's
+     * late messages are ignored, and the callers' promise and onPartial listeners carry on with the
+     * new one.
+     */
+    function startVerdict(entry, ov) {
+        const s = st.get().settings;
+        const opts = { finance: financeOpts(), maxPaybackYears: s.maxPaybackYears ?? 10 };
+        if (s.spots?.length) opts.spots = s.spots;
+        if (Object.keys(ov).length) opts.overrides = ov;
+        entry.partials = [];
+        const job = track(engine.call('verdict', opts, {
+            onProgress: v => {
+                if (entry.job !== job || !v || !v.stage) return;
+                entry.partials.push([v.stage, v.verdict]);
+                for (const fn of entry.listeners) { try { fn(v.stage, v.verdict); } catch (err) { console.error(err); } }
+            },
+        }));
+        entry.job = job;
+        job.then(v => {
+            if (entry.job !== job) return;
+            entry.done = true;
+            entry.value = v;
+            entry.listeners.clear();
+            entry.resolve(v);
+            if (memoVerdict === entry) emit('verdict', v);
+        }, err => {
+            if (entry.job !== job) return;
+            if (memoVerdict === entry) memoVerdict = null;
+            entry.reject(err);
+        });
+    }
 
     function clearMemos() {
         memoInsights = null;
@@ -165,11 +279,14 @@ export function createDataHub({ engine, store: st, onNavigate }) {
         /**
          * The verdict, streamed: onPartial(stage, partialVerdict) fires for 'usage' → 'plugin' → 'all'
          * → 'bands' → 'answers'. A second caller while it runs gets the latest partial replayed.
+         * The user's own prices from Compare (priceOverrides) go to the worker as opts.overrides, so
+         * the Verdict and Compare price every option the same way.
          * @param {{ onPartial?: (stage: string, v: object) => void }} [opts]
          */
         verdict({ onPartial } = {}) {
             if (!dsId()) return Promise.reject(noDataset());
-            const key = `${dsId()}|${settingsSig()}`;
+            const ov = overrides();
+            const key = verdictKey(ov);
             if (memoVerdict?.key === key) {
                 if (onPartial) {
                     if (!memoVerdict.done) memoVerdict.listeners.add(onPartial);
@@ -178,30 +295,48 @@ export function createDataHub({ engine, store: st, onNavigate }) {
                 }
                 return share(memoVerdict.promise);
             }
-            const s = st.get().settings;
             const entry = { key, listeners: new Set(onPartial ? [onPartial] : []), partials: [], done: false };
-            const opts = { finance: financeOpts(), maxPaybackYears: s.maxPaybackYears ?? 10 };
-            if (s.spots?.length) opts.spots = s.spots;
-            const job = track(engine.call('verdict', opts, {
-                onProgress: v => {
-                    if (!v || !v.stage) return;
-                    entry.partials.push([v.stage, v.verdict]);
-                    for (const fn of entry.listeners) { try { fn(v.stage, v.verdict); } catch (err) { console.error(err); } }
-                },
-            }));
-            entry.job = job;
-            entry.promise = job.then(v => {
-                entry.done = true;
-                entry.listeners.clear();
-                if (memoVerdict === entry) emit('verdict', v);
-                return v;
-            }, err => {
-                if (memoVerdict === entry) memoVerdict = null;
-                throw err;
-            });
+            entry.promise = new Promise((resolve, reject) => { entry.resolve = resolve; entry.reject = reject; });
             entry.promise.catch(() => {});
             memoVerdict = entry;
+            startVerdict(entry, ov);
             return share(entry.promise);
+        },
+
+        /**
+         * Peek at the verdict without starting one. Default: the finished Verdict for the current
+         * data, settings and prices, else null. With { wait: true }: a promise of the verdict when
+         * one is finished or running for the current inputs, else null (still never starts one).
+         * @param {{ wait?: boolean }} [opts]
+         * @returns {object|null|Promise<object>}
+         */
+        verdictIfReady({ wait = false } = {}) {
+            if (!dsId() || !memoVerdict || memoVerdict.key !== verdictKey(overrides())) return null;
+            if (memoVerdict.done) return wait ? Promise.resolve(memoVerdict.value) : memoVerdict.value;
+            return wait ? share(memoVerdict.promise) : null;
+        },
+
+        /** The user's money settings as the engine takes them ({ ...settings.finance, vatReturns }). */
+        finance: () => financeOpts(),
+
+        /**
+         * The solar-rose sweep for one array of a system ('*' = every array), with the user's finance
+         * merged under opts.finance. Tracked like every hub job: invalidate() (a new dataset or a
+         * settings change) cancels it — ignore the AbortError. Not memoised; the returned promise
+         * has cancel().
+         * @param {object} system
+         * @param {string} [arrayId]
+         * @param {{ onProgress?: (p: { pct: number, done?: number, total?: number }) => void, signal?: AbortSignal, finance?: object }} [opts]
+         * @returns {Promise<object> & { cancel(): void }} SweepResult
+         */
+        orientationSweep(system, arrayId = '*', { onProgress, signal, finance, ...rest } = {}) {
+            if (!dsId()) return Promise.reject(noDataset());
+            const opts = { ...rest, finance: { ...financeOpts(), ...(finance || {}) } };
+            const ctl = {};
+            if (typeof onProgress === 'function') ctl.onProgress = onProgress;
+            if (signal) ctl.signal = signal;
+            const args = ['orientationSweep', system, arrayId ?? '*', opts];
+            return track(Object.keys(ctl).length ? engine.call(...args, ctl) : engine.call(...args));
         },
 
         /**
@@ -237,7 +372,7 @@ export function createDataHub({ engine, store: st, onNavigate }) {
             if (['dataset', 'settings', 'scenarios'].includes(reason)) emit(reason, st.get().dataset);
         },
 
-        /** Subscribe to 'dataset' | 'settings' | 'scenarios' | 'verdict' | 'status'. Returns off(). */
+        /** Subscribe to 'dataset' | 'settings' | 'scenarios' | 'overrides' | 'verdict' | 'status'. Returns off(). */
         on(evt, fn) {
             if (!listeners.has(evt)) listeners.set(evt, new Set());
             listeners.get(evt).add(fn);
@@ -268,12 +403,7 @@ export function createDataHub({ engine, store: st, onNavigate }) {
                 if (Number.isFinite(pb) && !summary.engineUnavailable) await engine.call('setProjectBaseW', pb).catch(() => {});
                 // A newer load() started while we waited: it owns the store and the status now.
                 if (loadJob !== job) throw Object.assign(new Error('Cancelled'), { name: 'AbortError', code: 'CANCELLED' });
-                const conn = { kind: spec.kind };
-                if (spec.kind === 'demo') conn.demoServerW = spec.serverW ?? 500;
-                if (spec.kind === 'manual') conn.manual = { baseW: spec.baseW, otherKwhYr: spec.otherKwhYr };
-                if (spec.location) conn.location = { postcode: spec.location.postcode ?? null, lat: spec.location.lat ?? null, lon: spec.location.lon ?? null };
-                if (spec.accountNumber) conn.accountNumber = spec.accountNumber;
-                st.set({ dataset: summary, connection: conn });
+                st.set({ dataset: summary, connection: connectionFor(spec) });
                 // Status first: views re-rendering on 'dataset' must not still see 'loading'.
                 setStatus('ready');
                 hub.invalidate('dataset');
@@ -301,7 +431,26 @@ export function createDataHub({ engine, store: st, onNavigate }) {
         }
         hub.invalidate('settings');
     }, ['settings']);
-    st.subscribe(state => emit('scenarios', state.scenarios), ['scenarios']);
+    // Saved scenarios: a changed price override changes the verdict's input. A verdict still running
+    // restarts with the new prices (same promise and listeners for its callers); a finished one is
+    // simply no longer current — verdictIfReady() says null and the next verdict() runs afresh.
+    // 'overrides' fires before 'scenarios' so a listener that asks for the verdict gets the new one.
+    st.subscribe(state => {
+        const ov = overrides();
+        const sig = stableKey(ov);
+        if (sig !== lastOverridesSig) {
+            lastOverridesSig = sig;
+            const e = memoVerdict;
+            if (e && !e.done && dsId() && e.key.startsWith(`${dsId()}|${settingsSig()}|`)) {
+                const old = e.job;
+                e.key = verdictKey(ov);
+                startVerdict(e, ov);
+                old?.cancel?.();
+            }
+            emit('overrides', ov);
+        }
+        emit('scenarios', state.scenarios);
+    }, ['scenarios']);
 
     return hub;
 }
@@ -362,24 +511,40 @@ function chipContent(chip, summary, status) {
     chip.setAttribute('aria-label', `Your data: ${long}. Open the data page.`);
 }
 
-function autoReloadSpec() {
-    const c = store.get().connection;
-    const loc = c.location || {};
-    const location = loc.postcode ? { postcode: loc.postcode } : Number.isFinite(loc.lat) && Number.isFinite(loc.lon) ? { lat: loc.lat, lon: loc.lon } : null;
-    if (c.kind === 'demo') return { kind: 'demo', serverW: c.demoServerW || 500 };
-    if (c.kind === 'octopus') {
-        let key = null;
-        try { key = getApiKey(); } catch { key = null; }
-        if (!key) return null;
-        const spec = { kind: 'octopus', apiKey: key };
-        if (c.accountNumber) spec.accountNumber = c.accountNumber;
-        if (location) spec.location = location;
-        if (c.priceBasis && c.priceBasis !== 'mine') { spec.priceBasis = c.priceBasis; if (c.flatP != null) spec.flatP = c.flatP; }
-        if (c.installedSolarDate) spec.installedSolarDate = c.installedSolarDate;
-        return spec;
-    }
-    if (c.kind === 'manual' && location && Number.isFinite(c.manual?.baseW)) return { kind: 'manual', baseW: c.manual.baseW, otherKwhYr: c.manual.otherKwhYr ?? 2700, location };
-    return null;
+/**
+ * The sticky "inputs changed — re-run" bar (ctx.shell.rerun). While it shows, <html> gets the
+ * `rerun-open` class, whose scroll-padding-bottom keeps focused and scrolled-to controls clear of it.
+ * @param {HTMLElement} el the bar's host (#rerun-bar)
+ * @param {{ root?: HTMLElement, raf?: (fn: Function) => void, delay?: (fn: Function, ms: number) => void }} [env]
+ * @returns {{ show(o: { text?: string, actionLabel?: string, dismissLabel?: string, onRun?: Function, onDismiss?: Function }): void, hide(): void, isOpen(): boolean }}
+ */
+export function createRerunBar(el, { root = typeof document !== 'undefined' ? document.documentElement : null, raf = fn => requestAnimationFrame(fn), delay = (fn, ms) => setTimeout(fn, ms) } = {}) {
+    let open = false;
+    const bar = {
+        /**
+         * actionLabel runs (default 'Re-run'); dismissLabel (default 'Not now') only appears with
+         * onDismiss — say what it does when it isn't "keep my edits for later", e.g. 'Discard'.
+         */
+        show({ text = 'Inputs changed', actionLabel = 'Re-run', dismissLabel = 'Not now', onRun, onDismiss } = {}) {
+            el.replaceChildren(ui.h('div', { class: 'shell' },
+                ui.h('div', { class: 'rerun-text' }, ui.icon('refresh'), ui.h('span', null, text)),
+                ui.h('div', { class: 'rerun-actions' },
+                    onDismiss ? ui.button({ label: dismissLabel, kind: 'ghost', size: 'sm', onClick: () => { bar.hide(); onDismiss(); } }) : null,
+                    ui.button({ label: actionLabel, kind: 'primary', size: 'sm', onClick: () => { bar.hide(); onRun?.(); } }))));
+            el.hidden = false;
+            open = true;
+            root?.classList.add('rerun-open');
+            raf(() => { if (open) el.classList.add('show'); });
+        },
+        hide() {
+            open = false;
+            el.classList.remove('show');
+            root?.classList.remove('rerun-open');
+            delay(() => { if (!el.classList.contains('show')) el.hidden = true; }, 260);
+        },
+        isOpen: () => open,
+    };
+    return bar;
 }
 
 function boot() {
@@ -410,22 +575,8 @@ function boot() {
     const hub = createDataHub({ engine, store, onNavigate: tab => router.go(tab) });
 
     const shell = {
-        /** The sticky bottom bar for "inputs changed — re-run". */
-        rerun: {
-            show({ text = 'Inputs changed', actionLabel = 'Re-run', onRun, onDismiss } = {}) {
-                rerunEl.replaceChildren(ui.h('div', { class: 'shell' },
-                    ui.h('div', { class: 'rerun-text' }, ui.icon('refresh'), ui.h('span', null, text)),
-                    ui.h('div', { class: 'rerun-actions' },
-                        onDismiss ? ui.button({ label: 'Not now', kind: 'ghost', size: 'sm', onClick: () => { shell.rerun.hide(); onDismiss(); } }) : null,
-                        ui.button({ label: actionLabel, kind: 'primary', size: 'sm', onClick: () => { shell.rerun.hide(); onRun?.(); } }))));
-                rerunEl.hidden = false;
-                requestAnimationFrame(() => rerunEl.classList.add('show'));
-            },
-            hide() {
-                rerunEl.classList.remove('show');
-                setTimeout(() => { if (!rerunEl.classList.contains('show')) rerunEl.hidden = true; }, 260);
-            },
-        },
+        /** The sticky bottom bar for "inputs changed — re-run": show({ text, actionLabel, dismissLabel, onRun, onDismiss }), hide(). */
+        rerun: createRerunBar(rerunEl),
         /** Set the document title suffix for the current view. */
         setTitle(t) { document.title = t ? `${t} · Solar calculator` : 'Solar calculator'; },
     };
@@ -528,12 +679,19 @@ function boot() {
     route();
 
     // Bring back what the user had last time (demo is offline and instant; Octopus only if the key is to hand).
-    const spec = autoReloadSpec();
+    let savedKey = null;
+    try { savedKey = getApiKey(); } catch { savedKey = null; }
+    const conn = store.get().connection;
+    const spec = autoReloadSpec(conn, savedKey);
     if (spec) {
         hub.load(spec, { navigate: false }).catch(err => {
             if (err?.name === 'AbortError') return;
             ui.toast(`Couldn’t reload your data: ${err?.message || err}`, { tone: 'warn', timeoutMs: 8000, action: { label: 'Open data', onClick: () => router.go('data') } });
         });
+    } else if (conn.kind === 'csv' && !['data', 'method'].includes(parseHash(location.hash).tab)) {
+        // A CSV can't come back on its own (the file is never stored): go where it can be chosen
+        // again — the Data view's CSV form says why ("Last time you used a CSV file…").
+        router.replace('data', { mode: 'csv' });
     }
 
     store.set({ ui: { tab: store.get().ui.tab } });

@@ -165,6 +165,76 @@ let uid = 0;
 /** @param {string} [prefix] @returns {string} a document-unique id */
 export function uniqueId(prefix = 'sc') { uid += 1; return `${prefix}-${uid}`; }
 
+/**
+ * Null-safe replaceChildren: null/false/true are dropped and arrays flattened (the native call
+ * prints the text "null"). Strings and numbers become text nodes.
+ * @param {Element} el
+ * @param {...any} kids
+ * @returns {Element} el
+ */
+export function put(el, ...kids) {
+    el.replaceChildren();
+    appendChildren(el, kids);
+    return el;
+}
+
+const FOCUSABLE = 'input:not([type="hidden"]), select, textarea, button, a[href], [tabindex]:not([tabindex="-1"])';
+
+/**
+ * The control to focus in (or at) a holder element: a checked radio of a radiogroup, else the
+ * holder itself when focusable, else its first field, button or focusable element.
+ * @param {Element|null} holder
+ * @returns {HTMLElement|null}
+ */
+export function controlIn(holder) {
+    if (!holder) return null;
+    if (holder.matches?.(FOCUSABLE)) return holder;
+    // two queries: a selector list matches in document order, so "checked radio, else first
+    // control" in one call would return the group's first option
+    return holder.querySelector?.('[role="radio"][aria-checked="true"]') ?? holder.querySelector?.(FOCUSABLE) ?? null;
+}
+
+const usable = el => !!el && el.isConnected !== false && !el.disabled && !el.closest?.('[hidden], [inert]')
+    && (typeof el.offsetParent === 'undefined' || el.offsetParent !== null || el.getClientRects?.().length > 0);
+
+/**
+ * Re-render part of the page without dropping keyboard focus to <body>. Mark rebuildable controls
+ * with `data-fk="<stable key>"` (on the control or a wrapper). keepFocus notes which [data-fk] holds
+ * focus, runs build(), and — if that element was replaced — focuses its rebuilt twin.
+ *   - `target` (a selector, element or function → element) is a deliberate new focus target that
+ *     wins when it resolves (e.g. "the next field").
+ *   - `fallback` (same forms) is used only when focus was inside `host` and no twin survived
+ *     (disabled, hidden or gone) — typically the section heading (tabindex -1).
+ * Focus outside `host` is never touched.
+ * @param {HTMLElement} host
+ * @param {() => void} build
+ * @param {string|Element|(() => Element|null)|null} [target]
+ * @param {{ fallback?: string|Element|(() => Element|null), preventScroll?: boolean }} [opts]
+ * @returns {HTMLElement|null} the element focused, if any
+ */
+export function keepFocus(host, build, target = null, { fallback = null, preventScroll = true } = {}) {
+    const doc = host?.ownerDocument ?? (typeof document !== 'undefined' ? document : null);
+    const a = doc?.activeElement ?? null;
+    const inside = !!(a && a !== doc.body && host.contains(a));
+    const fk = inside ? a.closest?.('[data-fk]')?.dataset?.fk ?? null : null;
+    build();
+    const resolve = t => {
+        const el = !t ? null : typeof t === 'string' ? host.querySelector(t) : typeof t === 'function' ? t() : t;
+        // a heading with tabindex="-1" is a valid programmatic target; anything else resolves to its control
+        return el && el.hasAttribute?.('tabindex') ? el : controlIn(el);
+    };
+    const focus = el => { try { el.focus({ preventScroll }); } catch { el.focus?.(); } return el; };
+    const wanted = resolve(target);
+    if (usable(wanted)) return focus(wanted);
+    if (!inside) return null;
+    if (a.isConnected !== false && host.contains(a) && usable(a)) return a;   // not rebuilt: leave it alone
+    const esc = s => (typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(s) : String(s).replace(/["\\]/g, '\\$&'));
+    const twin = fk != null ? controlIn(host.querySelector(`[data-fk="${esc(fk)}"]`)) : null;
+    if (usable(twin)) return focus(twin);
+    const fb = resolve(fallback);
+    return fb ? focus(fb) : null;
+}
+
 /* Small inline icon set (stroke icons on a 16px grid). */
 const ICONS = {
     check: 'M3.5 8.5l3 3 6-7',
@@ -180,6 +250,7 @@ const ICONS = {
     eye: 'M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8zM8 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4z',
     eyeOff: 'M2 2l12 12M6.6 6.6a2 2 0 0 0 2.8 2.8M4.2 4.7C2.6 5.9 1.5 8 1.5 8S4 12.5 8 12.5c1.3 0 2.5-.4 3.5-1M7 3.6c.3 0 .7-.1 1-.1 4 0 6.5 4.5 6.5 4.5s-.5 1-1.5 2.1',
     upload: 'M8 10.5V2.5M5 5.5l3-3 3 3M2.5 10.5v3h11v-3',
+    download: 'M8 2.5v8M5 7.5l3 3 3-3M2.5 10.5v3h11v-3',
     pencil: 'M10.5 2.5l3 3L6 13H3v-3z',
     sun: 'M8 10.8a2.8 2.8 0 1 0 0-5.6 2.8 2.8 0 0 0 0 5.6zM8 1v1.6M8 13.4V15M1 8h1.6M13.4 8H15M3 3l1.1 1.1M11.9 11.9L13 13M3 13l1.1-1.1M11.9 4.1L13 3',
     arrowRight: 'M3 8h10M9 4l4 4-4 4',
@@ -336,15 +407,23 @@ let toastHost = null;
  * @returns {{ close(): void }}
  */
 export function toast(message, { tone = 'default', timeoutMs = 4500, action } = {}) {
-    if (!toastHost) {
+    if (!toastHost || !toastHost.isConnected) {
         toastHost = h('div', { class: 'toasts', role: 'status', 'aria-live': 'polite' });
         document.body.appendChild(toastHost);
     }
+    // Where focus was when the toast appeared: pressing its Undo or ✕ removes the button that has
+    // focus, so focus goes back there instead of falling to <body>.
+    const before = document.activeElement && document.activeElement !== document.body ? document.activeElement : null;
     let timer = null;
+    let closed = false;
     const close = () => {
+        if (closed) return;
+        closed = true;
         clearTimeout(timer);
+        const hadFocus = el.contains(document.activeElement);
         el.classList.remove('show');
         setTimeout(() => el.remove(), 250);
+        if (hadFocus && before && before.isConnected && !before.disabled) before.focus({ preventScroll: true });
     };
     const el = h('div', { class: ['toast-item', `tone-${tone}`] },
         tone !== 'default' ? icon(tone === 'good' ? 'check' : tone === 'bad' ? 'alert' : 'info') : null,
@@ -423,41 +502,79 @@ export function horizonGlyph({ size = 56 } = {}) {
 
 /**
  * A live checklist for multi-step work.
+ *   set(key, status, detail) — an error row keeps its detail empty by default: the failure message
+ *     belongs to the panel under the list, said once in full (opts.errorDetail: true prints it).
+ *   settle(failedKey?) — the run stopped: mark failedKey (if any) as failed and put every row still
+ *     spinning back to "waiting", so nothing spins for ever after an error or a cancel.
+ *   status(key) — the row's current status.
  * @param {Array<{ key: string, label: string }>} steps
- * @returns {{ el: HTMLElement, set(key: string, status: 'pending'|'start'|'active'|'done'|'error'|'skip', detail?: string): void }}
+ * @param {{ errorDetail?: boolean }} [opts]
+ * @returns {{ el: HTMLElement, set(key: string, status: 'pending'|'start'|'active'|'done'|'error'|'skip', detail?: string): void,
+ *   settle(failedKey?: string|null): void, status(key: string): string|null }}
  */
-export function progressList(steps) {
+export function progressList(steps, { errorDetail = false } = {}) {
     const rows = new Map();
     const el = h('ol', { class: 'progress-list', 'aria-live': 'polite' });
-    for (const s of steps) {
+    const addRow = (key, label, pending) => {
         const ic = h('span', { class: 'pl-icon', 'aria-hidden': 'true' });
         const detail = h('span', { class: 'pl-detail' });
-        const status = h('span', { class: 'sr-only' }, 'waiting');
-        const row = h('li', { class: 'pl-row is-pending', dataset: { key: s.key } }, ic, h('span', { class: 'pl-label' }, s.label), status, detail);
-        rows.set(s.key, { row, ic, detail, status });
+        const status = h('span', { class: 'sr-only' }, pending ? 'waiting' : '');
+        const row = h('li', { class: ['pl-row', pending && 'is-pending'], dataset: { key } }, ic, h('span', { class: 'pl-label' }, label), status, detail);
+        const r = { row, ic, detail, status, st: pending ? 'pending' : null };
+        rows.set(key, r);
         el.appendChild(row);
-    }
-    return {
+        return r;
+    };
+    for (const s of steps) addRow(s.key, s.label, true);
+    const api = {
         el,
         set(key, st, text) {
-            let r = rows.get(key);
-            if (!r) {   // unknown step: append it rather than drop the information
-                const ic = h('span', { class: 'pl-icon', 'aria-hidden': 'true' });
-                const detail = h('span', { class: 'pl-detail' });
-                const status = h('span', { class: 'sr-only' });
-                const label = LOAD_STEPS.find(s => s.key === key)?.label ?? key;
-                const row = h('li', { class: 'pl-row', dataset: { key } }, ic, h('span', { class: 'pl-label' }, label), status, detail);
-                el.appendChild(row);
-                r = { row, ic, detail, status };
-                rows.set(key, r);
-            }
+            // unknown step: append it rather than drop the information
+            const r = rows.get(key) ?? addRow(key, LOAD_STEPS.find(s => s.key === key)?.label ?? key, false);
             const s = st === 'start' ? 'active' : st;
+            r.st = s;
             r.row.className = `pl-row is-${s}`;
             r.ic.replaceChildren(s === 'done' ? icon('check') : s === 'error' ? icon('x') : '');
             r.status.textContent = { active: 'in progress', done: 'done', error: 'failed', skip: 'skipped', pending: 'waiting' }[s] || s;
-            if (text != null) r.detail.textContent = text;
+            if (s === 'error' && !errorDetail) r.detail.textContent = '';
+            else if (text != null) r.detail.textContent = text;
         },
+        settle(failedKey = null) {
+            if (failedKey) api.set(failedKey, 'error', '');
+            for (const [key, r] of rows) if (r.st === 'active') api.set(key, 'pending', '');
+        },
+        status: key => rows.get(key)?.st ?? null,
     };
+    return api;
+}
+
+/**
+ * Two figures side by side for a direct comparison; the stronger one carries the accent rule.
+ * (Promoted from the Usage view: peak vs off-peak price, load- vs time-weighted price.)
+ * @param {Array<{ label: string|Node, value: string|Node, unit?: string, strong?: boolean }>} items
+ * @param {{ className?: string }} [opts]
+ * @returns {HTMLElement}
+ */
+export function figurePair(items = [], { className } = {}) {
+    return h('div', { class: ['fig-pair', className] }, items.map(it => h('div', { class: ['fig-pair-item', it.strong && 'is-strong'] },
+        h('div', { class: 'fig-pair-label' }, it.label),
+        h('div', { class: 'fig-pair-fig' }, it.value == null || it.value === '' ? DASH : it.value, it.unit ? h('small', null, it.unit) : null))));
+}
+
+/**
+ * The data-coverage chip: "100% real readings", or "53.7% real readings · 166 days estimated" in
+ * amber below 95%, linking to the Data view. null when the coverage is unknown.
+ * @param {{ realPct?: number, extrapolatedSlots?: number }|null} coverage summary.coverage or insights.coverage
+ * @param {{ href?: string }} [opts]
+ * @returns {HTMLAnchorElement|null}
+ */
+export function coverageChip(coverage, { href = '#data' } = {}) {
+    const real = coverage?.realPct;
+    if (!ok(real)) return null;
+    const estDays = ok(coverage?.extrapolatedSlots) ? Math.round(coverage.extrapolatedSlots / 48) : 0;
+    const text = `${fmt.pct(real, { dp: real >= 99.95 || real < 10 ? 0 : 1 })} real readings${estDays ? ` · ${fmt.num(estDays)} days estimated` : ''}`;
+    return h('a', { class: ['cov-chip', real < 95 && 'is-warn'], href, title: 'See where your data came from' },
+        h('span', { class: 'cov-chip-dot', 'aria-hidden': 'true' }), text);
 }
 
 /* ── form controls ──────────────────────────────────────────────────────────── */
@@ -751,18 +868,43 @@ export function compassInput({ azimuth = 180, onChange, size = 200, step = 5, la
 /**
  * A sortable data table that becomes a card list at ≤600 px (first column — or the column with
  * mobile:'title' — is the card title; columns with mobile:'hide' are dropped on phones).
+ *
+ * Groups: pass `groups` instead of `rows` to split the body into labelled sections, each its own
+ * <tbody> (sorting applies within a group, groups keep their order): `{ key, title, note, rows,
+ * divider, collapsible, collapsed, className }`. A group with a title gets a heading row; one with
+ * `divider: true` and no title is set off by a dashed rule. A collapsible group's heading is a
+ * button (aria-expanded) that hides or shows its rows; onToggle(key, open) reports it. Empty groups
+ * are left out.
+ * Header tooltips: a column's `help` text goes on its header (dotted underline, hover/focus tip,
+ * and the accessible description). `note` (string or node) is printed under the table in
+ * `.tbl-note`, whose links and link-buttons are 44 px tap targets on phones. `followSort: true`
+ * makes the sorted column the card's primary figure on phones.
  * @param {{ columns: Array<{ key: string, label: string, align?: 'left'|'right'|'center', format?: (v: any, row: object) => string|Node,
- *   sortable?: boolean, sortValue?: (row: object) => any, width?: string, mobile?: 'title'|'primary'|'show'|'hide' }>,
- *   rows: object[], sortKey?: string, onRowClick?: (row: object) => void, rowClass?: (row: object) => string, emptyText?: string,
- *   caption?: string, dense?: boolean }} o   sortKey: column key, prefixed with '-' for descending
- * @returns {HTMLElement & { update(rows: object[]): void, setSort(key: string): void }}
+ *   sortable?: boolean, sortValue?: (row: object) => any, width?: string, mobile?: 'title'|'primary'|'show'|'hide', help?: string }>,
+ *   rows?: object[], groups?: Array<{ key?: string, title?: string|Node, note?: string|Node, rows: object[], divider?: boolean,
+ *   collapsible?: boolean, collapsed?: boolean, className?: string }>, sortKey?: string, onRowClick?: (row: object) => void,
+ *   rowClass?: (row: object) => string, emptyText?: string, caption?: string, dense?: boolean, note?: string|Node,
+ *   followSort?: boolean, onSort?: (key: string) => void, onToggle?: (key: string, open: boolean) => void }} o
+ *   sortKey: column key, prefixed with '-' for descending
+ * @returns {HTMLElement & { update(rows: object[]): void, setGroups(groups: object[]): void, setSort(key: string): void, sortKey(): string|null }}
  */
-export function table({ columns = [], rows = [], sortKey, onRowClick, rowClass, emptyText = 'Nothing to show yet.', caption, dense = false } = {}) {
+export function table({ columns = [], rows = [], groups = null, sortKey, onRowClick, rowClass, emptyText = 'Nothing to show yet.', caption, dense = false,
+    note = null, followSort = false, onSort, onToggle } = {}) {
     let data = rows;
+    let grouped = Array.isArray(groups) ? groups : null;
     let sort = sortKey || null;
+    const open = new Map();   // group key → expanded (survives re-renders and updates)
     const titleCol = columns.find(c => c.mobile === 'title')?.key ?? columns[0]?.key;
-    const tbl = h('table', { class: ['tbl', dense && 'tbl-dense', onRowClick && 'tbl-clickable'] });
-    const wrap = h('div', { class: 'tbl-wrap' }, tbl);
+    const tbl = h('table', { class: ['tbl', dense && 'tbl-dense', onRowClick && 'tbl-clickable', grouped && 'tbl-grouped'] });
+    const wrap = h('div', { class: 'tbl-wrap' }, tbl, note != null && note !== '' ? h('div', { class: 'tbl-note' }, note) : null);
+    const mobileOf = col => {
+        if (col.key === titleCol) return 'title';
+        if (followSort && sort) {
+            const sk = sort.replace(/^-/, '');
+            if (columns.some(c => c.key === sk && c.key !== titleCol)) return col.key === sk ? 'primary' : col.mobile === 'primary' ? 'show' : col.mobile || 'show';
+        }
+        return col.mobile || 'show';
+    };
 
     const valueOf = (col, row) => (col.sortValue ? col.sortValue(row) : row[col.key]);
     const cmp = (a, b) => {
@@ -770,13 +912,13 @@ export function table({ columns = [], rows = [], sortKey, onRowClick, rowClass, 
         if (b == null || (typeof b === 'number' && !Number.isFinite(b))) return -1;
         return typeof a === 'number' && typeof b === 'number' ? a - b : String(a).localeCompare(String(b));
     };
-    function sorted() {
-        if (!sort) return data;
+    function sorted(list) {
+        if (!sort) return list;
         const desc = sort.startsWith('-');
         const col = columns.find(c => c.key === sort.replace(/^-/, ''));
-        if (!col) return data;
+        if (!col) return list;
         // Missing values always sink to the bottom, whichever way the column is sorted.
-        return [...data].sort((x, y) => {
+        return [...list].sort((x, y) => {
             const a = valueOf(col, x), b = valueOf(col, y);
             const missA = a == null || (typeof a === 'number' && !Number.isFinite(a));
             const missB = b == null || (typeof b === 'number' && !Number.isFinite(b));
@@ -784,45 +926,87 @@ export function table({ columns = [], rows = [], sortKey, onRowClick, rowClass, 
             return desc ? cmp(b, a) : cmp(a, b);
         });
     }
+    const rowEl = row => {
+        const tr = h('tr', { class: rowClass ? rowClass(row) : null });
+        if (onRowClick) {
+            tr.tabIndex = 0;
+            tr.addEventListener('click', e => { if (!e.target.closest('a,button,input,select')) onRowClick(row); });
+            tr.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target === tr) onRowClick(row); });
+        }
+        for (const col of columns) {
+            const raw = row[col.key];
+            const v = col.format ? col.format(raw, row) : raw == null || (typeof raw === 'number' && !Number.isFinite(raw)) ? DASH
+                : typeof raw === 'number' ? fmt.num(raw, Number.isInteger(raw) ? 0 : 1) : raw;
+            tr.appendChild(h(col.key === titleCol ? 'th' : 'td', {
+                class: [`al-${col.align || 'left'}`, `m-${mobileOf(col)}`], scope: col.key === titleCol ? 'row' : null, dataset: { label: col.label },
+            }, v));
+        }
+        return tr;
+    };
+    const emptyRow = () => h('tr', { class: 'tbl-empty' }, h('td', { colspan: columns.length }, emptyText));
+    function groupBody(g, i) {
+        const key = g.key ?? String(i);
+        const list = sorted(Array.isArray(g.rows) ? g.rows : []);
+        const titled = g.title != null && g.title !== '';
+        // only a titled group has the heading button that opens it again, so an untitled one never collapses
+        const collapsible = !!g.collapsible && titled;
+        if (!open.has(key)) open.set(key, !(collapsible && g.collapsed));
+        const isOpen = !collapsible || open.get(key);
+        const bodyId = uniqueId('tg');
+        const kids = [];
+        if (titled) {
+            const count = h('span', { class: 'tbl-group-count' }, `${list.length}`);
+            const label = [h('span', { class: 'tbl-group-title' }, g.title), collapsible ? count : null];
+            const head = collapsible
+                ? h('button', {
+                    type: 'button', class: 'tbl-group-toggle', 'aria-expanded': String(isOpen), 'aria-controls': bodyId, dataset: { fk: `tbl-group:${key}` },
+                    on: { click: () => { open.set(key, !open.get(key)); keepFocus(wrap, render); onToggle?.(key, open.get(key)); } },
+                }, icon('chevron'), label)
+                : label;
+            kids.push(h('tr', { class: 'tbl-group-head' }, h('th', { colspan: columns.length, scope: 'colgroup' },
+                h('div', { class: 'tbl-group-line' }, head, g.note != null && g.note !== '' ? h('span', { class: 'tbl-group-note' }, g.note) : null))));
+        }
+        const rowsEls = isOpen ? list.map(rowEl) : [];
+        return h('tbody', {
+            class: ['tbl-group', g.divider && 'tbl-divider', !isOpen && 'is-collapsed', g.className], id: bodyId,
+            dataset: { group: key }, 'aria-label': typeof g.title === 'string' ? g.title : null,
+        }, kids, rowsEls);
+    }
     function render() {
         const head = h('tr', null, columns.map(col => {
             const key = col.key;
             const active = sort && sort.replace(/^-/, '') === key;
             const dir = active ? (sort.startsWith('-') ? 'descending' : 'ascending') : 'none';
             const canSort = col.sortable !== false && columns.length > 1;
-            const th = h('th', {
-                scope: 'col', class: [`al-${col.align || 'left'}`, `m-${col.mobile || (key === titleCol ? 'title' : 'show')}`],
+            const lab = col.help ? h('span', { class: 'th-help' }, col.label) : col.label;
+            let inner;
+            if (canSort) {
+                inner = h('button', {
+                    type: 'button', class: 'th-sort', dataset: { fk: `tbl-sort:${key}` },
+                    on: { click: () => { sort = active && !sort.startsWith('-') ? `-${key}` : active ? key : (col.align === 'right' ? `-${key}` : key); keepFocus(wrap, render); onSort?.(sort); } },
+                }, lab, h('span', { class: 'th-arrow', 'aria-hidden': 'true' }, active ? (dir === 'ascending' ? '▲' : '▼') : ''));
+            } else inner = col.help ? h('span', { class: 'th-tip', tabindex: '0' }, lab) : lab;
+            if (col.help && inner instanceof Node) tooltip(inner, col.help);
+            return h('th', {
+                scope: 'col', class: [`al-${col.align || 'left'}`, `m-${mobileOf(col)}`],
                 style: col.width ? { width: col.width } : null, 'aria-sort': canSort ? dir : null,
-            }, canSort ? h('button', {
-                type: 'button', class: 'th-sort',
-                on: { click: () => { sort = active && !sort.startsWith('-') ? `-${key}` : active ? key : (col.align === 'right' ? `-${key}` : key); render(); } },
-            }, col.label, h('span', { class: 'th-arrow', 'aria-hidden': 'true' }, active ? (dir === 'ascending' ? '▲' : '▼') : '')) : col.label);
-            return th;
+            }, inner);
         }));
-        const list = sorted();
-        const body = list.length ? list.map(row => {
-            const tr = h('tr', { class: rowClass ? rowClass(row) : null });
-            if (onRowClick) {
-                tr.tabIndex = 0;
-                tr.addEventListener('click', e => { if (!e.target.closest('a,button,input,select')) onRowClick(row); });
-                tr.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target === tr) onRowClick(row); });
-            }
-            for (const col of columns) {
-                const raw = row[col.key];
-                const v = col.format ? col.format(raw, row) : raw == null || (typeof raw === 'number' && !Number.isFinite(raw)) ? DASH
-                    : typeof raw === 'number' ? fmt.num(raw, Number.isInteger(raw) ? 0 : 1) : raw;
-                const mob = col.mobile || (col.key === titleCol ? 'title' : 'show');
-                tr.appendChild(h(col.key === titleCol ? 'th' : 'td', {
-                    class: [`al-${col.align || 'left'}`, `m-${mob}`], scope: col.key === titleCol ? 'row' : null, dataset: { label: col.label },
-                }, v));
-            }
-            return tr;
-        }) : h('tr', { class: 'tbl-empty' }, h('td', { colspan: columns.length }, emptyText));
-        tbl.replaceChildren(caption ? h('caption', { class: 'sr-only' }, caption) : '', h('thead', null, head), h('tbody', null, body));
+        let bodies;
+        if (grouped) {
+            bodies = grouped.map((g, i) => (g && (g.rows?.length || 0) > 0 ? groupBody(g, i) : null)).filter(Boolean);
+            if (!bodies.length) bodies = [h('tbody', null, emptyRow())];
+        } else {
+            const list = sorted(data);
+            bodies = [h('tbody', null, list.length ? list.map(rowEl) : emptyRow())];
+        }
+        tbl.replaceChildren(caption ? h('caption', { class: 'sr-only' }, caption) : '', h('thead', null, head), ...bodies);
     }
     render();
-    wrap.update = r => { data = r; render(); };
+    wrap.update = r => { data = r; grouped = null; tbl.classList.remove('tbl-grouped'); render(); };
+    wrap.setGroups = g => { grouped = Array.isArray(g) ? g : null; tbl.classList.toggle('tbl-grouped', !!grouped); render(); };
     wrap.setSort = k => { sort = k; render(); };
+    wrap.sortKey = () => sort;
     return wrap;
 }
 
@@ -950,8 +1134,8 @@ export function connectCard(ctx = {}, { compact = false } = {}) {
                 },
             });
         } catch (err) {
+            pl.settle(err?.name === 'AbortError' ? null : failedStep ?? err?.step ?? null);
             if (err?.name === 'AbortError') return;
-            if (failedStep) pl.set(failedStep, 'error');
             handleError(err, spec);
         } finally {
             setBusy(false);
@@ -1014,6 +1198,8 @@ export function connectCard(ctx = {}, { compact = false } = {}) {
         const location = loc.postcode ? { postcode: loc.postcode } : Number.isFinite(loc.lat) && Number.isFinite(loc.lon) ? { lat: loc.lat, lon: loc.lon } : undefined;
         const spec = { kind: 'octopus', apiKey: key };
         if (acct.value) spec.accountNumber = acct.value;
+        // the meter picked last time, while it's the same account (an unknown meter is ignored upstream)
+        if (conn.mpan && (acct.value ?? null) === (conn.accountNumber ?? null)) spec.mpan = String(conn.mpan);
         if (location) spec.location = location;
         if (conn.priceBasis && conn.priceBasis !== 'mine') { spec.priceBasis = conn.priceBasis; if (conn.flatP != null) spec.flatP = conn.flatP; }
         if (conn.installedSolarDate) spec.installedSolarDate = conn.installedSolarDate;

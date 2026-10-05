@@ -27,7 +27,7 @@ const ADDITIVE = [
     'baselineBilledP', 'newBilledP', 'savingsBilledP', 'exportIncomeBilledP', 'impSavFwdExcP', 'expIncFwdP',
     'standbyCostFwdExcP', 'wearP', 'savingsFilledP', 'filledLoadKwh',
     // ratio components
-    'pvExportedKwh', 'netImportKwh', 'peakPvAcKwh', 'peakImportKwh', 'peakBaselineLoadKwh',
+    'pvExportedKwh', 'netImportKwh', 'peakPvAcKwh', 'peakUpsPvKwh', 'peakImportKwh', 'peakBaselineLoadKwh',
     'slots', 'dedicatedClampSlots', 'upsOverloadSlots',
 ];
 
@@ -41,7 +41,9 @@ function zeroSums() {
  * Totals = additive sums + derived ratios (engine critique definitions):
  * selfConsumptionPct = 100·(1 − (Σ min(exp, pvDirectAc) + Σ station PV wasted)/(pvAc + station PV));
  * selfSufficiencyPct = clamp(100·(1 − Σ(imp − gridChg)/Σ L), 0, 100);
- * peakGenSharePct = 100·Σ_peak pvAc/Σ pvAc; peakImportCutPct = 100·(1 − Σ_peak imp/Σ_peak L_baseline);
+ * peakGenSharePct = 100·Σ_peak pvAc/Σ pvAc (grid-tied panels only); peakGenShareAllPct = the same with a
+ * power station's own panels counted too (Σ_peak (pvAc + upsPv)/Σ (pvAc + upsPv));
+ * peakImportCutPct = 100·(1 − Σ_peak imp/Σ_peak L_baseline);
  * filledSharePct = 100·Σ_filled L/Σ L; battCycles = battOut (stored)/(sMax − sMin).
  */
 function finishTotals(sums, days, usableKwh) {
@@ -50,6 +52,7 @@ function finishTotals(sums, days, usableKwh) {
     t.selfConsumptionPct = pvGen > 1e-9 ? Math.max(0, Math.min(100, 100 * (1 - (sums.pvExportedKwh + sums.upsPvWastedKwh) / pvGen))) : 0;
     t.selfSufficiencyPct = sums.loadKwh > 1e-9 ? Math.max(0, Math.min(100, 100 * (1 - sums.netImportKwh / sums.loadKwh))) : 0;
     t.peakGenSharePct = sums.pvAcKwh > 1e-9 ? (100 * sums.peakPvAcKwh) / sums.pvAcKwh : 0;
+    t.peakGenShareAllPct = pvGen > 1e-9 ? (100 * (sums.peakPvAcKwh + sums.peakUpsPvKwh)) / pvGen : 0;
     t.peakImportCutPct = sums.peakBaselineLoadKwh > 1e-9 ? 100 * (1 - sums.peakImportKwh / sums.peakBaselineLoadKwh) : 0;
     t.filledSharePct = sums.loadKwh > 1e-9 ? (100 * sums.filledLoadKwh) / sums.loadKwh : 0;
     t.battCycles = usableKwh > 1e-9 ? sums.battOutKwh / usableKwh : 0;
@@ -141,7 +144,10 @@ function forwardExc(ds) {
  *   dispatchOpts?: { deltaKwh?: number, N?: number, strategy?: string, soh?: number } }} [opts]
  *   upsPvDc = the power station's own-panel DC kWh per slot, already capped at its input limit
  *   (pv.dcToSlotsKwh); dispatchOpts tunes the battery run (δ = 0.05 for sweeps, N = 21 for bands)
- * @returns {Object} SimResult { totals, annual, monthly, profile, warnings, dispatch, slots? }
+ * @returns {Object} SimResult { totals, annual, monthly, profile, warnings, dispatch, slots? }.
+ *   A power station's own panels are counted apart from the grid-tied ones: totals/MonthRow
+ *   upsPvKwh and peakUpsPvKwh (its DC kWh, all day and 4–7pm), totals peakGenShareAllPct
+ *   (4–7pm share of both), profile.upsPv (mean kWh per local half-hour) and slots.upsPv.
  * @throws {RangeError} when pv or upsPvDc arrays do not have ds.n slots
  */
 export function simulate(ds, pv, system, { upsPvDc = null, includeSlots = false, dispatchOpts = {} } = {}) {
@@ -205,14 +211,14 @@ export function simulate(ds, pv, system, { upsPvDc = null, includeSlots = false,
     const cov = monthCoverage(ds);
     const sums = months.map(() => zeroSums());
     const profN = new Uint16Array(48);
-    const prof = { load: new Float64Array(48), pvAc: new Float64Array(48), imp: new Float64Array(48), exp: new Float64Array(48),
+    const prof = { load: new Float64Array(48), pvAc: new Float64Array(48), upsPv: new Float64Array(48), imp: new Float64Array(48), exp: new Float64Array(48),
         battNet: new Float64Array(48), priceBilled: new Float64Array(48), savingsBilledP: new Float64Array(48) };
     const { imp: fImp, exp: fExp, pvDirectAc: fPvd, clipped: fClip, curtailed: fCurt, upsPvWasted: fWaste, gridChg: fGc, battIn: fIn,
         battOut: fOut, battOutAc: fOutAc, battChgAc: fChgAc, standby: fSb, upsConversionLoss: fConv, bypassOverhead: fByp } = fl;
     const filled = ds.loadFilled ?? null;
     const { peak, hh } = local;
     const dk = (dedicatedW * DT_H) / 1000 - 1e-12;
-    const pLoad = prof.load, pPv = prof.pvAc, pImp = prof.imp, pExp = prof.exp, pBn = prof.battNet, pPr = prof.priceBilled, pSav = prof.savingsBilledP;
+    const pLoad = prof.load, pPv = prof.pvAc, pUps = prof.upsPv, pImp = prof.imp, pExp = prof.exp, pBn = prof.battNet, pPr = prof.priceBilled, pSav = prof.savingsBilledP;
     for (let mi = 0; mi < months.length; mi++) {
         const t0 = months[mi].first;
         const t1 = Math.min(n, t0 + months[mi].count);
@@ -220,7 +226,7 @@ export function simulate(ds, pv, system, { upsPvDc = null, includeSlots = false,
         let upsPvWastedKwh = 0, exportKwh = 0, exportUnpaidKwh = 0, importKwh = 0, gridChargeKwh = 0, battInKwh = 0, battOutKwh = 0;
         let battOutAcKwh = 0, standbyKwh = 0, upsConversionLossKwh = 0, bypassOverheadKwh = 0, baselineBilledP = 0, newBilledP = 0;
         let savingsBilledP = 0, exportIncomeBilledP = 0, impSavFwdExcP = 0, expIncFwdP = 0, standbyCostFwdExcP = 0, wearP = 0;
-        let savingsFilledP = 0, filledLoadKwh = 0, pvExportedKwh = 0, netImportKwh = 0, peakPvAcKwh = 0, peakImportKwh = 0;
+        let savingsFilledP = 0, filledLoadKwh = 0, pvExportedKwh = 0, netImportKwh = 0, peakPvAcKwh = 0, peakUpsPvKwh = 0, peakImportKwh = 0;
         let peakBaselineLoadKwh = 0, dedicatedClampSlots = 0, upsOverloadSlots = 0;
         for (let t = t0; t < t1; t++) {
             const imp = fImp[t];
@@ -263,7 +269,7 @@ export function simulate(ds, pv, system, { upsPvDc = null, includeSlots = false,
             if (filled && filled[t] !== 0) { savingsFilledP += sav; filledLoadKwh += lt; }
             pvExportedKwh += Math.min(exp, fPvd[t]);
             netImportKwh += imp - fGc[t];
-            if (peak[t]) { peakPvAcKwh += pa; peakImportKwh += imp; peakBaselineLoadKwh += l0; }
+            if (peak[t]) { peakPvAcKwh += pa; peakUpsPvKwh += up; peakImportKwh += imp; peakBaselineLoadKwh += l0; }
             if (D) {
                 if (lt < dk) dedicatedClampSlots += 1;
                 if (D[t] > outletCap + 1e-9) upsOverloadSlots += 1;
@@ -272,6 +278,7 @@ export function simulate(ds, pv, system, { upsPvDc = null, includeSlots = false,
             profN[h]++;
             pLoad[h] += lt;
             pPv[h] += pa;
+            pUps[h] += up;
             pImp[h] += imp;
             pExp[h] += exp;
             pBn[h] += fOutAc[t] - fChgAc[t];
@@ -282,7 +289,7 @@ export function simulate(ds, pv, system, { upsPvDc = null, includeSlots = false,
             loadKwh, baselineLoadKwh, pvDcKwh, upsPvKwh, pvAcKwh, pvDirectAcKwh, clippedKwh, curtailedKwh, upsPvWastedKwh, exportKwh,
             exportUnpaidKwh, importKwh, gridChargeKwh, battInKwh, battOutKwh, battOutAcKwh, standbyKwh, upsConversionLossKwh,
             bypassOverheadKwh, baselineBilledP, newBilledP, savingsBilledP, exportIncomeBilledP, impSavFwdExcP, expIncFwdP,
-            standbyCostFwdExcP, wearP, savingsFilledP, filledLoadKwh, pvExportedKwh, netImportKwh, peakPvAcKwh, peakImportKwh,
+            standbyCostFwdExcP, wearP, savingsFilledP, filledLoadKwh, pvExportedKwh, netImportKwh, peakPvAcKwh, peakUpsPvKwh, peakImportKwh,
             peakBaselineLoadKwh, slots: t1 - t0, dedicatedClampSlots, upsOverloadSlots,
         });
     }
@@ -312,7 +319,7 @@ export function simulate(ds, pv, system, { upsPvDc = null, includeSlots = false,
     };
     if (includeSlots) {
         const { warnings: _w, ...arrays } = fl;
-        res.slots = { ...arrays, pvAc, load: L };
+        res.slots = { ...arrays, pvAc, upsPv: upsPv ?? zero, load: L };
     }
     return res;
 }

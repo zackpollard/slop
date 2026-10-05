@@ -31,6 +31,10 @@ export function defaultState() {
             installedSolarDate: null,
             priceBasis: 'mine',
             flatP: null,
+            // the import meter picked when an Octopus property has several (so a reload doesn't ask again)
+            mpan: null,
+            // the electricity region chosen by hand for a CSV / manual dataset ('A'–'P'), null = from the postcode
+            region: null,
         },
         dataset: null,
         settings: {

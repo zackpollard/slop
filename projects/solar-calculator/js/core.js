@@ -106,6 +106,20 @@ const firstOfNextMonth = (ms) => {
  */
 const physicsKey = (sys) => systemKey({ ...sys, costs: [], kitId: null, sourceIds: [], spotId: null, upgrade: null, route: 'plugin' });
 
+/**
+ * The power-station product of a system with a 'ups' battery, found by kind: a U row is built
+ * around it (its kitId), C1 adds one to a plug-in kit (one of its sourceIds) and a Design build
+ * may carry it in sourceIds only. null when there is none in the catalog.
+ */
+function stationProduct(catalog, sys) {
+    if (sys.battery?.coupling !== 'ups') return null;
+    for (const id of [sys.kitId, ...(sys.sourceIds ?? [])]) {
+        const p = typeof id === 'string' ? findProduct(catalog, id) : null;
+        if (p?.kind === 'power-station') return p;
+    }
+    return null;
+}
+
 const hasStationPanels = (sys) => sys.battery?.coupling === 'ups' && sys.battery.ups.pvArrays.some((a) => a.count * a.wp > 0);
 const weatherDependent = (sys) => sys.arrays.some((a) => a.count * a.wp > 0) || hasStationPanels(sys);
 /** True when the targeted panels do not all face the same way (a split kit such as S02). */
@@ -371,9 +385,10 @@ export class SolarEngine {
 
     /** One simulate() run of a normalised system on a weather basis. */
     _sim(sys, { sub = FULL_SUB, weather = 'typical', ds = this.ds, includeSlots = false, dispatchOpts = {}, factors = null } = {}) {
-        // a run depends on the system, the weather basis, the dataset (load/prices: its id) and the
-        // dispatch options — not on finance, so re-valuing with other finance settings is free
-        const key = factors || includeSlots ? null : `${systemKey(sys)}|${sub}|${weather}|${ds.id}|${stable(dispatchOpts)}`;
+        // a run depends on the system's physics, the weather basis, the dataset (load/prices: its
+        // id) and the dispatch options — not on finance, prices, labels or the route, so re-valuing
+        // with other finance settings or the user's own prices is free
+        const key = factors || includeSlots ? null : `${physicsKey(sys)}|${sub}|${weather}|${ds.id}|${stable(dispatchOpts)}`;
         if (key) {
             const hit = this._sims.get(key);
             if (hit) return hit;
@@ -537,7 +552,7 @@ export class SolarEngine {
      * @param {{ withBand?: boolean, finance?: Object, includeSlots?: boolean, fidelity?: 'full'|'proxy', dispatchOpts?: Object }} [opts]
      * @returns {Object} ScenarioResult (CONTRACTS §13) + headline { savingsGbp, actualGbp, billedGbp, p10Gbp, p50Gbp,
      *   p90Gbp, paybackYears, paybackP10Years, paybackP90Years, capexGbp, npv10Gbp, net10Gbp, npvGbp, selfUsePct,
-     *   exportIncomeGbp, exportKwh, exportUnpaidKwh, pvKwh, peakGenSharePct } and weather { basis: 'typical', factors }
+     *   exportIncomeGbp, exportKwh, exportUnpaidKwh, pvKwh, peakGenSharePct (grid-tied panels), peakGenShareAllPct (a station’s own panels too) } and weather { basis: 'typical', factors }
      */
     runScenario(system, { withBand = true, finance = {}, includeSlots = false, fidelity = 'full', dispatchOpts = {} } = {}) {
         const sys = normalizeSystem(system);
@@ -603,6 +618,7 @@ export class SolarEngine {
             exportUnpaidKwh: T.exportUnpaidKwh,
             pvKwh: T.pvAcKwh + T.upsPvKwh,
             peakGenSharePct: T.peakGenSharePct,
+            peakGenShareAllPct: T.peakGenShareAllPct,
         };
         return cache.set(key, res);
     }
@@ -629,15 +645,18 @@ export class SolarEngine {
         const noBatt = sys.battery ? { ...sys, battery: null } : null;
         const s2sys = sys.upgrade ? upgradedSystem(sys) : null;
         const dOpts2 = { ...dispatchOpts, ...(usesDp(s2sys?.battery) ? BAND_DP : COARSE) };
-        // the yearly money does not depend on finance settings: changing them only re-projects
-        const mkey = `${systemKey(sys)}|${this.ds.id}|${stable(dispatchOpts)}`;
-        const series = this._bandMoney.get(mkey) ?? this._bandMoney.set(mkey, years.map(({ year, f }) => {
+        // the yearly money depends on the physics of both stages only — not on finance settings or
+        // prices — so changing them only re-projects. The cached money carries no system: stage 2's
+        // (whose catalog ids price a battery replacement) is attached per call.
+        const mkey = `${physicsKey(sys)}|${s2sys ? physicsKey(s2sys) : ''}|${this.ds.id}|${stable(dispatchOpts)}`;
+        const cached = this._bandMoney.get(mkey) ?? this._bandMoney.set(mkey, years.map(({ year, f }) => {
             const full = this._sim(sys, { weather: 'actual', factors: f, dispatchOpts: dOpts });
             const po = noBatt ? this._sim(noBatt, { weather: 'actual', factors: f }) : null;
-            const st2 = s2sys ? { system: s2sys, full: this._sim(s2sys, { weather: 'actual', factors: f, dispatchOpts: dOpts2 }),
+            const st2 = s2sys ? { system: null, full: this._sim(s2sys, { weather: 'actual', factors: f, dispatchOpts: dOpts2 }),
                 pvOnly: s2sys.battery ? this._sim({ ...s2sys, battery: null }, { weather: 'actual', factors: f }) : null } : null;
             return { year, money: this._money(sys, full, po, st2) };
         }));
+        const series = cached.map((s) => ({ year: s.year, money: s.money.s2 ? { ...s.money, s2: { ...s.money.s2, system: s2sys } } : s.money }));
         const fins = series.map((s) => this._projectMoney(sys, s.money, fo));
         const sav = fins.map((f) => f.year1Gbp);
         const order = sav.map((v, i) => i).sort((a, b) => sav[a] - sav[b]);
@@ -686,7 +705,8 @@ export class SolarEngine {
      * batteries standby is a constant draw, so the parts sum to the total exactly; a power
      * station's bypass overhead depends on its decisions, so its fromGrid is the remainder. A
      * system with no panels at all stores no solar: its fromSolar is 0 by definition (a station
-     * starts full, which would otherwise show up as a few pence "from solar").
+     * starts full, which would otherwise show up as a few pence "from solar"). A power station's
+     * optimalGbp is never below its thresholdGbp (see upsStrategies).
      */
     _batteryExtras(sys, fo, { typical, pvOnly, dispatchOpts, fin }) {
         const y1 = (s, sim) => this._yearOneGbp(normalizeSystem(s), sim, pvOnly, fo);
@@ -706,7 +726,10 @@ export class SolarEngine {
         const fromSolar = noPv ? 0 : y1(ngSys, ng) - b0 + sbc(ng);
         const fromGrid = noPv || sys.battery.coupling === 'ups' ? total - fromSolar - standby : sysGbp - y1(ngSys, ng);
         const thrGbp = strat === 'threshold' ? sysGbp : y1(thrSys, thr);
-        const optGbp = strat === 'optimal' ? sysGbp : y1(optSys, opt);
+        let optGbp = strat === 'optimal' ? sysGbp : y1(optSys, opt);
+        // a station's day-ahead planner can sit a hair above the optimiser's SoC grid (it truncates
+        // the charger's power): perfect hindsight is never worth less than a realistic controller
+        if (sys.battery.coupling === 'ups') optGbp = Math.max(optGbp, thrGbp);
         return {
             strategy: strat,
             systemGbp: sysGbp,
@@ -772,7 +795,7 @@ export class SolarEngine {
     _cellMetrics(sim, fo, sys = null, pvOnly = null) {
         const kwh = sim.annual.pvAcKwh + sim.annual.upsPvKwh;
         const gbp = sys?.battery && pvOnly ? this._yearOneGbp(sys, sim, pvOnly, fo) : this._value(sim, fo);
-        return { kwh, gbp, pPerKwh: kwh > 1e-9 ? (100 * gbp) / kwh : 0, peakSharePct: sim.annual.peakGenSharePct };
+        return { kwh, gbp, pPerKwh: kwh > 1e-9 ? (100 * gbp) / kwh : 0, peakSharePct: sim.annual.peakGenSharePct, peakShareAllPct: sim.annual.peakGenShareAllPct };
     }
 
     /**
@@ -867,7 +890,7 @@ export class SolarEngine {
         const sys = normalizeSystem(system);
         const fo = this.financeOptions(finance);
         const tg = this._target(sys, arrayId);
-        const key = `sweep|${systemKey(sys)}|${tg.station}|${tg.index}|${this.projectBaseW}|${stable(fo)}`;
+        const key = `sweep|${physicsKey(sys)}|${tg.station}|${tg.index}|${this.projectBaseW}|${stable(fo)}`;
         const hit = this._misc.get(key);
         if (hit) return hit;
         const grid = tg.station
@@ -901,6 +924,16 @@ export class SolarEngine {
             const proxy = az === null ? null : cells.find((c) => c.az === az && c.tilt === tilt) ?? null;
             starred.push({ key: k, ...v, proxyGbp: proxy?.gbp ?? null });
         }
+        // the proxy (1 sub-sample, without a station beside the kit) can rank two neighbouring cells
+        // the wrong way round: 'bestGbp' is the best of it and its neighbours at full fidelity
+        const bi = starred.findIndex((p) => p.key === 'bestGbp');
+        let top = bi;
+        starred.forEach((p, i) => { if (p.key.startsWith('neighbour') && p.gbp > starred[top].gbp + 1e-9) top = i; });
+        if (top !== bi) {
+            const k = starred[top].key;
+            starred[top] = { ...starred[top], key: 'bestGbp' };
+            starred[bi] = { ...starred[bi], key: k };
+        }
         const res = { arrayId: tg.index < 0 ? '*' : tg.ref.id, azimuths, tilts, cells, starred, proxyNote: PROXY_NOTE, basis: 'typical', station: tg.station };
         return this._misc.set(key, res);
     }
@@ -920,7 +953,7 @@ export class SolarEngine {
     answerOrientation(system, { tieBandPct = 3, finance = {}, flips: doFlips = true } = {}) {
         const sys = normalizeSystem(system);
         const fo = this.financeOptions(finance);
-        const key = `orient|${systemKey(sys)}|${this.projectBaseW}|${tieBandPct}|${stable(fo)}|${doFlips}`;
+        const key = `orient|${physicsKey(sys)}|${this.projectBaseW}|${tieBandPct}|${stable(fo)}|${doFlips}`;
         const hit = this._misc.get(key);
         if (hit) return hit;
         const tg = this._target(sys, '*');
@@ -928,7 +961,13 @@ export class SolarEngine {
         const window = restrict(sw.cells, { azMin: 90, azMax: 270, tiltMin: 15, tiltMax: 90 });
         const bestCell = bestBy(window, 'gbp');
         const at = (az, tilt) => this._pointed(sys, tg, az, tilt, fo);
-        const best = at(bestCell.az, bestCell.tilt);
+        // as in orientationSweep: the best of the proxy's best and its two best neighbours at full
+        // fidelity (cached when the sweep has already run them)
+        let best = at(bestCell.az, bestCell.tilt);
+        for (const c of neighbours(window, bestCell, tg.station ? { azStep: 15, tiltStep: 15 } : {}).sort((a, b) => b.gbp - a.gbp).slice(0, 2)) {
+            const p = at(c.az, c.tilt);
+            if (p.gbp > best.gbp + 1e-9) best = p;
+        }
         const out = {
             best,
             s35: at(180, 35),
@@ -1025,9 +1064,11 @@ export class SolarEngine {
 
     /**
      * Panels vs savings. Plug-in route: the plug-in kits actually on sale, at their prices, on the
-     * same spot and direction (a kit can't be extended — UX critique). Other routes: 1…N panels of
-     * the system's panel on its inputs (station: up to what its inputs can take), each extra panel
-     * priced from the catalog's loose panel + frame.
+     * same spot and direction (a kit can't be extended — UX critique); a power station beside the
+     * kit (C1) stays in every option with its own price (its line, panels and frames). Other
+     * routes: 1…N panels of the system's panel on its inputs, each extra panel priced from the
+     * catalog's loose panel + frame; a power station runs 0…what its inputs can take (0 = the
+     * station on its own, label 'No panels').
      * @param {Object} system
      * @param {{ finance?: Object }} [opts]
      * @returns {Array<{ x: number, label: string, capexGbp: number, savingsGbp: number, paybackYears: number|null, marginalGbp: number|null, kitId?: string }>}
@@ -1042,10 +1083,16 @@ export class SolarEngine {
         const first = sys.arrays[0] ?? sys.battery?.ups?.pvArrays[0] ?? null;
         const spot = first ? { id: sys.spotId, azimuth: first.azimuth, tilt: first.tilt, kind: first.mounting === 'wall' ? 'wall' : first.mounting === 'railing' ? 'railing' : 'ground', shadingPct: first.shadingPct, horizon: first.horizon } : null;
         if (sys.route === 'plugin' || sys.route === 'whatif' && !sys.battery) {
+            // a power station beside the kit (C1) stays in every option, and so does its price: its
+            // own line, panels and frames are what the build costs without the kit
+            const station = sys.battery?.coupling === 'ups' ? sys.battery : null;
+            const year0 = (cs) => cs.reduce((s, c) => s + (c.year === 0 ? c.gbp : 0), 0);
+            const stationGbp = station ? Math.round((year0(sys.costs) - year0(applyRulesFix(sys, { type: 'removeBattery' }, this.catalog).costs)) * 100) / 100 : 0;
             for (const kit of pluginKits(this.catalog)) {
                 const s = kitToSystem(kit, { spot, catalog: this.catalog, dsSource: this.ds0.meta?.source, id: kit.id });
                 const wp = kit.includedPanels.count * kit.includedPanels.wp;
-                pts.push({ ...this._point({ ...s, battery: sys.battery?.coupling === 'ups' ? sys.battery : null }, kit.name, wp, fo), kitId: kit.id });
+                const costs = stationGbp ? [...s.costs, { label: 'Power station and its own panels', gbp: stationGbp, year: 0, kind: 'hardware' }] : s.costs;
+                pts.push({ ...this._point({ ...s, battery: station, costs }, kit.name, wp, fo), kitId: kit.id });
             }
         } else {
             const panel = this.catalog.parts?.panel;
@@ -1054,14 +1101,18 @@ export class SolarEngine {
             const station = !sys.arrays.length && sys.battery?.coupling === 'ups';
             const wp = first?.wp ?? panel?.includedPanels?.wp ?? 460;
             const now = station ? sys.battery.ups.pvArrays.reduce((s, a) => s + a.count, 0) : sys.arrays.reduce((s, a) => s + a.count, 0);
-            const st = station ? findProduct(this.catalog, sys.kitId) : null;
+            const st = station ? stationProduct(this.catalog, sys) : null;
             const maxN = station ? Math.max(1, st?.pvWireablePanels ?? sys.battery.ups.pvInputs.length ?? 1)
                 : Math.max(1, Math.min(12, Math.floor((sys.inverter?.inputs ?? []).reduce((s, x) => s + (x.maxDcW ?? 0), 0) / Math.max(1, wp)) || 4));
             const o = orientationForSpot(spot);
             const baseCapex = sys.costs.reduce((s, c) => s + (c.year === 0 ? c.gbp : 0), 0);
-            for (let k = 1; k <= maxN; k++) {
+            // a power station also has a "no panels" step: the station on its own (a grid-tied build
+            // without panels is no build at all)
+            for (let k = station ? 0 : 1; k <= maxN; k++) {
                 let s;
-                if (station) {
+                if (station && k === 0) {
+                    s = { ...sys, battery: { ...sys.battery, ups: { ...sys.battery.ups, pvArrays: [] } } };
+                } else if (station) {
                     const nIn = Math.max(1, sys.battery.ups.pvInputs.length);
                     const per = new Array(Math.min(nIn, k)).fill(1);
                     for (let i = per.length; i < k; i++) per[0]++;
@@ -1074,8 +1125,8 @@ export class SolarEngine {
                     s = { ...sys, arrays: per.map((c, q) => ({ ...(sys.arrays[q] ?? first ?? {}), id: `a${q}`, count: c, wp, input: q })) };
                 }
                 const gbp = Math.round((baseCapex + (k - now) * perPanel) * 100) / 100;
-                s.costs = [...sys.costs.filter((c) => c.year !== 0), { label: k === now ? 'System as configured' : `System with ${k} panels`, gbp, year: 0, kind: 'hardware' }];
-                pts.push(this._point(s, `${k} × ${wp} W`, k * wp, fo, COARSE));
+                s.costs = [...sys.costs.filter((c) => c.year !== 0), { label: k === now ? 'System as configured' : k === 0 ? 'Without panels' : `System with ${k} panels`, gbp, year: 0, kind: 'hardware' }];
+                pts.push(this._point(s, k === 0 ? 'No panels' : `${k} × ${wp} W`, k * wp, fo, COARSE));
             }
         }
         pts.sort((a, b) => a.x - b.x || a.capexGbp - b.capexGbp);
@@ -1108,10 +1159,12 @@ export class SolarEngine {
         const allInOne = b.coupling === 'dc' && sys.arrays.length > 0;
         if (!allInOne) {
             // without the battery a battery-only build (H4, a power station) buys nothing at all —
-            // not even the electrician — while a build with panels keeps everything else
-            const battCost = this._batteryCapex(sys) ?? 0;
-            const gbp = weatherDependent({ ...sys, battery: null }) ? capex - battCost : 0;
-            const s0 = { ...sys, battery: null, costs: [{ label: 'Without the battery', gbp, year: 0, kind: 'hardware' }] };
+            // not even the electrician — while a build with panels keeps everything else except what
+            // came with the battery: its own line, and a station's own panels and frames, which do
+            // nothing without it (rules removeBattery: C1 keeps only the plug-in kit)
+            const bare = applyRulesFix(sys, { type: 'removeBattery' }, this.catalog);
+            const gbp = weatherDependent(bare) ? bare.costs.reduce((s, c) => s + (c.year === 0 ? c.gbp : 0), 0) : 0;
+            const s0 = { ...bare, costs: [{ label: 'Without the battery', gbp, year: 0, kind: 'hardware' }] };
             pts.push(this._point(s0, 'No battery', 0, fo));
         }
         const usable = (cap) => cap * (1 - b.minSocPct / 100);
@@ -1139,7 +1192,7 @@ export class SolarEngine {
 
     _slotSim(system) {
         const sys = normalizeSystem(system);
-        const key = `${systemKey(sys)}|${this.projectBaseW}`;
+        const key = `${physicsKey(sys)}|${this.projectBaseW}`;
         let r = this._slotSims.get(key);
         if (!r) r = this._slotSims.set(key, { sys, sim: this._sim(sys, { includeSlots: true }) });
         return r;
@@ -1171,7 +1224,11 @@ export class SolarEngine {
      * 21 December, or an explicit local date in the data.
      * @param {Object} system
      * @param {'summer'|'winter'|string} which
-     * @returns {{ date: string, which: string, slots: Array<{ t, ms, hh, time, load, pvAc, pvDirectAc, battNet, imp, exp, soc, price, exportPrice, clipped }> }}
+     * Slots also carry a power station's own panels (upsPv: DC kWh into it; upsPvWasted: what it
+     * could not take), the battery's stored-side flows (battIn/battOut, kWh into/out of the cells —
+     * a station's own-panel and dc charging included) and gridChg (AC kWh bought to charge).
+     * @returns {{ date: string, which: string, slots: Array<{ t, ms, hh, time, load, pvAc, pvDirectAc, battNet, imp, exp, soc, price, exportPrice, clipped,
+     *   upsPv, upsPvWasted, battIn, battOut, gridChg }> }}
      */
     typicalDay(system, which = 'summer') {
         const ds = this.ds;
@@ -1192,6 +1249,7 @@ export class SolarEngine {
                 t, ms, hh: ds.local.hh[t], time: `${String(Math.floor(lp.minutes / 60)).padStart(2, '0')}:${String(lp.minutes % 60).padStart(2, '0')}`,
                 load: sl.load[t], pvAc: sl.pvAc[t], pvDirectAc: sl.pvDirectAc[t], battNet: sl.battOutAc[t] - sl.battChgAc[t],
                 imp: sl.imp[t], exp: sl.exp[t], soc: sl.soc[t], price: ds.importPrice[t], exportPrice: x ? x[t] : 0, clipped: sl.clipped[t],
+                upsPv: sl.upsPv[t], upsPvWasted: sl.upsPvWasted[t], battIn: sl.battIn[t], battOut: sl.battOut[t], gridChg: sl.gridChg[t],
             });
         }
         return { date: day.date, which, slots };
@@ -1243,7 +1301,9 @@ export class SolarEngine {
      * disabling the bypass costs against optimal (at the unit's real charge rate). First-year £ on
      * the headline's basis (the station's share aged by its year-1 state of health), marginal over
      * the same system without the station: realisticGbp of a threshold station equals its
-     * headline.savingsGbp.
+     * headline.savingsGbp. bestCaseGbp is never below realisticGbp (the optimiser's SoC grid
+     * truncates the charger's power, and without panels the day-ahead planner is near-optimal);
+     * onlinePenaltyGbp compares the two optimiser runs.
      * @param {Object} system a system with a 'ups' battery
      * @param {{ finance?: Object }} [opts]
      * @returns {{ realisticGbp, bestCaseGbp, peakCutGbp, onlineGbp, onlinePenaltyGbp, onlineWarnings: string[], switchMs, hid, bypassDisableable } | null}
@@ -1252,7 +1312,10 @@ export class SolarEngine {
         const sys = normalizeSystem(system);
         if (sys.battery?.coupling !== 'ups') return null;
         const fo = this.financeOptions(finance);
-        const key = `ups|${systemKey(sys)}|${this.projectBaseW}|${stable(fo)}`;
+        // the station's catalog facts (switchover, HID) come from its product, found by kind: C1's
+        // kitId is the plug-in kit beside it
+        const st = stationProduct(this.catalog, sys);
+        const key = `ups|${physicsKey(sys)}|${st?.id ?? ''}|${this.projectBaseW}|${stable(fo)}`;
         const hit = this._misc.get(key);
         if (hit) return hit;
         const b = sys.battery;
@@ -1264,18 +1327,21 @@ export class SolarEngine {
         const y1 = (s, sim) => this._yearOneGbp(s, sim, baseSim, fo);
         const v = (s) => { const n = normalizeSystem(s); return y1(n, this._sim(n)) - base; };
         const thr = v(withStrategy(sys, 'threshold'));
-        const opt = v(withStrategy(sys, 'optimal'));
+        const optDp = v(withStrategy(sys, 'optimal'));
+        // the optimiser's SoC grid truncates the charger's power, and on a station without panels
+        // the day-ahead planner is near-optimal: best case is never below the realistic figure
+        const opt = Math.max(optDp, thr);
         const plug = v({ ...sys, battery: { ...b, strategy: 'schedule', schedule: { ...b.schedule, chargeWindow: ['19:00', '16:00'], dischargeWindow: ['16:00', '19:00'] } } });
         const onlineSys = normalizeSystem({ ...sys, battery: { ...b, strategy: 'optimal', ups: { ...b.ups, bypass: 'disabled' } } });
         const onlineSim = this._sim(onlineSys);
         const online = y1(onlineSys, onlineSim) - base;
-        const st = findProduct(this.catalog, sys.kitId);
         return this._misc.set(key, {
             realisticGbp: thr,
             bestCaseGbp: opt,
             peakCutGbp: plug,
             onlineGbp: online,
-            onlinePenaltyGbp: online - opt,
+            // optimiser against optimiser (same SoC grid)
+            onlinePenaltyGbp: online - optDp,
             onlineWarnings: onlineSim.warnings,
             switchMs: st?.upsSwitchMs ?? null,
             hid: st?.hid ?? false,

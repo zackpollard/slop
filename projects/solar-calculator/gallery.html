@@ -44,6 +44,7 @@
 <script type="module">
 import * as ui from './js/ui.js';
 import * as charts from './js/charts.js';
+import { createRerunBar } from './js/app.js';
 const { h, fmt } = ui;
 const root = document.getElementById('g');
 
@@ -82,6 +83,16 @@ root.append(section('Stat tiles',
     ui.statTile({ label: 'Lost to 800 W limit', value: fmt.kwh(31.4), sub: '2.8% of what it makes', tone: 'warn' }),
     ui.statTile({ label: 'Simulating', loading: true, sub: 'Plug-in kits…' }))));
 
+root.append(section('Figure pair · coverage chip (promoted from Usage)',
+  h('div', { class: 'grid-2' },
+    ui.card({ title: 'The 4–7pm peak', body: h('div', { class: 'stack-sm' },
+      ui.figurePair([{ label: 'You paid per kWh at 4–7pm', value: fmt.p(35.4), strong: true }, { label: 'and the rest of the day', value: fmt.p(18.3) }]),
+      ui.figurePair([{ label: 'Average price you paid', value: '21.2', unit: 'p/kWh' }, { label: 'A flat load would pay', value: '20.0', unit: 'p/kWh', strong: true }])) }),
+    ui.card({ title: 'Coverage chip', body: h('div', { class: 'g-row' },
+      ui.coverageChip({ realPct: 100, extrapolatedSlots: 0 }),
+      ui.coverageChip({ realPct: 53.7, extrapolatedSlots: 166 * 48 }),
+      ui.coverageChip({ realPct: 98.2, extrapolatedSlots: 0 }, { href: '#data?edit=prices' })) }))));
+
 root.append(section('Badges, buttons, tooltip',
   h('div', { class: 'stack-sm' },
     h('div', { class: 'g-row' },
@@ -93,6 +104,7 @@ root.append(section('Badges, buttons, tooltip',
       ui.button({ label: 'Compare', icon: 'chart' }),
       ui.button({ label: 'See the details', kind: 'ghost' }),
       ui.button({ label: 'Save as PDF', kind: 'ghost', icon: 'print', size: 'sm' }),
+      ui.button({ label: 'Download CSV', kind: 'ghost', icon: 'download', size: 'sm' }),
       ui.button({ label: 'Reset everything', kind: 'danger', size: 'sm' }),
       ui.button({ label: 'Disabled', disabled: true }),
       (() => { const b = h('button', { class: 'help-dot', type: 'button', 'aria-label': 'What is typical year?' }, '?'); ui.tooltip(b, 'Your usage and prices from the last 12 months, with each month’s sunshine scaled to its 2006–2025 average at your home.'); return b; })()))));
@@ -144,6 +156,33 @@ root.append(section('Table (sortable · card list under 600 px)',
       { key: 'conf', label: 'Confidence', mobile: 'hide' },
     ], rows: OPTIONS }) })));
 
+const BEATEN = [
+  { id: 'S06', name: 'City Plumbing 1×465 W', route: 'plugin', cost: 336, sav: 77, lo: 70, hi: 82, payback: 4.2, ahead: 434, conf: 'High' },
+  { id: 'U2', name: 'BLUETTI Elite 300 for the servers', route: 'ups', cost: 1299, sav: 61, lo: 58, hi: 64, payback: 21.3, ahead: -690, conf: 'Medium' },
+  { id: 'S04', name: 'Octopus 1×460 W', route: 'plugin', cost: 450, sav: 98, lo: 86, hi: 106, payback: 4.6, ahead: 480, conf: 'High' },
+];
+const tableCols = [
+  { key: 'name', label: 'Option', mobile: 'title' },
+  { key: 'route', label: 'Route', format: v => ui.badge({ text: routeLabel[v], tone: v }), sortable: false, mobile: 'hide' },
+  { key: 'cost', label: 'Cost', align: 'right', format: v => fmt.gbp(v), help: 'Upfront: the kit, panels, frames and an electrician where needed.' },
+  { key: 'sav', label: 'Saves/yr', align: 'right', format: (v, r) => `${fmt.gbp(v)} (${fmt.range(r.lo, r.hi, fmt.gbp)})`, mobile: 'primary', help: 'Typical-year sunshine; the range is 8 years in 10 (2006–2025 weather).' },
+  { key: 'payback', label: 'Payback', align: 'right', format: v => (v === 0 ? 'now' : fmt.years(v)) },
+  { key: 'ahead', label: '10-yr value', align: 'right', format: v => fmt.gbp(v), help: 'Net present value after 10 years, in today’s money.' },
+  { key: 'conf', label: 'Confidence', sortable: false, mobile: 'hide', help: 'How sure: data coverage, weather spread and how well the model knows this kit.' },
+];
+root.append(section('Table groups · dividers · header tooltips · note · followSort',
+  ui.card({ title: 'Ranked, with the beaten and future-rules options grouped', subtitle: 'Sorting applies within each group. Hover a dotted header for its meaning. On a phone the sorted column becomes the card’s figure.', body: ui.table({
+    sortKey: '-ahead', followSort: true, onToggle: (k, open) => ui.toast(`${k}: ${open ? 'shown' : 'hidden'}`, { timeoutMs: 1500 }),
+    columns: tableCols,
+    groups: [
+      { key: 'ranked', rows: OPTIONS.filter(o => !['whatif', 'reference'].includes(o.route)) },
+      { key: 'beaten', title: 'Beaten on both price and savings', note: 'Something else costs less and saves more', rows: BEATEN, collapsible: true, collapsed: true },
+      { key: 'future', title: 'Future rules', note: 'Not legal as a plug-in today', rows: OPTIONS.filter(o => o.route === 'whatif'), className: 'is-muted' },
+      { key: 'refs', divider: true, rows: OPTIONS.filter(o => o.route === 'reference') },
+    ],
+    note: [h('span', null, '10-yr value is in today’s money. '), ui.button({ label: 'Is the extra worth it?', kind: 'link', size: 'sm', href: '#compare' })],
+  }) })));
+
 /* ── disclosure, progress, skeleton, empty, overlays ──────────── */
 const pl = ui.progressList(ui.LOAD_STEPS);
 const runProgress = () => {
@@ -152,6 +191,15 @@ const runProgress = () => {
   steps.forEach(([k, s, d], i) => setTimeout(() => pl.set(k, s, d), 250 * (i + 1)));
 };
 runProgress();
+// settle(): a run that stops mid-way — the failed step is marked, every spinner goes back to waiting
+const pl2 = ui.progressList(ui.loadStepsFor('csv'));
+const runFailing = () => {
+  ui.loadStepsFor('csv').forEach(s => pl2.set(s.key, 'pending', ''));
+  pl2.set('usage', 'active', 'reading the file…');
+  pl2.set('prices', 'active');
+  setTimeout(() => pl2.settle('usage'), 900);
+};
+runFailing();
 root.append(section('Disclosure · progress · skeleton · empty · overlays',
   h('div', { class: 'grid-2' },
     ui.card({ title: 'Your questions', body: h('div', null,
@@ -160,6 +208,7 @@ root.append(section('Disclosure · progress · skeleton · empty · overlays',
       ui.details({ summary: 'How sure is this?', body: h('p', null, 'How sure: high. Weather alone moves it between £150 and £186 a year.') })) }),
     h('div', { class: 'stack' },
       ui.card({ title: 'Progress list', actions: ui.button({ label: 'Replay', size: 'sm', kind: 'ghost', icon: 'refresh', onClick: runProgress }), body: pl.el }),
+      ui.card({ title: 'Progress list · settle()', subtitle: 'A CSV run that fails at “Your usage”: no row keeps spinning, and the error text stays in the panel below the list.', actions: ui.button({ label: 'Replay', size: 'sm', kind: 'ghost', icon: 'refresh', onClick: runFailing }), body: pl2.el }),
       ui.card({ title: 'Skeleton', body: h('div', { class: 'stack-sm' }, ui.skeleton({ lines: 3 }), ui.skeleton({ height: 64 })) }),
       ui.card({ body: h('div', { class: 'g-row' },
         ui.button({ label: 'Toast', onClick: () => ui.toast('Saved “Octopus 2×460 on the flat roof”', { tone: 'good', action: { label: 'Undo', onClick: () => ui.toast('Undone') } }) }),
@@ -263,8 +312,13 @@ for (let d = 0; d < DAYS; d++) {
   }
   if (d === 40) for (let k = 0; k < 48; k++) loadHm[d * 48 + k] = NaN;   // a missing day
 }
-wide.append(chartCard('Your load, every half-hour of the year', 'Days run left to right, time of day top to bottom. Grey = no data.', e => charts.createHeatmap(e, {
-  rows: DAYS, cols: 48, values: loadHm, rowLabels: dates, colLabels: HH, transpose: true, height: 240, valueLabel: 'kWh', format: v => `${fmt.num(v, 2)} kWh`, scale: { ramp: 'sequential' } })));
+// estimated (gap-filled) readings: a fortnight in February and a few scattered half-hours
+const estMask = new Uint8Array(DAYS * 48);
+for (let d = 125; d < 139; d++) for (let k = 0; k < 48; k++) estMask[d * 48 + k] = 1;
+for (let d = 200; d < 203; d++) for (let k = 14; k < 30; k++) estMask[d * 48 + k] = 1;
+wide.append(chartCard('Your load, every half-hour of the year', 'Days run left to right, time of day top to bottom. Grey = no data; hatched = estimated (mask option). Month labels thin out on narrow screens.', e => charts.createHeatmap(e, {
+  rows: DAYS, cols: 48, values: loadHm, rowLabels: dates, colLabels: HH, transpose: true, height: 240, valueLabel: 'kWh', format: v => `${fmt.num(v, 2)} kWh`, scale: { ramp: 'sequential' },
+  mask: estMask, maskLabel: 'Estimated' })));
 wide.append(chartCard('Agile price, every half-hour', 'Blue: cheaper than the 20p average · orange: dearer', e => charts.createHeatmap(e, {
   rows: DAYS, cols: 48, values: priceHm, rowLabels: dates, colLabels: HH, transpose: true, height: 240, valueLabel: 'p/kWh', format: v => fmt.p(v), scale: { ramp: 'diverging', mid: 20 } })));
 
@@ -281,10 +335,17 @@ const yieldModel = (az, tilt) => {
 const roseVals = new Float64Array(AZ.length * TI.length);
 let best = { gbp: -1 };
 AZ.forEach((a, i) => TI.forEach((t, j) => { const m = yieldModel(a, t); roseVals[i * TI.length + j] = m.gbp; if (m.gbp > best.gbp) best = { ...m, az: a, tilt: t }; }));
-gridCharts.append(chartCard('The solar rose', '£ saved a year by direction (around) and tilt (flat centre → vertical rim)', e => charts.createPolar(e, {
-  azimuths: AZ, tilts: TI, values: roseVals, metricLabel: '£/yr', format: v => fmt.gbp(v),
-  markers: [{ az: best.az, tilt: best.tilt, label: `Best £${Math.round(best.gbp)}`, kind: 'best' }, { az: 180, tilt: 35, label: 'Current', kind: 'current' }, { az: 270, tilt: 90, label: 'W90', kind: 'reference' }, { az: 180, tilt: 45, label: 'S45', kind: 'reference' }],
-  onPick: (az, tilt) => ui.toast(`Use ${fmt.compass(az)} ${az}° at ${tilt}°`) })));
+// Enter (or a click) picks a cell: the 'pick' marker moves there and, because the chart keeps a
+// keyboard user's cursor across update(), the arrows carry on from the picked cell.
+let rosePick = { az: 240, tilt: 50 };
+const roseSpec = () => ({
+  azimuths: AZ, tilts: TI, values: roseVals, metricLabel: '£ a year', tipLabel: 'a year', format: v => fmt.gbp(v),
+  markers: [{ az: best.az, tilt: best.tilt, label: `Best £${Math.round(best.gbp)}`, kind: 'best' }, { az: 180, tilt: 35, label: 'Current', kind: 'current' },
+    { az: rosePick.az, tilt: rosePick.tilt, label: 'Picked', kind: 'pick' }, { az: 270, tilt: 90, label: 'W90', kind: 'reference' }],
+  onPick: (az, tilt) => { rosePick = { az, tilt }; roseChart.update(roseSpec()); ui.toast(`Picked ${fmt.compass(az)} ${az}° at ${tilt}°`, { timeoutMs: 1500 }); },
+});
+let roseChart = null;
+gridCharts.append(chartCard('The solar rose', '£ saved a year by direction (around) and tilt (flat centre → vertical rim). Gold ring: your pick.', e => { roseChart = charts.createPolar(e, roseSpec()); }));
 const AZF = Array.from({ length: 24 }, (_, i) => i * 15), TIF = Array.from({ length: 10 }, (_, i) => i * 10);
 const fullVals = new Float64Array(AZF.length * TIF.length);
 AZF.forEach((a, i) => TIF.forEach((t, j) => { fullVals[i * TIF.length + j] = yieldModel(a, t).kwh * (1 - 0.35 * Math.max(0, Math.cos(a * Math.PI / 180)) * Math.sin(t * Math.PI / 180)); }));
@@ -322,6 +383,18 @@ gridCharts.append(chartCard('Money back over 20 years', 'Cumulative, nominal £ 
   series: [{ key: 'p50', label: 'Typical', color: 'pv', values: cf(172, 650), area: true }, { key: 'p10', label: 'Dull years', color: 'muted', values: cf(150, 650), dash: true }, { key: 'p90', label: 'Sunny years', color: 'muted', values: cf(186, 650), dash: [2, 3] }],
   markers: [{ x: 3.8, label: 'pays back · 3.8 yrs' }, { x: 12, label: 'new micro-inverter' }] })));
 
+// 11b. Range band series + null gaps: the always-on load by month, p10–p90 of days as a band
+const blMonths = MONTHS;
+const blMid = [548, 556, 571, 590, 583, 566, 551, 542, null, 539, 547, 560];       // Jun: no real days → a gap, not a zero
+const blLo = blMid.map((v, i) => (v == null ? null : v - 14 - (i % 3) * 4));
+const blHi = blMid.map((v, i) => (v == null ? null : v + 19 + (i % 4) * 5));
+gridCharts.append(chartCard('Always-on load by month', 'Band: most days (p10–p90) · line: the month’s typical always-on load · June has no real readings (a gap)', e => charts.createLine(e, {
+  ariaLabel: 'Always-on load by month', x: { values: blMonths, format: k => fmt.month(k).slice(0, 3), tipFormat: k => fmt.month(k) }, y: { format: v => fmt.w(v), zero: false },
+  series: [
+    { key: 'band', label: 'Most days (p10–p90)', color: 'load', lo: blLo, hi: blHi, format: v => fmt.w(v) },
+    { key: 'w', label: 'Always-on load', color: 'load', values: blMid, format: v => fmt.w(v) },
+  ] })));
+
 // 12. Base-load curve
 const xs = [0, 100, 200, 300, 400, 500, 600, 800, 1000, 1200, 1500];
 const sat = (x, cap, k) => cap * (1 - Math.exp(-x / k));
@@ -329,6 +402,26 @@ gridCharts.append(chartCard('How much your always-on load matters', '£ saved a 
   x: { values: xs, type: 'linear', label: 'Always-on load (W)', format: v => fmt.num(v) , tipFormat: v => `${fmt.w(v)} always-on` }, y: { format: v => fmt.gbp(v) },
   series: [{ key: 'S01', label: 'Octopus 2×460', color: 'cat1', values: xs.map(x => sat(x, 185, 260) + 6) }, { key: 'H1', label: 'STREAM Ultra + 4×500', color: 'cat2', values: xs.map(x => sat(x, 430, 420) + 30) }, { key: 'U1', label: 'DELTA 3 Plus', color: 'cat3', values: xs.map(x => Math.max(0, sat(x, 70, 500) - 12)) }],
   markers: [{ x: 482, label: 'you now' }], bands: [{ from: 800, to: 1500, label: 'all of an 800 W kit used at home' }] })));
+
+/* ── shell pieces: keepFocus, re-run bar ──────────────────────── */
+const kfHost = h('div', { class: 'stack-sm' });
+let kfCount = 2;
+const fk = (el, key) => { el.dataset.fk = key; return el; };
+const kfBuild = () => ui.put(kfHost,
+  h('p', { class: 'g-note', tabindex: '-1' }, `${kfCount} panels — each press rebuilds this whole block.`),
+  h('div', { class: 'g-row' },
+    fk(ui.button({ label: 'Fewer', size: 'sm', disabled: kfCount <= 1, onClick: () => { kfCount--; ui.keepFocus(kfHost, kfBuild, null, { fallback: 'p' }); } }), 'fewer'),
+    fk(ui.button({ label: 'More', size: 'sm', onClick: () => { kfCount++; ui.keepFocus(kfHost, kfBuild); } }), 'more')));
+kfBuild();
+const rerunHost = h('div', { class: 'rerun-bar', role: 'region', 'aria-label': 'Re-run', hidden: true });
+document.body.appendChild(rerunHost);
+const rerun = createRerunBar(rerunHost);
+root.append(section('Shell pieces: keepFocus · re-run bar',
+  h('div', { class: 'grid-2' },
+    ui.card({ title: 'ui.keepFocus', subtitle: 'Keyboard focus stays on the rebuilt button (data-fk); “Fewer” at 1 is disabled, so focus falls back to the text.', body: kfHost }),
+    ui.card({ title: 'Re-run bar', subtitle: 'dismissLabel names what the second button does. While it shows, scroll-padding-bottom keeps focused controls above it.', body: h('div', { class: 'g-row' },
+      ui.button({ label: 'Show (Not now)', size: 'sm', onClick: () => rerun.show({ text: 'Your settings changed', actionLabel: 'Re-run', onRun: () => ui.toast('Re-running'), onDismiss: () => ui.toast('Kept for later') }) }),
+      ui.button({ label: 'Show (Discard)', size: 'sm', onClick: () => rerun.show({ text: '3 unsaved changes', actionLabel: 'Apply & re-run', dismissLabel: 'Discard', onRun: () => ui.toast('Applied'), onDismiss: () => ui.toast('Discarded') }) })) }))));
 
 /* ── map ──────────────────────────────────────────────────────── */
 const mapBox = h('div', { style: { height: '280px' } });

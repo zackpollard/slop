@@ -10,8 +10,9 @@
  *   1 tiles   always-on load · what it costs · your electricity, last 12 months
  *   2 best    "Buy the …": typical-year saving with the weather range, payback, a cash-flow runway,
  *             why-line, "same as switching off N W", next steps, runner-up and going-bigger lines
- *   3 options every option ranked by 10-year value; options beaten on both price and savings
- *             folded away; yardsticks pinned last; future-rules plans in their own table
+ *   3 options every option ranked by 10-year value, in one grouped table (optionGroups): the
+ *             options, the yardsticks under a divider, those beaten on both price and savings
+ *             (folded), the future-rules plans; prices the user set in Compare are used and marked
  *   4 scatter cost vs yearly saving with payback lines, weather whiskers and the best-value front
  *   5 questions  west vs south, battery, power station, growing later, how sure, always-on load —
  *             each a one-line answer that opens to the reasoning, a chart and a link onward
@@ -20,10 +21,12 @@
  * Recomputing (settings, a new demo load) keeps every block on screen, dimmed, until the stage
  * that refreshes it arrives — figures never jump between a typical and an actual year.
  *
- * View-local components (candidates for ui.js / charts.js): vdRunway() — the best buy's cumulative
- * cash over ten years with the weather fan and the pay-back point; vdRange() — a p10–p90 bar
- * inside a table cell; vdStages() — a compact stage strip for streamed work; rich() — renders
- * the verdict copy's **emphasis**. Their CSS lives in the injected <style id="style-verdict">.
+ * Shared pieces: ui.table groups (with header help and its .tbl-note), ui.coverageChip, ui.put,
+ * the charts' tableCaption. View-local components (candidates for ui.js / charts.js): vdRunway() —
+ * the best buy's cumulative cash over ten years with the weather fan and the pay-back point;
+ * vdRange() — a p10–p90 bar inside a table cell; vdStages() — a compact stage strip for streamed
+ * work; rich() — renders the verdict copy's **emphasis**. Their CSS lives in the injected
+ * <style id="style-verdict">.
  */
 
 const STYLE_ID = 'style-verdict';
@@ -54,14 +57,6 @@ const CSS = `
 .vd-context { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 8px; }
 .vd-context .context-line { min-width: 0; overflow-wrap: anywhere; }
 .vd-ctx-short { display: none; }
-.vd-chip {
-    display: inline-flex; align-items: center; gap: 7px; min-height: 26px; padding: 0 10px;
-    border: 1px solid var(--border); border-radius: 999px; text-decoration: none;
-    font-family: var(--font-mono); font-size: 11.5px; color: var(--text-2); white-space: nowrap;
-}
-.vd-chip:hover { border-color: var(--accent-line); color: var(--text); }
-.vd-chip-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--good); flex: none; }
-.vd-chip.is-warn .vd-chip-dot { background: var(--warn); }
 
 .vd-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 26px; }
 .vd-toolbar:empty { display: none; }
@@ -70,10 +65,10 @@ const CSS = `
 .vd-demo .slider { flex: 1; min-width: 150px; }
 .vd-demo .range-out { min-width: 7ch; }
 .vd-stages { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; margin: 0; padding: 0; list-style: none;
-    font-family: var(--font-mono); font-size: 11.5px; color: var(--faint); }
+    font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); }
 .vd-stages li { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
 .vd-stage-dot { width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--border-strong); flex: none; }
-.vd-stages li.is-done { color: var(--muted); }
+.vd-stages li.is-done { color: var(--text-2); }
 .vd-stages li.is-done .vd-stage-dot { background: var(--good); border-color: var(--good); }
 .vd-stages li.is-active { color: var(--text); }
 .vd-stages li.is-active .vd-stage-dot { border-color: var(--surface-3); border-top-color: var(--accent); animation: spin .8s linear infinite; width: 10px; height: 10px; border-width: 2px; }
@@ -125,7 +120,7 @@ const CSS = `
 .vd-rw-dot { position: absolute; width: 11px; height: 11px; margin: -5.5px 0 0 -5.5px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px var(--surface), 0 0 0 4.5px var(--accent-line); }
 .vd-rw-tag { position: absolute; font-family: var(--font-mono); font-size: 11px; color: var(--text); white-space: nowrap; text-shadow: 0 0 3px var(--surface), 0 0 6px var(--surface); }
 .vd-rw-tag.is-muted { color: var(--muted); }
-.vd-rw-axis { position: relative; height: 18px; font-family: var(--font-mono); font-size: 10.5px; color: var(--faint); }
+.vd-rw-axis { position: relative; height: 18px; font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); }
 .vd-rw-axis span { position: absolute; top: 3px; transform: translateX(-50%); white-space: nowrap; }
 .vd-rw-axis span:first-child { transform: none; }
 .vd-rw-axis span:last-child { transform: translateX(-100%); }
@@ -159,21 +154,20 @@ const CSS = `
 .vd-opt-name > span:first-child { overflow-wrap: anywhere; }
 .vd-opt-badges { display: flex; flex-wrap: wrap; gap: 4px; }
 .vd-opt-later { font-size: 12px; color: var(--muted); font-weight: 400; }
+.vd-opt-later + .vd-opt-later { margin-top: -2px; }
 .vd-opt-badges .badge { height: 19px; font-size: 10.5px; padding: 0 6px; }
 .vd-sav { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .vd-range { position: relative; display: block; width: 64px; height: 4px; border-radius: 2px; background: var(--surface-3); }
 .vd-range-band { position: absolute; top: 0; bottom: 0; border-radius: 2px; background: var(--accent); opacity: .55; min-width: 2px; }
 .vd-range-mid { position: absolute; top: -3px; width: 2px; height: 10px; margin-left: -1px; border-radius: 1px; background: var(--text); }
-.vd-opt .tbl tr.vd-ref-first > * { border-top: 1px dashed var(--border-strong); }
+/* yardsticks sit under a dashed divider, in quieter ink (ui.table group 'refs') */
 .vd-opt .tbl tr.vd-ref > * { color: var(--muted); }
+/* a group heading that wraps on a phone reads from the left, like the rest of the card */
+.vd-opt .tbl-group-toggle { text-align: left; }
 .vd-neg { color: var(--bad); }
 .vd-free { color: var(--good); }
-.vd-sub { margin-top: 18px; }
-.vd-sub-title { font-size: 14px; font-weight: 600; color: var(--text); }
 .vd-sub-note { font-size: 13px; color: var(--muted); margin: 2px 0 8px; }
-.vd-more-rows { margin-top: 10px; }
-.vd-foot { margin: 10px 0 0; }
-.vd-foot b { color: var(--text-2); font-weight: 600; }
+.vd-opt .tbl-note b { color: var(--text-2); font-weight: 600; }
 .vd-rank-note { display: flex; gap: 8px; align-items: flex-start; margin: 0 0 10px; }
 .vd-rank-note .icon { margin-top: 2px; color: var(--info); }
 .vd-inline-link {
@@ -190,7 +184,7 @@ const CSS = `
 /* ── questions ── */
 .vd-qs .disclosure:first-child { border-top: 0; }
 .vd-q { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 2px 8px; padding: 4px 0; }
-.vd-q-idx { font-family: var(--font-mono); font-size: 11px; color: var(--faint); padding-top: 2px; grid-row: span 2; }
+.vd-q-idx { font-family: var(--font-mono); font-size: 11px; color: var(--muted); padding-top: 2px; grid-row: span 2; }
 .vd-q-title { font-size: 13px; color: var(--muted); font-weight: 500; }
 .vd-q-answer { font-size: 15px; color: var(--text); font-weight: 500; line-height: 1.4; }
 .vd-q-answer b { font-weight: 650; color: var(--accent-strong); }
@@ -212,8 +206,6 @@ const CSS = `
 .vd-assume dt { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding-top: 3px; }
 .vd-assume dd { margin: 0; color: var(--text-2); }
 .vd-print-only { display: none; }
-.vd .chart-tip:not(.show) { transform: none !important; transition: opacity .1s, transform 0s .1s; }
-.vd-untitled .chart-title { display: none; }
 @media (min-width: 601px) { .vd-chart-fold > summary { display: none; } .vd-chart-fold { border: 0; } .vd-chart-fold > .disclosure-body { padding: 0; } }
 
 @media (max-width: 1023px) {
@@ -235,7 +227,6 @@ const CSS = `
     .vd-head-actions { display: none; }
     .vd-ctx-long { display: none; }
     .vd-ctx-short { display: inline; }
-    .vd-chip { min-height: 44px; padding: 0 12px; }
     .vd-demo { flex-basis: 100%; }
     .vd-best { padding: 18px 16px 16px; }
     .vd-b-best { order: 1; }
@@ -248,7 +239,7 @@ const CSS = `
     .vd-lede { font-size: 14.5px; }
     .vd-readout dd { font-size: 19px; }
     .vd-runway { display: none; }
-    .vd-chip:not(.is-warn) { display: none; }
+    .vd .cov-chip:not(.is-warn) { display: none; }
     .vd-readout > div { padding: 9px 11px 10px; }
     .vd-alts { margin-top: 4px; }
     .vd-steps { margin-top: 12px; padding-top: 4px; }
@@ -267,12 +258,13 @@ const CSS = `
 }
 @media print {
     .vd-block.is-stale, .vd-qd.is-stale { opacity: 1; }
-    .vd-toolbar, .vd-head-actions, .vd-actions, .vd-banner .btn, .vd-q-link, .vd-more-rows, .vd-inline-link, .vd-override a { display: none !important; }
+    .vd-toolbar, .vd-head-actions, .vd-actions, .vd-banner .btn, .vd-q-link, .vd-inline-link, .vd-override a { display: none !important; }
     .vd-print-only { display: block; margin-top: 4px; }
-    .vd-chip { display: none !important; }
+    .vd .cov-chip { display: none !important; }
     .vd :focus, .vd :focus-visible { outline: none !important; box-shadow: none !important; }
-    /* style.css keeps every card whole on paper; these run to pages, so let them flow and keep
-       only their parts (a question's heading with its first lines, a chart with its table) whole */
+    /* style.css keeps a card without a chart or table whole on paper; these run to pages (the best
+       buy and the questions too), so let them flow and keep only their parts (a question's heading
+       with its first lines, a chart with its table) whole */
     .vd .vd-best, .vd .vd-qs, .vd .vd-opt, .vd .vd-b-scatter .card { break-inside: auto !important; }
     .vd-qd { break-inside: auto; }
     .vd-qd > summary { break-after: avoid; }
@@ -317,8 +309,36 @@ function shortSetting(key, label, side) {
     if (SHORT_SETTING[key]) return SHORT_SETTING[key][side];
     return String(label ?? '').replace(/^prices\s+/i, '');
 }
-/** replaceChildren that skips null/false (replaceChildren would print "null"). */
-const put = (el, ...kids) => el.replaceChildren(...kids.flat().filter(k => k != null && k !== false && k !== ''));
+
+/**
+ * The ranked options as the groups of one ui.table, in this order: the options (best 10-year value
+ * first), the yardsticks under a dashed divider, the options beaten on both price and savings
+ * (folded until opened) and the future-rules plans (folded on phones). On phones only the first
+ * `mobileRows` options show; the rest, with the yardsticks, sit in a folded 'More options' group.
+ * Pure — rows are the verdict's own rows, in the verdict's order.
+ * @param {{ ranked?: object[] }} V
+ * @param {{ phone?: boolean, showAll?: boolean, beatenOpen?: boolean, plansOpen?: boolean, mobileRows?: number }} [o]
+ * @returns {{ groups: Array<{ key: string, title?: string, note?: string, rows: object[], divider?: boolean, collapsible?: boolean,
+ *   collapsed?: boolean, className?: string }>, main: object[], refs: object[], beaten: object[], plans: object[], limited: boolean }}
+ */
+export function optionGroups(V, { phone = false, showAll = false, beatenOpen = false, plansOpen = false, mobileRows = MOBILE_ROWS } = {}) {
+    const ranked = V?.ranked ?? [];
+    const main = ranked.filter(r => (r.legal === 'ok' || r.legal === 'check') && !r.dominatedBy);
+    const refs = ranked.filter(r => r.legal === 'reference');
+    const beaten = ranked.filter(r => r.dominatedBy);
+    const plans = ranked.filter(r => r.legal === 'whatif');
+    const limited = !!phone && main.length > mobileRows;
+    const groups = limited
+        ? [{ key: 'main', rows: main.slice(0, mobileRows) },
+            { key: 'more', title: 'More options', rows: [...main.slice(mobileRows), ...refs], collapsible: true, collapsed: !showAll, className: 'vd-g-more' }]
+        : [{ key: 'main', rows: main }, { key: 'refs', rows: refs, divider: true, className: 'vd-g-refs' }];
+    groups.push(
+        { key: 'beaten', title: 'Beaten on both price and savings', note: 'Each costs at least as much as another option and saves no more.',
+            rows: beaten, collapsible: true, collapsed: !beatenOpen, className: 'vd-g-beaten' },
+        { key: 'plans', title: 'Not legal yet — for planning', note: plans[0]?.banner || 'Not legal in GB today — shown for planning only.',
+            rows: plans, collapsible: !!phone, collapsed: !!phone && !plansOpen, className: 'vd-g-plans' });
+    return { groups, main, refs, beaten, plans, limited };
+}
 
 /** 'YYYY-MM-DD' → '5 Oct 2026'. */
 function isoDay(fmt, iso) {
@@ -427,8 +447,9 @@ export default {
             ctx.data.on('dataset', () => this.render()),
             ctx.data.on('settings', () => this.render()),
             ctx.data.on('status', () => this.render()),
-            // saved price overrides (Compare) don't change the verdict, but the options card says so
-            ctx.data.on('scenarios', () => { if (this.v && this.V && stageIdx(this.V.stage) >= stageIdx('plugin')) this.fillOptions(this.V); }),
+            // the user's own prices from Compare are verdict inputs (DataHub sends them as
+            // opts.overrides): a change re-runs it — a hidden tab catches up when shown
+            ctx.data.on('overrides', () => { if (this.v) this.render(); }),
         ];
         this.mq = typeof window !== 'undefined' && window.matchMedia ? window.matchMedia('(max-width: 600px)') : null;
         this.onMq = () => {
@@ -627,7 +648,7 @@ export default {
         p.optBody = h('div', null, ui.skeleton({ height: 320 }));
         p.optSub = h('span', null, 'Every option on your data, best 10-year value first.');
         const optCard = ui.card({ eyebrow: 'All the options', title: 'Every option, ranked', subtitle: p.optSub, className: 'vd-opt', body: p.optBody });
-        p.scatterHost = h('div', { class: 'vd-untitled' });
+        p.scatterHost = h('div');
         p.scatterFold = ui.details({ summary: 'Show chart', body: p.scatterHost, open: true, className: 'vd-chart-fold' });
         const scatterCard = ui.card({ title: 'Cost vs yearly saving', subtitle: 'Each dot is an option: further up saves more, further left costs less. Dashed lines show simple payback; whiskers the 2006–2025 weather range.',
             body: p.scatterFold });
@@ -636,7 +657,7 @@ export default {
             const answer = h('span', { class: 'vd-q-answer' }, h('span', { class: 'vd-q-pending' }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Working it out…'));
             const text = h('div', { class: 'vd-rich' });
             const extra = h('div');
-            const chart = h('div', { class: 'vd-untitled' });
+            const chart = h('div');
             const link = h('div', { class: 'vd-q-link' });
             const body = h('div', { class: 'vd-q-body' }, text, extra, chart, link);
             const d = ui.details({
@@ -688,12 +709,15 @@ export default {
         this.ctx.store.set({ ui: { chartTables: { [`verdict.${key}`]: !!on } } });
     },
 
+    /**
+     * Create or update a chart. Every chart here sits under a heading of its own, so specs pass
+     * `tableCaption` (it names the table twin and its toggle, "Table: …") rather than a visible title.
+     */
     chart(key, create, host, spec) {
         const full = { ...spec, table: this.pref(`table.${key}`), onTable: on => this.setPref(`table.${key}`, on) };
         const c = this.v.charts[key];
         if (c) c.update(full);
         else this.v.charts[key] = create(host, full);
-        host.querySelector('.chart-toggle')?.setAttribute('aria-label', `Table: ${spec.title || spec.ariaLabel}`);
     },
 
     /* ── head ───────────────────────────────────────────────────────────── */
@@ -716,11 +740,8 @@ export default {
             h('b', null, `${fmt.num(days)} days`), ` · ${/AGILE/i.test(summary.tariffCode || '') ? 'Agile' : summary.tariffCode || 'your tariff'} · ${where} · ${typical ? 'typical-year sun' : 'last year’s sun'}`,
             finite(pb) ? ` · ${fmt.num(pb)} W projected` : null);
         const real = summary.coverage?.realPct;
-        const chip = finite(real)
-            ? h('a', { class: ['vd-chip', real < 95 && 'is-warn'], href: '#data', title: 'See where your data came from' },
-                h('span', { class: 'vd-chip-dot', 'aria-hidden': 'true' }), `${fmt.pct(real, { dp: real >= 99.95 || real < 10 ? 0 : 1 })} real data`)
-            : null;
-        put(p.context, h('p', { class: 'context-line' }, long, short), chip);
+        // the shared real-data chip (amber below 95%; on phones only then, where room is short)
+        ui.put(p.context, h('p', { class: 'context-line' }, long, short), ui.coverageChip(summary.coverage));
         this.v.realPct = real;
         this.fillPrintLine();
         this.fillDemo(summary);
@@ -832,7 +853,7 @@ export default {
         if (!hd) return;
         if (hd.kind !== 'buy') {
             const closest = hd.closestId ? V.ranked.find(r => r.id === hd.closestId) : null;
-            put(host, h('div', { class: 'vd-best-none' },
+            ui.put(host, h('div', { class: 'vd-best-none' },
                 h('div', { class: 'vd-best-top' }, h('div', { class: 'card-eyebrow' }, 'The verdict')),
                 h('h2', { class: 'vd-best-title' }, hd.title),
                 h('p', { class: 'vd-lede' }, rich(h, hd.lede)),
@@ -847,6 +868,7 @@ export default {
         const badges = h('div', { class: 'vd-badges' },
             ui.badge({ text: ROUTE_LABEL[best.route] || best.route, tone: best.route }),
             level ? ui.badge({ text: `${level.label} confidence`, tone: level.tone }) : null,
+            best.priceOverride ? ui.badge({ text: 'Your price', tone: 'info', title: 'Priced with the figure you set in Compare' }) : null,
             best.preorder || best.availableNow === false ? ui.badge({ text: best.availableNow === false ? 'Not on sale now' : 'Pre-order', tone: 'warn' }) : null);
         const s = best.savings;
         const cell = (k, v, extra) => h('div', null, h('dt', null, k), h('dd', extra || null, v));
@@ -877,7 +899,7 @@ export default {
             ? h('p', { class: 'vd-wxnote' }, ui.icon('sun'), h('span', null, [hd.weatherNote, V.context?.weatherNote && !hd.weatherNote ? V.context.weatherNote : null].filter(Boolean).join(' '),
                 hd.weatherNote ? ' Every figure here uses a typical year instead.' : ''))
             : null;
-        put(host,
+        ui.put(host,
             h('div', { class: 'vd-best-top' }, h('div', { class: 'card-eyebrow' }, 'The verdict · best buy'), badges),
             h('h2', { class: 'vd-best-title' }, 'Buy the ', h('span', { class: 'vd-name' }, hd.name), '.'),
             h('p', { class: 'vd-lede' }, rich(h, hd.lede)),
@@ -895,7 +917,7 @@ export default {
 
     /* ── 3 options ──────────────────────────────────────────────────────── */
 
-    optionCols(maxP90, { beaten = false } = {}) {
+    optionCols(maxP90) {
         const { ui, fmt } = this.ctx;
         const h = ui.h;
         // Phones get card rows: title (with the route as a tag), the saving, then cost and payback
@@ -906,6 +928,7 @@ export default {
             const tags = [];
             if (phone) tags.push(ui.badge({ text: ROUTE_LABEL[r._row.route] || r._row.route, tone: r._row.route }));
             for (const b of r._row.badges) tags.push(ui.badge({ text: b.label, tone: BADGE_TONE[b.key] || 'default' }));
+            if (r._row.priceOverride) tags.push(ui.badge({ text: 'Your price', tone: 'info', title: 'Priced with the figure you set in Compare' }));
             if (r._row.availableNow === false) tags.push(ui.badge({ text: 'Not on sale now', tone: 'warn' }));
             else if (r._row.preorder) tags.push(ui.badge({ text: 'Pre-order', tone: 'warn' }));
             if (r._row.legal === 'check') tags.push(ui.badge({ text: 'Check first', tone: 'warn', title: r._row.warnings.map(w => w.message).join(' ') }));
@@ -913,7 +936,9 @@ export default {
             const later = up && finite(up.costGbp) && up.costGbp > 0
                 ? h('span', { class: 'vd-opt-later' }, `then ${fmt.gbp(up.costGbp)} in year ${fmt.num(up.atYear)}${up.label ? ` for ${up.label.replace(/^add(ed)?\s+/i, '')}` : ''}`)
                 : null;
-            return h('span', { class: 'vd-opt-name' }, h('span', null, v), later, tags.length ? h('span', { class: 'vd-opt-badges' }, tags) : null);
+            // one table now holds every group: a beaten row names what beats it under its own name
+            const beatenBy = r.beatenBy ? h('span', { class: 'vd-opt-later' }, `beaten by ${r.beatenBy}`) : null;
+            return h('span', { class: 'vd-opt-name' }, h('span', null, v), later, beatenBy, tags.length ? h('span', { class: 'vd-opt-badges' }, tags) : null);
         };
         const sav = (v, r) => {
             const s = r._row.savings;
@@ -935,32 +960,28 @@ export default {
             const l = LEVEL[c.level];
             return ui.badge({ text: l.label, tone: l.tone, title: [...c.reasons, ...c.notes].join('; ') || 'Good data, settled weather, a well-understood setup' });
         };
-        const cols = [
+        const disc = fmt.pct(100 * (this.V?.context?.finance?.discountRate ?? 0.04));
+        return [
             { key: 'name', label: 'Option', format: name, sortable: false, mobile: 'title' },
             { key: 'route', label: 'Route', format: v => ui.badge({ text: ROUTE_LABEL[v] || v, tone: v }), sortable: false, mobile: 'hide' },
             { key: 'capex', label: 'Cost', align: 'right', format: v => fmt.gbp(v), sortable: false },
             { key: 'sav', label: 'Saves/yr', align: 'right', format: sav, sortable: false, mobile: 'primary' },
             { key: 'payback', label: 'Payback', align: 'right', format: pay, sortable: false },
-            { key: 'npv10', label: '10-yr value', align: 'right', format: ahead, sortable: false, mobile: 'hide' },
+            { key: 'npv10', label: '10-yr value', align: 'right', format: ahead, sortable: false, mobile: 'hide',
+                help: `What you’re ahead after 10 years once it has paid for itself, in today’s money (later savings count ${disc} a year less). The list is in this order.` },
+            { key: 'conf', label: 'Confidence', format: conf, sortable: false, mobile: 'hide',
+                help: 'How sure the saving is: your data, the spread of 20 years of weather, and how well the model knows this kind of setup.' },
         ];
-        if (beaten) cols.push({ key: 'beatenBy', label: 'Beaten by', sortable: false, format: v => v || '—' });
-        else cols.push({ key: 'conf', label: 'Confidence', format: conf, sortable: false, mobile: 'hide' });
-        return cols;
     },
 
-    /** ui.table with each body row tagged data-id (the table keeps the given order: nothing is sortable). */
-    optTable(opts) {
-        const wrap = this.ctx.ui.table(opts);
-        wrap.querySelectorAll('tbody tr').forEach((tr, i) => { if (opts.rows[i]) tr.dataset.id = opts.rows[i].id; });
-        return wrap;
-    },
-
-    /** Names of ranked options whose price the user overrode in Compare (saved systems marked priceOverride). */
-    priceOverrides(ranked) {
-        const saved = this.ctx.store.get().scenarios?.saved;
-        if (!Array.isArray(saved) || !saved.length) return [];
-        const byId = new Map(ranked.map(r => [r.id, r]));
-        return saved.filter(s => s && s.priceOverride && byId.has(s.id)).map(s => byId.get(s.id).name);
+    /** Tag each body row with its option id (data-id), so keyboard focus can find its row again after a refresh. */
+    tagRows(wrap, groups) {
+        for (const g of groups) {
+            const body = wrap.querySelector(`tbody[data-group="${g.key}"]`);
+            if (!body) continue;
+            const trs = [...body.querySelectorAll('tr')].filter(tr => !tr.classList.contains('tbl-group-head'));
+            trs.forEach((tr, i) => { if (g.rows[i]) tr.dataset.id = g.rows[i].id; });
+        }
     },
 
     rowsFor(list) {
@@ -974,18 +995,16 @@ export default {
         const h = ui.h;
         const p = this.v.parts;
         const ranked = V.ranked ?? [];
-        const main = ranked.filter(r => (r.legal === 'ok' || r.legal === 'check') && !r.dominatedBy);
-        const refs = ranked.filter(r => r.legal === 'reference');
-        const beaten = ranked.filter(r => r.dominatedBy);
-        const plans = ranked.filter(r => r.legal === 'whatif');
+        const phone = this.isPhone;
+        // one table, grouped: the options, the yardsticks under a divider, those beaten on both
+        // price and savings (folded) and the future-rules plans (folded on phones)
+        const og = optionGroups(V, { phone, showAll: this.showAllOptions, beatenOpen: !!this.v.beatenOpen, plansOpen: !!this.v.plansOpen });
+        const main = og.main;
         const maxP90 = Math.max(1, ...ranked.map(r => (finite(r.savings.p90) ? r.savings.p90 : r.savings.typical)).filter(finite));
         const open = r => router.go('design', { scenario: r.id });
-        const rowClass = r => [r.id === V.bestBuyId && 'is-highlight', r._row.route === 'reference' && 'vd-ref', r._row.route === 'reference' && r._row === refs[0] && 'vd-ref-first'].filter(Boolean).join(' ') || null;
-        const phone = this.isPhone;
-        const limited = phone && !this.showAllOptions && main.length > MOBILE_ROWS;
+        const rowClass = r => [r.id === V.bestBuyId && 'is-highlight', r._row.route === 'reference' && 'vd-ref'].filter(Boolean).join(' ') || null;
         // keep keyboard focus across a streamed refresh of the table (rows are rebuilt)
         const focusedId = p.optBody.contains(document.activeElement) ? document.activeElement.closest('tr')?.dataset.id ?? null : null;
-        const shown = limited ? main.slice(0, MOBILE_ROWS) : main;
         const kids = [];
         const bestRow = main.find(r => r.id === V.bestBuyId) ?? null;
         const bestAt = main.findIndex(r => r.id === V.bestBuyId);
@@ -1005,44 +1024,34 @@ export default {
                 `${why} — they earn more over 10 years but cost far more up front. `,
                 h('button', { type: 'button', class: 'vd-inline-link', on: { click: toBattery } }, 'Is the extra worth it?'))));
         }
-        const overrides = this.priceOverrides(ranked);
-        if (overrides.length) {
+        // The user's own prices from Compare are in these figures (DataHub sends them to the verdict).
+        const own = ranked.filter(r => r.priceOverride);
+        if (own.length) {
             kids.push(h('div', { class: 'notice vd-override', role: 'note' }, ui.icon('info'), h('span', null,
-                `You set your own price for ${overrides.length === 1 ? overrides[0] : `${overrides.length} options`} in Compare. The verdict still uses the catalogue price${overrides.length === 1 ? '' : 's'}; Compare shows yours. `,
-                h('a', { href: '#compare' }, 'Open Compare'))));
-        }
-        kids.push(this.optTable({ columns: this.optionCols(maxP90), rows: this.rowsFor([...shown, ...(limited ? [] : refs)]), rowClass, onRowClick: open,
-            caption: 'Options ranked by 10-year value', dense: true }));
-        if (limited) {
-            kids.push(h('div', { class: 'vd-more-rows' }, ui.button({ label: `Show all ${main.length + refs.length}`, kind: 'ghost', onClick: () => { this.showAllOptions = true; this.fillOptions(this.V); } })));
+                `${own.length === 1 ? own[0].name : `${own.length} options`} ${own.length === 1 ? 'is' : 'are'} priced with your own figure${own.length === 1 ? '' : 's'} from Compare, and the ranking uses ${own.length === 1 ? 'it' : 'them'}. `,
+                h('a', { href: '#compare' }, 'Change it in Compare'))));
         }
         const disc = fmt.pct(100 * (V.context?.finance?.discountRate ?? 0.04));
-        kids.push(phone
+        const plain = bestRow ? ` In plain pounds the best buy is ${fmt.gbp(bestRow.net10Gbp)} ahead, as on its card.` : '';
+        const note = phone
             // the 10-yr value column is hidden on cards: say what the order is instead
-            ? h('p', { class: 'vd-sub-note vd-foot' }, `In order of what each leaves you ahead after 10 years, in today’s money (later savings count ${disc} a year less).`,
-                bestRow ? ` In plain pounds the best buy is ${fmt.gbp(bestRow.net10Gbp)} ahead, as on its card.` : '')
-            : h('p', { class: 'vd-sub-note vd-foot' }, h('b', null, '10-yr value'),
-                `: what you’re ahead after 10 years once it has paid for itself, in today’s money (later savings count ${disc} a year less) — the order of this list.`,
-                bestRow ? ` In plain pounds the best buy is ${fmt.gbp(bestRow.net10Gbp)} ahead, as on its card.` : ''));
+            ? [`In order of what each leaves you ahead after 10 years, in today’s money (later savings count ${disc} a year less).`, plain]
+            : [h('b', null, '10-yr value'), `: what you’re ahead after 10 years once it has paid for itself, in today’s money (later savings count ${disc} a year less) — the order of this list.`, plain];
+        const groups = og.groups.map(g => ({ ...g, rows: this.rowsFor(g.rows) }));
+        const tbl = ui.table({
+            columns: this.optionCols(maxP90), groups, rowClass, onRowClick: open, dense: true, note: h('span', null, note),
+            caption: 'Every option, ranked by 10-year value',
+            onToggle: (key, isOpen) => {
+                if (key === 'beaten') this.v.beatenOpen = isOpen;
+                else if (key === 'plans') this.v.plansOpen = isOpen;
+                else if (key === 'more') this.showAllOptions = isOpen;
+                this.tagRows(tbl, groups);
+            },
+        });
+        this.tagRows(tbl, groups);
+        kids.push(tbl);
         if (stageIdx(V.stage) < stageIdx('all')) {
             kids.push(h('div', { class: 'vd-pending-row', role: 'status' }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Checking batteries, power stations and future-rules plans…'));
-        }
-        if (beaten.length) {
-            kids.push(ui.details({
-                summary: `Show ${beaten.length} option${beaten.length === 1 ? '' : 's'} beaten on both price and savings`,
-                body: [h('p', { class: 'vd-sub-note' }, 'Each of these costs at least as much as another option and saves no more.'),
-                    this.optTable({ columns: this.optionCols(maxP90, { beaten: true }), rows: this.rowsFor(beaten), onRowClick: open, caption: 'Options beaten on both price and savings', dense: true })],
-                open: !!this.v.beatenOpen, onToggle: o => { this.v.beatenOpen = o; },
-            }));
-        }
-        if (plans.length) {
-            const note = h('p', { class: 'vd-sub-note' }, plans[0].banner || 'Not legal in GB today — shown for planning only.');
-            const tbl = this.optTable({ columns: this.optionCols(maxP90), rows: this.rowsFor(plans), onRowClick: open, caption: 'Future-rules plans', dense: true });
-            // phones: the planning rows would push the questions a screen further down — fold them
-            kids.push(phone
-                ? ui.details({ summary: `Not legal yet — ${plans.length} plan${plans.length === 1 ? '' : 's'} for planning`, body: [note, tbl],
-                    open: !!this.v.plansOpen, onToggle: o => { this.v.plansOpen = o; } })
-                : h('div', { class: 'vd-sub' }, h('h3', { class: 'vd-sub-title' }, 'Not legal yet — for planning'), note, tbl));
         }
         if (V.excluded?.length) {
             kids.push(h('div', { class: 'notice notice-warn', style: { marginTop: '14px' } }, ui.icon('alert'),
@@ -1080,7 +1089,7 @@ export default {
             };
         });
         this.chart('scatter', charts.createScatter, this.v.parts.scatterHost, {
-            title: 'Cost vs yearly saving', ariaLabel: 'Scatter of every option: upfront cost against first-year saving',
+            tableCaption: 'Cost vs yearly saving', ariaLabel: 'Scatter of every option: upfront cost against first-year saving',
             points,
             x: { label: 'upfront cost', format: v => fmt.gbp(v, { compact: true }) },
             y: { label: 'saves in year 1 (£)', format: v => fmt.gbp(v) },
@@ -1136,7 +1145,7 @@ export default {
                 const s = a.split;
                 slot.extra.replaceChildren();
                 this.chart('battery', charts.createBars, slot.chart, {
-                    title: 'What the battery adds, £ a year', ariaLabel: 'Battery value split into cheap-slot charging, stored solar and standby, with its total realistic and with perfect timing',
+                    tableCaption: 'What the battery adds, £ a year', ariaLabel: 'Battery value split into cheap-slot charging, stored solar and standby, with its total realistic and with perfect timing',
                     categories: ['Cheap-slot charging', 'Storing your solar', 'Standby power', 'Battery in total', 'Perfect timing'],
                     series: [
                         { key: 'part', label: 'Where it comes from', color: 'battery', values: [s.fromGridGbp, s.fromSolarGbp, s.standbyGbp, null, null] },
@@ -1148,11 +1157,18 @@ export default {
                 break;
             }
             case 'ups': {
+                // A station with its own panels: every way of running it includes what they make
+                // (they charge it on its own dc inputs, never through the grid side)
+                const own = V.ranked?.find(r => r.id === a.bestId)?.panels;
+                const ownPanels = own?.station ? own.count : 0;
+                const withOwn = ownPanels ? ` with its own ${ownPanels} panel${ownPanels === 1 ? '' : 's'}` : '';
                 this.chart('ups', charts.createBars, slot.chart, {
-                    title: 'Power station: what the automation is worth', ariaLabel: 'Yearly saving of a power station under four ways of running it',
+                    tableCaption: `Power station${withOwn}: what the automation is worth`,
+                    ariaLabel: `Yearly saving of a power station${withOwn} under four ways of running it`,
                     categories: ['Smart plug, 4–7pm cut', 'Agile-aware (realistic)', 'Perfect timing', 'Bypass off, always on battery'],
                     series: [{ key: 'gbp', label: '£ a year', color: 'ups', values: [a.peakCutGbp, a.realisticGbp, a.bestCaseGbp, a.onlineGbp] }],
                     horizontal: true, y: { format: v => fmt.gbp(v) }, x: { label: 'How it runs' },
+                    note: ownPanels ? `Every bar includes what its ${ownPanels} panel${ownPanels === 1 ? '' : 's'} make — they charge it on its own solar inputs, so none of it is exported.` : null,
                 });
                 slot.link.replaceChildren(link('Open it in Design', `#design?scenario=${enc(a.bestId)}`), link('Every power station', '#compare'));
                 break;
@@ -1176,7 +1192,7 @@ export default {
                     const cap = (V.context?.finance?.years ?? 20) + 5;
                     const capV = v => (finite(v) ? v : cap);
                     this.chart('tornado', charts.createTornado, slot.chart, {
-                        title: 'What moves the payback (years)', ariaLabel: 'Payback in years at the low and high setting of each uncertainty',
+                        tableCaption: 'What moves the payback (years)', ariaLabel: 'Payback in years at the low and high setting of each uncertainty',
                         center: t.center, centerLabel: `payback ${fmt.years(t.center)}`,
                         // short setting names: the bar-end labels must fit beside or inside the bars
                         rows: t.rows.map(r => ({ label: (this.isPhone && SHORT_DRIVER[r.key]) || r.label, low: capV(r.low), high: capV(r.high), lowLabel: shortSetting(r.key, r.lowLabel, 'low'), highLabel: shortSetting(r.key, r.highLabel, 'high') })),
@@ -1200,7 +1216,7 @@ export default {
         const { fmt } = this.ctx;
         const name = (p) => `${fmt.compass(p.az)} ${Math.round(p.tilt)}°`;
         const cells = (a.cells ?? []).filter(c => c.kwh > 0).map(c => ({ x: c.kwh, y: c.pPerKwh, label: `${fmt.compass(c.az)} (${c.az}°) at ${c.tilt}° — quick estimate`, route: 'reference',
-            extra: [{ value: fmt.gbp(c.gbp), label: 'a year' }, { value: fmt.pct(c.peakSharePct), label: 'made 4–7pm' }] }));
+            extra: [{ value: fmt.gbp(c.gbp), label: 'a year' }, { value: fmt.pct(c.peakShareAllPct ?? c.peakSharePct), label: 'made 4–7pm' }] }));
         const named = [
             ['Best for you', a.best, 'pv', true],
             ['South 35°', a.s35, 'load'],
@@ -1214,7 +1230,7 @@ export default {
         const near = p => a.best && Math.abs(p.kwh - a.best.kwh) < 0.03 * a.best.kwh && Math.abs(p.pPerKwh - a.best.pPerKwh) < 0.03 * a.best.pPerKwh;
         const pts = named.map(([label, p, color, em]) => ({
             x: p.kwh, y: p.pPerKwh, label: em ? `${label}: ${name(p)}` : `${label}`, color, emphasis: !!em, showLabel: !em && !near(p),
-            extra: [{ value: fmt.gbp(p.gbp), label: 'a year' }, { value: name(p), label: 'direction' }, { value: fmt.pct(p.peakSharePct), label: 'made 4–7pm' }],
+            extra: [{ value: fmt.gbp(p.gbp), label: 'a year' }, { value: name(p), label: 'direction' }, { value: fmt.pct(p.peakShareAllPct ?? p.peakSharePct), label: 'made 4–7pm' }],
         }));
         const xs = [...cells, ...pts].map(p => p.x);
         const x0 = Math.max(1, Math.min(...xs) * 0.9);
@@ -1227,7 +1243,7 @@ export default {
             iso.push({ points: line, label: `£${g}/yr` });
         }
         return {
-            title: 'Energy vs value', ariaLabel: 'Each direction and tilt: energy made in a year against what each kWh is worth',
+            tableCaption: 'Energy vs value', ariaLabel: 'Each direction and tilt: energy made in a year against what each kWh is worth',
             points: [...cells, ...pts],
             x: { label: 'kWh made a year', format: v => fmt.num(v), zero: false, min: x0, max: x1 },
             y: { label: 'p per kWh made', format: v => fmt.p(v, { dp: 0 }), zero: false },
@@ -1261,7 +1277,7 @@ export default {
         const lowest = Math.min(0, ...series.flatMap(se => se.values.filter(finite)));
         const be = c => (!finite(c.breakEvenW) ? 'not at any load we tried' : c.breakEvenW <= 0.5 ? 'at any load' : `from ${fmt.num(Math.round(c.breakEvenW / 10) * 10)} W`);
         return {
-            title: 'Yearly saving against always-on load', ariaLabel: 'First-year saving of the best options as the always-on load changes',
+            tableCaption: 'Yearly saving against always-on load', ariaLabel: 'First-year saving of the best options as the always-on load changes',
             x: { values: xs, type: 'linear', label: 'always-on load (W)', format: v => `${fmt.num(v)} W` },
             y: { label: '£ saved in year 1', format: v => fmt.gbp(v), min: lowest > -20 ? lowest : undefined },
             series,

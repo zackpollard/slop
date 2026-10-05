@@ -14,7 +14,10 @@
  *                    importExc   AGILE-24-10-01 value_exc_vat (verify-octopus fresh pull)
  *                    exportAgile AGILE-OUTGOING-19-05-13 (no VAT, floors at 0)
  *                    ghi/dni/dhi/tempC/windMs/wxSource  Open-Meteo SARAH-3 (+MSG/IFS fill)
- *                  plus the 2006–2025 SARAH-3 monthly climatology for the same grid cell.
+ *                  plus the 2006–2025 SARAH-3 monthly climatology for the same grid cell, and
+ *                  the region's Octopus Flexible (VAR-22-11-01, Direct Debit) unit rates and
+ *                  standing charges for the window (flexible-C-*.json), for the Usage tab's
+ *                  "same usage on Flexible" comparison.
  *                  Every series is joined on UTC epoch ms. The weather file starts at
  *                  2025-10-01T00:00Z (UTC midnight), two slots after the price file, so the
  *                  two leading night slots get ghi = dni = dhi = 0, the 00:00Z temperature
@@ -31,7 +34,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const OUT = join(HERE, '..', 'data');
+// SOLAR_DATA_OUT writes elsewhere (e.g. to diff a rebuild against the committed files first)
+const OUT = process.env.SOLAR_DATA_OUT ?? join(HERE, '..', 'data');
 const R = process.argv[2] ?? process.env.SOLAR_RESEARCH_DIR ?? '/home/zack/.claude/jobs/52762e7f/tmp/research';
 const SLOT = 1_800_000;
 const START = Date.parse('2025-09-30T23:00:00Z');
@@ -98,10 +102,11 @@ function buildDemo() {
         region: 'C', postcode: 'SW1A 1AA',
         tariffCode: 'E-1R-AGILE-24-10-01-C', exportTariffCode: 'E-1R-AGILE-OUTGOING-19-05-13-C',
         standingPPerDayExc: 37.6525,
+        flexible: flexibleBlock(),
         units: { importExc: 'p/kWh exc VAT', exportAgile: 'p/kWh (no VAT)', ghi: 'W/m² slot mean', tempC: '°C at slot midpoint', windMs: 'm/s at 10 m' },
         wxSourceCodes: { 0: 'SARAH-3', 1: 'LSA SAF MSG', 2: 'ECMWF IFS', 3: 'demo (no data, night)', 4: 'interpolated' },
         annualGhiKwhM2: Math.round(annualGhi * 10) / 10,
-        attribution: 'Prices: Octopus Energy API (Agile Octopus AGILE-24-10-01 and Agile Outgoing, London). Weather data by Open-Meteo.com (CC BY 4.0). Solar radiation © EUMETSAT, CM SAF SARAH-3 (doi:10.5676/EUM_SAF_CM/SARAH/V003) and LSA SAF; temperature/wind ECMWF IFS.',
+        attribution: 'Prices: Octopus Energy API (Agile Octopus AGILE-24-10-01, Agile Outgoing and Flexible Octopus VAR-22-11-01, London). Weather data by Open-Meteo.com (CC BY 4.0). Solar radiation © EUMETSAT, CM SAF SARAH-3 (doi:10.5676/EUM_SAF_CM/SARAH/V003) and LSA SAF; temperature/wind ECMWF IFS.',
         climatology: clim,
     };
     // One key per line so diffs stay readable; arrays stay on one line each.
@@ -110,6 +115,33 @@ function buildDemo() {
     const text = `{\n${lines.join(',\n')}\n}\n`;
     writeFileSync(join(OUT, 'demo.json'), text);
     console.log(`demo.json: ${(text.length / 1024).toFixed(1)} kB, annual GHI ${annualGhi.toFixed(2)} kWh/m²`);
+}
+
+/**
+ * Region C Octopus Flexible (VAR-22-11-01) for the demo window: the Direct Debit records that
+ * overlap it, ascending, as { from, to (null = open), exc } — p/kWh and p/day exc VAT (the app
+ * applies VAT by its own schedule). inc must equal exc × (1 + VAT at the record's start).
+ */
+function flexibleBlock() {
+    const END = START + N * SLOT;
+    const pick = (file) => {
+        const recs = read(file).filter(r => r.payment_method === 'DIRECT_DEBIT')
+            .map(r => ({ from: r.valid_from, to: r.valid_to ?? null, exc: r.value_exc_vat, inc: r.value_inc_vat }))
+            .filter(r => Date.parse(r.from) < END && (r.to === null || Date.parse(r.to) > START))
+            .sort((a, b) => Date.parse(a.from) - Date.parse(b.from));
+        if (!recs.length) fail(`${file}: no Direct Debit records in the window`);
+        for (const r of recs) {
+            const vat = Date.parse(r.from) >= Date.parse('2026-09-30T23:00:00Z') ? 0 : 0.05;
+            if (Math.abs(r.exc * (1 + vat) - r.inc) > 1e-4) fail(`${file}: inc ≠ exc × ${1 + vat} at ${r.from}`);
+        }
+        for (let i = 1; i < recs.length; i++) if (recs[i - 1].to !== recs[i].from) fail(`${file}: gap or overlap at ${recs[i].from}`);
+        return recs.map(({ from, to, exc }) => ({ from, to, exc }));
+    };
+    return {
+        product: 'VAR-22-11-01', code: 'E-1R-VAR-22-11-01-C', paymentMethod: 'DIRECT_DEBIT',
+        unit: pick('flexible-C-unit-rates.json'),
+        standing: pick('flexible-C-standing-charges.json'),
+    };
 }
 
 /** Monthly SARAH-3 sums per year (null days filled with that month-year's mean), 2006–2025. */
