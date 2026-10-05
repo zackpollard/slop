@@ -24,15 +24,15 @@ import { prepareGeometry, prepareSky, arrayKey, arrayDcW, dcByInput, inverterAc,
 import { typicalMonthScale } from './weather.js';
 import { summarize, withBaseLoad } from './dataset.js';
 import { analyseUsage, estimateBaseLoad } from './insights.js';
-import { normalizeSystem, systemKey, upgradedSystem, DEFAULTS } from './system.js';
+import { normalizeSystem, systemKey, upgradedSystem, pointArray, DEFAULTS } from './system.js';
 import { simulate, toMonthlyFwd, diffMonthlyFwd } from './simulate.js';
 import { project, financeOptions, pvDegradation } from './finance.js';
 import { vatAt, DEFAULT_VAT_SCHEDULE } from './vat.js';
 import { localParts, daysInMonth } from './time.js';
 import { validate as validateRules, applyFix as applyRulesFix } from './rules.js';
-import { findProduct, pluginKits, kitToSystem, orientationForSpot } from './kits.js';
-import { autoScenarios as buildScenarios, DEFAULT_SPOTS } from './scenarios.js';
-import { orientationGrid, gridAxes, sweepCells, bestBy, restrict, neighbours, tieBox, percentile, azDiff, compass16 } from './sweep.js';
+import { findProduct, pluginKits, kitToSystem, orientationForSpot, SERVER_HOLDUP_MS } from './kits.js';
+import { autoScenariosSteps as buildScenariosSteps, DEFAULT_SPOTS } from './scenarios.js';
+import { orientationGrid, gridAxes, sweepCellsSteps, runSteps, runStepsAsync, bestBy, restrict, neighbours, tieBox, percentile, azDiff, compass16 } from './sweep.js';
 
 /** Sub-samples per half-hour at full fidelity and for proxies (SPEC: 3 headline, 1 for sweeps). */
 const FULL_SUB = 3;
@@ -50,8 +50,24 @@ const usesDp = (b) => !!b && (DP_STRATEGIES.has(b.strategy) || (b.coupling === '
 
 const PROXY_NOTE = 'Map: panels only, no battery. Starred points: full simulation including your battery.';
 
+/** The heavy methods with a step form (callAsync): method → its step generator. */
+const STEPPED = Object.freeze({
+    runScenario: '_runScenarioSteps',
+    autoScenarios: '_autoScenariosSteps',
+    orientationSweep: '_orientationSweepSteps',
+    answerOrientation: '_answerOrientationSteps',
+    placementCells: '_placementSteps',
+    baseLoadCurve: '_baseLoadCurveSteps',
+    tornado: '_tornadoSteps',
+});
+export const STEPPED_METHODS = Object.freeze(Object.keys(STEPPED));
+
 /** Base-load curve x values (W) before the user's own base and recent base are added (UX critique). */
 const BASE_XS = [0, 100, 200, 300, 400, 500, 600, 800, 1000, 1200, 1500];
+
+/** C1's lower always-on load (W), and how far above it today's load must be for C1 to be "lower". */
+const FLIP_LOW_LOAD_W = 150;
+const FLIP_LOAD_MARGIN_W = 50;
 
 /** Flip conditions for the orientation answer (UX critique answers.orientation). */
 const FLIP_TEXT = {
@@ -138,6 +154,28 @@ function noGridCharge(sys) {
     return { ...sys, battery: { ...b, acChargeW: 0 } };
 }
 
+/** a − b of two _money() outputs (stage 2 included): the per-month money and the annual scalars. */
+function moneyDelta(a, b) {
+    const dm = (x, y) => (x && y ? diffMonthlyFwd(x, y) : null);
+    const one = (x, y) => ({ pvM: dm(x.pvM, y.pvM), battM: dm(x.battM, y.battM), cycles: x.cycles - y.cycles,
+        pvAcKwh: x.pvAcKwh - y.pvAcKwh, battOutAcKwh: x.battOutAcKwh - y.battOutAcKwh });
+    return { ...one(a, b), s2: a.s2 && b.s2 ? one(a.s2, b.s2) : null };
+}
+
+/** _money() output shifted by a moneyDelta (cycles and battery output never below 0). */
+function anchorMoney(m, d) {
+    const add = (x, y) => (x && y ? x.map((v, i) => ({
+        impSavFwdExcP: v.impSavFwdExcP + y[i].impSavFwdExcP,
+        expIncFwdP: v.expIncFwdP + y[i].expIncFwdP,
+        standbyCostFwdExcP: v.standbyCostFwdExcP + y[i].standbyCostFwdExcP,
+    })) : x);
+    const one = (x, y) => ({ ...x, pvM: add(x.pvM, y.pvM), battM: add(x.battM, y.battM), cycles: Math.max(0, x.cycles + y.cycles),
+        pvAcKwh: Math.max(0, x.pvAcKwh + y.pvAcKwh), battOutAcKwh: Math.max(0, x.battOutAcKwh + y.battOutAcKwh) });
+    const out = one(m, d);
+    out.s2 = m.s2 && d.s2 ? one(m.s2, d.s2) : m.s2;
+    return out;
+}
+
 /**
  * The SolarEngine (CONTRACTS §13). Construct once per Dataset; every method is synchronous and
  * returns plain structured-clone data.
@@ -182,6 +220,25 @@ export class SolarEngine {
                 } catch { /* a year without data cannot be in the band */ }
             }
         }
+    }
+
+    /* ───────────────────────── cooperative runs ───────────────────────── */
+
+    /**
+     * Run a heavy method cooperatively, for an engine on the page's own thread (engine.js falls
+     * back to that when module workers are unavailable): the same work, caches and result as
+     * engine[method](...args), but paused (await yieldFn(), default a macrotask) whenever sliceMs
+     * has passed, at points between proxy cells, weather years and simulations — so no single
+     * stretch blocks the page for seconds. Methods without a step form run in one go.
+     * @param {string} method one of STEPPED (others are called directly)
+     * @param {Array} [args]
+     * @param {{ yieldFn?: () => Promise<unknown>, sliceMs?: number }} [opts]
+     * @returns {Promise<*>}
+     */
+    callAsync(method, args = [], opts = {}) {
+        const steps = STEPPED[method];
+        if (!steps) return Promise.resolve().then(() => this[method](...args));
+        return runStepsAsync(this[steps](...args), opts);
     }
 
     /* ───────────────────────── dataset-level ───────────────────────── */
@@ -503,7 +560,7 @@ export class SolarEngine {
     /** finance.project of _money() output. */
     _projectMoney(sys, m, fo) {
         const batt = (s, cycles) => (s.battery ? { coupling: s.battery.coupling, efcPerYear: cycles, cycles: s.battery.cycles,
-            lifeYears: s.battery.lifeYears, capexGbp: this._batteryCapex(s) ?? undefined } : null);
+            cycleRatingSoh: s.battery.cycleRatingSoh, lifeYears: s.battery.lifeYears, capexGbp: this._batteryCapex(s) ?? undefined } : null);
         const energy = { pvAcKwh: m.pvAcKwh, battOutAcKwh: m.battOutAcKwh };
         let upgrade = null;
         if (sys.upgrade && m.s2) {
@@ -554,7 +611,12 @@ export class SolarEngine {
      *   p90Gbp, paybackYears, paybackP10Years, paybackP90Years, capexGbp, npv10Gbp, net10Gbp, npvGbp, selfUsePct,
      *   exportIncomeGbp, exportKwh, exportUnpaidKwh, pvKwh, peakGenSharePct (grid-tied panels), peakGenShareAllPct (a station’s own panels too) } and weather { basis: 'typical', factors }
      */
-    runScenario(system, { withBand = true, finance = {}, includeSlots = false, fidelity = 'full', dispatchOpts = {} } = {}) {
+    runScenario(system, opts = {}) {
+        return runSteps(this._runScenarioSteps(system, opts));
+    }
+
+    /** runScenario as steps: it yields between simulations and between weather-band years. */
+    *_runScenarioSteps(system, { withBand = true, finance = {}, includeSlots = false, fidelity = 'full', dispatchOpts = {} } = {}) {
         const sys = normalizeSystem(system);
         const fo = this.financeOptions(finance);
         const full = fidelity !== 'proxy';
@@ -576,12 +638,17 @@ export class SolarEngine {
         const rules = this.validate(sys);
         const wx = weatherDependent(sys);
         const typical = this._sim(sys, { sub, weather: 'typical', includeSlots, dispatchOpts });
+        yield;
         const actual = wx ? this._sim(sys, { sub, weather: 'actual', dispatchOpts }) : typical;
+        yield;
         const noBatt = sys.battery ? { ...sys, battery: null } : null;
         const pvOnly = noBatt ? this._sim(noBatt, { sub, weather: 'typical' }) : null;
         const pvOnlyActual = noBatt ? (wx ? this._sim(noBatt, { sub, weather: 'actual' }) : pvOnly) : null;
-        const fin = this._finance(sys, typical, pvOnly, fo, this._stage2(sys, { sub, weather: 'typical', dispatchOpts }));
+        yield;
+        const st2 = this._stage2(sys, { sub, weather: 'typical', dispatchOpts });
+        const fin = this._finance(sys, typical, pvOnly, fo, st2);
         const finActual = wx ? this._finance(sys, actual, pvOnlyActual, fo, this._stage2(sys, { sub, weather: 'actual', dispatchOpts })) : fin;
+        yield;
 
         const res = {
             id: sys.id,
@@ -595,8 +662,8 @@ export class SolarEngine {
             financeBand: null,
             weather: { basis: 'typical', factors: Array.from(this.typicalFactors), typicalIsActual: this.typicalIsActual },
         };
-        if (band) Object.assign(res, this._band(sys, fo, fin, { wx, dispatchOpts }));
-        if (sys.battery && full) res.battery = this._batteryExtras(sys, fo, { typical, pvOnly, dispatchOpts, fin });
+        if (band) Object.assign(res, yield* this._bandSteps(sys, fo, fin, { wx, dispatchOpts, typical, pvOnly, stage2: st2 }));
+        if (sys.battery && full) res.battery = yield* this._batteryExtrasSteps(sys, fo, { typical, pvOnly, dispatchOpts, fin });
         const T = typical.annual;
         res.headline = {
             savingsGbp: fin.year1Gbp,
@@ -630,8 +697,22 @@ export class SolarEngine {
      * over the first-year savings. The p10/p90 finance blends the two bracketing years' monthly
      * money with the percentile weight, so its year 1 equals the band figure exactly (project()
      * is linear in the monthly inputs).
+     *
+     * The band's optimiser runs on a coarser SoC grid than the headline, and on a big battery that
+     * grid alone costs money (N 21 on 5 kWh truncates charge and discharge to 0.23 kWh steps:
+     * ~£33/yr on a 5 kWh dc unit), which put the headline above its own p90. So the band sets the
+     * spread and the headline sets the level: the grid's own effect is measured on the typical year
+     * (headline grid − band grid, same weather) and added to every band year's money, cycles and
+     * battery output before projecting.
+     * @param {{ wx: boolean, dispatchOpts: Object, typical?: Object, pvOnly?: Object|null, stage2?: Object|null }} ctx
+     *   typical/pvOnly/stage2: the headline's own runs (re-run when absent)
      */
-    _band(sys, fo, fin, { wx, dispatchOpts }) {
+    _band(sys, fo, fin, ctx) {
+        return runSteps(this._bandSteps(sys, fo, fin, ctx));
+    }
+
+    /** _band as steps: it yields after every weather year. */
+    *_bandSteps(sys, fo, fin, { wx, dispatchOpts, typical = null, pvOnly = null, stage2 = null }) {
         const years = this.bandYears;
         if (!years.length) return { band: null, financeBand: null };
         if (!wx) {
@@ -649,13 +730,22 @@ export class SolarEngine {
         // prices — so changing them only re-projects. The cached money carries no system: stage 2's
         // (whose catalog ids price a battery replacement) is attached per call.
         const mkey = `${physicsKey(sys)}|${s2sys ? physicsKey(s2sys) : ''}|${this.ds.id}|${stable(dispatchOpts)}`;
-        const cached = this._bandMoney.get(mkey) ?? this._bandMoney.set(mkey, years.map(({ year, f }) => {
-            const full = this._sim(sys, { weather: 'actual', factors: f, dispatchOpts: dOpts });
-            const po = noBatt ? this._sim(noBatt, { weather: 'actual', factors: f }) : null;
-            const st2 = s2sys ? { system: null, full: this._sim(s2sys, { weather: 'actual', factors: f, dispatchOpts: dOpts2 }),
-                pvOnly: s2sys.battery ? this._sim({ ...s2sys, battery: null }, { weather: 'actual', factors: f }) : null } : null;
-            return { year, money: this._money(sys, full, po, st2) };
-        }));
+        let cached = this._bandMoney.get(mkey);
+        if (!cached) {
+            const anchor = this._bandAnchor(sys, s2sys, { dispatchOpts, dOpts, dOpts2, typical, pvOnly, stage2 });
+            yield;
+            const list = [];
+            for (const { year, f } of years) {
+                const full = this._sim(sys, { weather: 'actual', factors: f, dispatchOpts: dOpts });
+                const po = noBatt ? this._sim(noBatt, { weather: 'actual', factors: f }) : null;
+                const st2 = s2sys ? { system: null, full: this._sim(s2sys, { weather: 'actual', factors: f, dispatchOpts: dOpts2 }),
+                    pvOnly: s2sys.battery ? this._sim({ ...s2sys, battery: null }, { weather: 'actual', factors: f }) : null } : null;
+                const money = this._money(sys, full, po, st2);
+                list.push({ year, money: anchor ? anchorMoney(money, anchor) : money });
+                yield;
+            }
+            cached = this._bandMoney.set(mkey, list);
+        }
         const series = cached.map((s) => ({ year: s.year, money: s.money.s2 ? { ...s.money, s2: { ...s.money.s2, system: s2sys } } : s.money }));
         const fins = series.map((s) => this._projectMoney(sys, s.money, fo));
         const sav = fins.map((f) => f.year1Gbp);
@@ -694,6 +784,30 @@ export class SolarEngine {
     }
 
     /**
+     * What the band's coarser SoC grid changes on the typical year, per stage: headline-grid money
+     * − band-grid money (monthly battery money, cycles, battery output), or null when no stage
+     * runs an optimiser (the rule strategies don't use the SoC grid, so their band needs nothing).
+     */
+    _bandAnchor(sys, s2sys, { dispatchOpts, dOpts, dOpts2, typical, pvOnly, stage2 }) {
+        if (!usesDp(sys.battery) && !usesDp(s2sys?.battery)) return null;
+        const twin = (s) => (s.battery ? this._sim({ ...s, battery: null }, { weather: 'typical' }) : null);
+        const head = typical ?? this._sim(sys, { weather: 'typical', dispatchOpts });
+        const po = pvOnly ?? twin(sys);
+        const coarse = usesDp(sys.battery) ? this._sim(sys, { weather: 'typical', dispatchOpts: dOpts }) : head;
+        let h2 = null;
+        let c2 = null;
+        if (s2sys) {
+            const s2full = stage2?.full ?? this._sim(s2sys, { weather: 'typical', dispatchOpts });
+            const s2po = stage2 ? stage2.pvOnly : twin(s2sys);
+            h2 = { system: null, full: s2full, pvOnly: s2po };
+            c2 = { system: null, full: usesDp(s2sys.battery) ? this._sim(s2sys, { weather: 'typical', dispatchOpts: dOpts2 }) : s2full, pvOnly: s2po };
+        }
+        const a = this._money(sys, head, po, h2);
+        const b = this._money(sys, coarse, po, c2);
+        return moneyDelta(a, b);
+    }
+
+    /**
      * What a battery adds and where it comes from (UX critique answers.battery):
      *   total     = sav(B) − sav(B0)                     B0 = battery removed
      *   fromSolar = sav(Bng) − sav(B0) + standby(Bng)    Bng = no grid charging
@@ -708,7 +822,12 @@ export class SolarEngine {
      * starts full, which would otherwise show up as a few pence "from solar"). A power station's
      * optimalGbp is never below its thresholdGbp (see upsStrategies).
      */
-    _batteryExtras(sys, fo, { typical, pvOnly, dispatchOpts, fin }) {
+    _batteryExtras(sys, fo, ctx) {
+        return runSteps(this._batteryExtrasSteps(sys, fo, ctx));
+    }
+
+    /** _batteryExtras as steps: it yields between its three extra runs. */
+    *_batteryExtrasSteps(sys, fo, { typical, pvOnly, dispatchOpts, fin }) {
         const y1 = (s, sim) => this._yearOneGbp(normalizeSystem(s), sim, pvOnly, fo);
         const sbc = (s) => this._standbyValue(s, fo) - this._standbyValue(pvOnly, fo);
         const strat = sys.battery.strategy;
@@ -716,8 +835,11 @@ export class SolarEngine {
         const optSys = withStrategy(sys, 'optimal');
         const ngSys = noGridCharge(sys);
         const thr = strat === 'threshold' ? typical : this._sim(thrSys, { dispatchOpts });
+        yield;
         const opt = strat === 'optimal' ? typical : this._sim(optSys, { dispatchOpts });
+        yield;
         const ng = this._sim(ngSys, { dispatchOpts });
+        yield;
         const sysGbp = fin ? fin.year1Gbp : y1(sys, typical);
         const b0 = this._value(pvOnly, fo);
         const total = sysGbp - b0;
@@ -746,16 +868,25 @@ export class SolarEngine {
     }
 
     /**
-     * The default option set (scenarios.js), placed on the best mount spot.
-     * @param {{ spots?: Object[] }} [opts]
+     * The default option set (scenarios.js), placed on the best of the given mount spots. No spots
+     * (none passed, null or an empty list) means the default ground frame + west wall: the call
+     * always reflects the spots it is given, so going back to "our defaults" really drops the
+     * user's old spots — here and in the rules (ABOVE_GROUND) of every later run.
+     * @param {{ spots?: Object[]|null }} [opts]
      * @returns {Object[]} System[]
      */
-    autoScenarios({ spots } = {}) {
-        if (Array.isArray(spots) && spots.length) this.spots = spots.map((s) => ({ ...s }));
+    autoScenarios(opts = {}) {
+        return runSteps(this._autoScenariosSteps(opts));
+    }
+
+    /** autoScenarios as steps: it yields inside every placement sweep. */
+    *_autoScenariosSteps({ spots } = {}) {
+        this.spots = (Array.isArray(spots) && spots.length ? spots : DEFAULT_SPOTS).map((s) => ({ ...s }));
         const key = `auto|${stable(this.spots)}|${this.projectBaseW}`;
         const hit = this._misc.get(key);
         if (hit) return hit;
-        return this._misc.set(key, buildScenarios(this, this.catalog, { spots: this.spots }));
+        const list = yield* buildScenariosSteps(this, this.catalog, { spots: this.spots });
+        return this._misc.set(key, list);
     }
 
     /* ───────────────────────── orientation ───────────────────────── */
@@ -780,9 +911,14 @@ export class SolarEngine {
         throw new RangeError(`orientation: system ${sys.id} has no panels to point`);
     }
 
-    /** The system with the targeted panels pointed at (az, tilt). */
+    /**
+     * The system with the targeted panels pointed at (az, tilt), with the mounting physics of the
+     * new direction (system.pointArray): turned vertical they are on a wall, exactly as the
+     * west-wall option (S03) is modelled, so "on a west wall" is one figure whichever kit entry
+     * the panels came from; wall panels turned to a frame tilt lose the wall physics.
+     */
     static _repoint(sys, tg, az, tilt) {
-        const re = (a, j) => (tg.index < 0 || j === tg.index ? { ...a, azimuth: az, tilt } : a);
+        const re = (a, j) => (tg.index < 0 || j === tg.index ? pointArray(a, az, tilt) : a);
         if (!tg.station) return { ...sys, arrays: sys.arrays.map(re) };
         const u = sys.battery.ups;
         return { ...sys, battery: { ...sys.battery, ups: { ...u, pvArrays: u.pvArrays.map(re) } } };
@@ -886,7 +1022,12 @@ export class SolarEngine {
      * @param {{ onProgress?: Function, finance?: Object }} [opts]
      * @returns {Object} SweepResult { arrayId, azimuths, tilts, cells, starred, proxyNote, basis, station }
      */
-    orientationSweep(system, arrayId = '*', { onProgress, finance = {} } = {}) {
+    orientationSweep(system, arrayId = '*', opts = {}) {
+        return runSteps(this._orientationSweepSteps(system, arrayId, opts));
+    }
+
+    /** orientationSweep as steps: it yields after every cell and every full-fidelity point. */
+    *_orientationSweepSteps(system, arrayId = '*', { onProgress, finance = {} } = {}) {
         const sys = normalizeSystem(system);
         const fo = this.financeOptions(finance);
         const tg = this._target(sys, arrayId);
@@ -896,7 +1037,7 @@ export class SolarEngine {
         const grid = tg.station
             ? orientationGrid({ azStep: 15, azMin: 90, azMax: 270, tilts: [0, 15, 30, 45, 60, 75, 90] })
             : orientationGrid({ azStep: 10, tiltStep: 5 });
-        const cells = sweepCells(this, sys, tg.index < 0 ? '*' : tg.ref.id, grid, { finance, onProgress });
+        const cells = yield* sweepCellsSteps(this, sys, tg.index < 0 ? '*' : tg.ref.id, grid, { finance, onProgress });
         const { azimuths, tilts } = gridAxes(grid);
         const bestGbp = bestBy(cells, 'gbp');
         const bestKwh = bestBy(cells, 'kwh');
@@ -920,6 +1061,7 @@ export class SolarEngine {
             if (!v) {
                 v = this._pointed(sys, tg, az, tilt, fo);
                 seen.set(id, v);
+                yield;
             }
             const proxy = az === null ? null : cells.find((c) => c.az === az && c.tilt === tilt) ?? null;
             starred.push({ key: k, ...v, proxyGbp: proxy?.gbp ?? null });
@@ -944,36 +1086,50 @@ export class SolarEngine {
      * az 90–270 × tilt 15–90 (proxy), the named points confirmed at full fidelity, the tie band
      * (cells within tieBandPct of the best), westPays (best az ≥ 240) and the flip conditions
      * C1–C4 on a coarse grid (az 90–270 step 15 × tilt 15/30/45/60/90): reported when the best
-     * moves ≥ 30° or westPays changes. Named points are on the headline basis; 'current' of a
-     * split kit is the system as configured (mixed: true), as in orientationSweep.
+     * moves ≥ 30° or westPays changes. C1 and C2 (Outgoing Prime) are only checked for a kit
+     * Prime can pay (_primeEligible), C1 only when today's always-on load is ≥ 200 W (otherwise
+     * ~150 W is not a lower load), and C1 is dropped when C2 lands on the same direction.
+     * Named points are on the headline basis; 'current' of a split kit is the system as
+     * configured (mixed: true), as in orientationSweep. A "wall" point (tilt ≥ WALL_TILT) is
+     * modelled as a wall mount whichever spot the kit came from (_repoint).
      * @param {Object} system the kit to answer for (S01 in the verdict)
      * @param {{ tieBandPct?: number, finance?: Object, flips?: boolean }} [opts]
      * @returns {{ best, s35, w45, w90, ssw45, current, tie, tieBandPct, westPays, flips, checked, proxyNote, compass, cells }}
      */
-    answerOrientation(system, { tieBandPct = 3, finance = {}, flips: doFlips = true } = {}) {
+    answerOrientation(system, opts = {}) {
+        return runSteps(this._answerOrientationSteps(system, opts));
+    }
+
+    /** answerOrientation as steps: it yields inside the sweeps and after every full-fidelity point. */
+    *_answerOrientationSteps(system, { tieBandPct = 3, finance = {}, flips: doFlips = true } = {}) {
         const sys = normalizeSystem(system);
         const fo = this.financeOptions(finance);
-        const key = `orient|${physicsKey(sys)}|${this.projectBaseW}|${tieBandPct}|${stable(fo)}|${doFlips}`;
+        // physicsKey drops the kit and route, which decide whether the Prime flips apply
+        const key = `orient|${physicsKey(sys)}|${this._primeEligible(sys)}|${this.projectBaseW}|${tieBandPct}|${stable(fo)}|${doFlips}`;
         const hit = this._misc.get(key);
         if (hit) return hit;
         const tg = this._target(sys, '*');
-        const sw = this.orientationSweep(sys, '*', { finance });
+        const sw = yield* this._orientationSweepSteps(sys, '*', { finance });
         const window = restrict(sw.cells, { azMin: 90, azMax: 270, tiltMin: 15, tiltMax: 90 });
         const bestCell = bestBy(window, 'gbp');
         const at = (az, tilt) => this._pointed(sys, tg, az, tilt, fo);
         // as in orientationSweep: the best of the proxy's best and its two best neighbours at full
         // fidelity (cached when the sweep has already run them)
         let best = at(bestCell.az, bestCell.tilt);
+        yield;
         for (const c of neighbours(window, bestCell, tg.station ? { azStep: 15, tiltStep: 15 } : {}).sort((a, b) => b.gbp - a.gbp).slice(0, 2)) {
             const p = at(c.az, c.tilt);
             if (p.gbp > best.gbp + 1e-9) best = p;
+            yield;
+        }
+        const named = {};
+        for (const [k, az, tilt] of [['s35', 180, 35], ['w45', 270, 45], ['w90', 270, 90], ['ssw45', 200, 45]]) {
+            named[k] = at(az, tilt);
+            yield;
         }
         const out = {
             best,
-            s35: at(180, 35),
-            w45: at(270, 45),
-            w90: at(270, 90),
-            ssw45: at(200, 45),
+            ...named,
             current: mixedTarget(sys, tg) ? at(null, null) : at(tg.ref.azimuth, tg.ref.tilt),
             tie: tieBox(window, bestCell, tieBandPct),
             tieBandPct,
@@ -988,8 +1144,13 @@ export class SolarEngine {
             const coarse = orientationGrid({ azStep: 15, azMin: 90, azMax: 270, tilts: [15, 30, 45, 60, 90], includeFlat: false });
             const conds = [];
             const prime = { ...sys, export: { kind: 'prime', flatP: 0 } };
-            conds.push(['C1', prime, { ds: withBaseLoad(this.ds0, this.baseLoadW, 150) }]);
-            if (sys.export.kind !== 'prime') conds.push(['C2', prime, {}]);
+            // Outgoing Prime pays only on a plug-in kit bought from Octopus (rules
+            // EXPORT_PRIME_NOT_OCTOPUS): "if you had Prime" is no condition for any other kit
+            const primeOk = this._primeEligible(sys);
+            // "~150 W" is a lower load only when today's is well above it
+            const loadNow = Number.isFinite(this.projectBaseW) ? this.projectBaseW : this.baseLoadW;
+            if (primeOk && loadNow >= FLIP_LOW_LOAD_W + FLIP_LOAD_MARGIN_W) conds.push(['C1', prime, { ds: withBaseLoad(this.ds0, this.baseLoadW, FLIP_LOW_LOAD_W) }]);
+            if (primeOk && sys.export.kind !== 'prime') conds.push(['C2', prime, {}]);
             // the same inverter with 4 × 500 Wp, one string per input as far as the inputs go
             const nIn = Math.max(1, Math.min(sys.inverter?.inputs.length ?? 1, 4));
             const big = Array.from({ length: nIn }, (_, q) => ({ ...sys.arrays[0], id: `c3-${q}`, wp: 500, count: Math.floor(4 / nIn) + (q < 4 % nIn ? 1 : 0), input: q }));
@@ -998,14 +1159,28 @@ export class SolarEngine {
                 conds.push(['C4', { ...sys, battery: { ...DEFAULTS.battery, coupling: 'dc', capacityKwh: 2, strategy: 'self', acChargeW: 0 } }, { keepBattery: true }]);
             }
             for (const [code, s, o] of conds) {
-                const b = bestBy(sweepCells(this, normalizeSystem(s), '*', coarse, { ...o, finance }), 'gbp');
+                const b = bestBy(yield* sweepCellsSteps(this, normalizeSystem(s), '*', coarse, { ...o, finance }), 'gbp');
                 out.checked.push(code);
                 if (azDiff(b.az, best.az) >= 30 || (b.az >= 240) !== out.westPays) {
                     out.flips.push({ condition: code, text: FLIP_TEXT[code], az: b.az, tilt: b.tilt, gbp: b.gbp, compass: compass16(b.az) });
                 }
             }
+            // Prime alone (C2) landing where Prime with a lower load (C1) does says it all
+            const c2 = out.flips.find((f) => f.condition === 'C2');
+            if (c2) out.flips = out.flips.filter((f) => f.condition !== 'C1' || f.az !== c2.az || f.tilt !== c2.tilt);
         }
         return this._misc.set(key, out);
+    }
+
+    /**
+     * Whether Outgoing Prime could pay this system's export: a kit bought from Octopus (any of its
+     * products), on the plug-in route or as a what-if — the rules' EXPORT_PRIME_NOT_OCTOPUS test.
+     * @param {Object} sys normalised
+     * @returns {boolean}
+     */
+    _primeEligible(sys) {
+        if (sys.route !== 'plugin' && sys.route !== 'whatif') return false;
+        return [sys.kitId, ...sys.sourceIds].some((id) => typeof id === 'string' && !!findProduct(this.catalog, id)?.octopus);
     }
 
     /**
@@ -1017,6 +1192,11 @@ export class SolarEngine {
      * @returns {Array<Object>} cells
      */
     placementCells(system, grid, opts = {}) {
+        return runSteps(this._placementSteps(system, grid, opts));
+    }
+
+    /** placementCells as steps (scenarios.js runs these inside autoScenarios). */
+    *_placementSteps(system, grid, opts = {}) {
         const sys = normalizeSystem(system);
         // the proxy drops the battery unless asked to keep it; everything else that changes a run
         // (curtailment, export, load adjustment, inverter flags) is in the physics key
@@ -1025,7 +1205,8 @@ export class SolarEngine {
         const key = `place|${physicsKey(probe)}|${stable(grid)}|${this.projectBaseW}|${ds?.id ?? ''}|${stable(this.financeOptions(finance))}|${stable(rest)}`;
         const hit = this._misc.get(key);
         if (hit) return hit;
-        return this._misc.set(key, sweepCells(this, sys, '*', grid, opts));
+        const cells = yield* sweepCellsSteps(this, sys, '*', grid, opts);
+        return this._misc.set(key, cells);
     }
 
     /* ───────────────────────── curves ───────────────────────── */
@@ -1038,22 +1219,31 @@ export class SolarEngine {
      * @param {{ finance?: Object }} [opts]
      * @returns {Array<{ id, name, points: Array<{ x, savingsGbp, paybackYears, selfUsePct, exportKwh, pvKwh }> }>}
      */
-    baseLoadCurve(systems, xs, { finance = {} } = {}) {
+    baseLoadCurve(systems, xs, opts = {}) {
+        return runSteps(this._baseLoadCurveSteps(systems, xs, opts));
+    }
+
+    /** baseLoadCurve as steps: it yields after every point. */
+    *_baseLoadCurveSteps(systems, xs, { finance = {} } = {}) {
         const fo = this.financeOptions(finance);
         const bl = estimateBaseLoad(this.ds0);
         let x = Array.isArray(xs) && xs.length ? xs.filter(Number.isFinite) : [...BASE_XS, Math.round(bl.w), Math.round(bl.recentW)];
         x = [...new Set(x.map((v) => Math.max(0, v)))].sort((a, b) => a - b);
         const dsAt = new Map(x.map((v) => [v, withBaseLoad(this.ds0, bl.w, v)]));
-        return (systems ?? []).filter(Boolean).map((system) => {
+        const out = [];
+        for (const system of (systems ?? []).filter(Boolean)) {
             const sys = normalizeSystem(system);
-            const points = x.map((v) => {
+            const points = [];
+            for (const v of x) {
                 const q = this._quick(sys, { ds: dsAt.get(v), dispatchOpts: COARSE, fo });
                 const T = q.full.annual;
-                return { x: v, savingsGbp: q.finance.year1Gbp, paybackYears: q.finance.paybackYears, selfUsePct: T.selfConsumptionPct,
-                    exportKwh: T.exportKwh, pvKwh: T.pvAcKwh + T.upsPvKwh };
-            });
-            return { id: sys.id, name: sys.name, points, baseLoadW: bl.w, recentBaseW: bl.recentW };
-        });
+                points.push({ x: v, savingsGbp: q.finance.year1Gbp, paybackYears: q.finance.paybackYears, selfUsePct: T.selfConsumptionPct,
+                    exportKwh: T.exportKwh, pvKwh: T.pvAcKwh + T.upsPvKwh });
+                yield;
+            }
+            out.push({ id: sys.id, name: sys.name, points, baseLoadW: bl.w, recentBaseW: bl.recentW });
+        }
+        return out;
     }
 
     /** Curve point from a system variant (no band). */
@@ -1306,7 +1496,8 @@ export class SolarEngine {
      * onlinePenaltyGbp compares the two optimiser runs.
      * @param {Object} system a system with a 'ups' battery
      * @param {{ finance?: Object }} [opts]
-     * @returns {{ realisticGbp, bestCaseGbp, peakCutGbp, onlineGbp, onlinePenaltyGbp, onlineWarnings: string[], switchMs, hid, bypassDisableable } | null}
+     * @returns {{ realisticGbp, bestCaseGbp, peakCutGbp, onlineGbp, onlinePenaltyGbp, onlineWarnings: string[], switchMs,
+     *   serverSafeSwitch: boolean, holdUpMs: number, hid, bypassDisableable } | null}
      */
     upsStrategies(system, { finance = {} } = {}) {
         const sys = normalizeSystem(system);
@@ -1344,6 +1535,11 @@ export class SolarEngine {
             onlinePenaltyGbp: online - optDp,
             onlineWarnings: onlineSim.warnings,
             switchMs: st?.upsSwitchMs ?? null,
+            // a 15–20 ms transfer can reboot a heavily loaded server: only ≤ 10 ms units are a UPS
+            // the servers can rely on (REPORT-ups server caveat); holdUpMs is what an ATX 3.1 PSU
+            // is only required to ride through at full load
+            serverSafeSwitch: st?.serverSafeSwitch ?? false,
+            holdUpMs: SERVER_HOLDUP_MS,
             hid: st?.hid ?? false,
             bypassDisableable: st?.bypassDisableable ?? false,
         });
@@ -1357,13 +1553,18 @@ export class SolarEngine {
      * @param {{ finance?: Object, top?: number }} [opts]
      * @returns {{ id, center: number|null, rows: Array<{ key, label, low, high, lowLabel, highLabel, swing }> }}
      */
-    tornado(system, { finance = {}, top = 5 } = {}) {
+    tornado(system, opts = {}) {
+        return runSteps(this._tornadoSteps(system, opts));
+    }
+
+    /** tornado as steps: it yields inside its scenario run and after every row. */
+    *_tornadoSteps(system, { finance = {}, top = 5 } = {}) {
         const sys = normalizeSystem(system);
         const fo = this.financeOptions(finance);
         const key = `tornado|${systemKey(sys)}|${this.projectBaseW}|${stable(fo)}|${top}`;
         const hit = this._misc.get(key);
         if (hit) return hit;
-        const res = this.runScenario(sys, { finance });
+        const res = yield* this._runScenarioSteps(sys, { finance });
         const cap = fo.years + 5;
         const pb = (f) => f?.paybackYears ?? null;
         const swingOf = (a, b) => Math.abs((a ?? cap) - (b ?? cap));
@@ -1375,6 +1576,7 @@ export class SolarEngine {
         if (weatherDependent(sys)) {
             const shade = (pct) => pb(this._quick(normalizeSystem(allArrays((a) => ({ ...a, shadingPct: pct, shadingExplicit: true }))), { fo }).finance);
             add('shading', 'Shading at your spot', shade(0), shade(15), 'no shade', '15% shaded');
+            yield;
         }
         const scaled = (k) => {
             const ds = this.ds;
@@ -1382,15 +1584,19 @@ export class SolarEngine {
             return { ...ds, id: `${ds.id}~p${k}`, importPrice: mul(ds.importPrice), importPriceExc: mul(ds.importPriceExc), importPriceFwdExc: mul(ds.importPriceFwdExc) };
         };
         add('price', 'Agile price level', pb(this._quick(sys, { ds: scaled(0.8), fo }).finance), pb(this._quick(sys, { ds: scaled(1.2), fo }).finance), 'prices −20%', 'prices +20%');
+        yield;
         const q0 = this._quick(sys, { fo: this.financeOptions({ ...finance, escalation: 0 }) });
         const q4 = this._quick(sys, { fo: this.financeOptions({ ...finance, escalation: 0.04 }) });
         add('trend', 'Price trend', pb(q0.finance), pb(q4.finance), '0% a year', '4% a year');
+        yield;
         const b = estimateBaseLoad(this.ds).w;
         const bl = (k) => pb(this._quick(sys, { ds: withBaseLoad(this.ds, b, b * k), fo, dispatchOpts: COARSE }).finance);
         add('baseLoad', 'Always-on load', bl(0.7), bl(1.3), '−30%', '+30%');
+        yield;
         if (sys.battery) {
             add('automation', 'Battery automation', pb(this._quick(withStrategy(sys, 'threshold'), { fo }).finance),
                 pb(this._quick(withStrategy(sys, 'optimal'), { fo }).finance), 'realistic', 'perfect timing');
+            yield;
         }
         rows.sort((a, c) => c.swing - a.swing);
         return this._misc.set(key, { id: sys.id, center: res.finance.paybackYears, rows: rows.slice(0, top), all: rows });

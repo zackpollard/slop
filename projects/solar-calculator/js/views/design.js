@@ -23,6 +23,12 @@
  * compare (store.scenarios.saved / pinned / activeId). The hash carries ?scenario=<id> for saved
  * and ready-made options, so links from Verdict, Compare and Orientation land on the right build.
  *
+ * What it opens on: ?scenario=, else the option chosen last (activeId), else the Verdict's pick
+ * (verdictPick: its best buy, the kit its answers and Orientation's default are about) — S01 only
+ * while no Verdict is in. That default is nobody's choice, so it never becomes activeId (or
+ * Orientation would follow it), and while untouched it follows the Verdict as one arrives or
+ * changes. Opening it from a link, starting from something else, or saving makes it a choice.
+ *
  * Engine work: catalog, buildSystem (a catalog product → System, exactly as the worker builds the
  * ready-made options), validate, applyFix (every rules fix, removing a battery with its cost lines,
  * and the staged plan's 'have an electrician fit it' — rules.js raises LATER_WHATIF for a later
@@ -510,6 +516,24 @@ const kwhTag = (name, kwh, fmt) => (/\bkWh\b/.test(name || '') || !finite(kwh) ?
 
 const sourceKey = src => (!src ? '' : src.kind === 'saved' || src.kind === 'auto' ? `${src.kind}:${src.id}` : src.key || '');
 
+/**
+ * The ready-made option a Verdict (finished, or a partial from its 'plugin' stage on) points at:
+ * its best buy, else — finished and with nothing worth buying — the option that comes closest to
+ * paying back. The same kit the Verdict's own answers are about (verdict.js focusOf), so Design
+ * opening on it agrees with the Verdict and with Orientation's default.
+ * @param {object|null} v Verdict
+ * @param {object[]} autos the ready-made options
+ * @param {{ partial?: boolean }} [opts] partial: a streamed partial, whose "comes closest" can still move
+ * @returns {{ id: string, why: 'best'|'closest' }|null}
+ */
+export function verdictPick(v, autos, { partial = false } = {}) {
+    if (!v) return null;
+    const ok = id => typeof id === 'string' && (autos || []).some(s => s && s.id === id && s.route !== 'reference');
+    if (ok(v.bestBuyId)) return { id: v.bestBuyId, why: 'best' };
+    if (!partial && v.bestBuyId == null && ok(v.headline?.closestId)) return { id: v.headline.closestId, why: 'closest' };
+    return null;
+}
+
 function injectStyle(h) {
     if (typeof document === 'undefined' || document.getElementById(STYLE_ID)) return;
     document.head.appendChild(h('style', { id: STYLE_ID }, DESIGN_CSS));
@@ -598,6 +622,7 @@ export default {
             ctx.data.on('status', () => this.render()),
             ctx.data.on('settings', () => this.onSettings()),
             ctx.data.on('scenarios', () => this.onScenarios()),
+            ctx.data.on('verdict', v => this.onVerdict(v)),
         ];
         this.render();
     },
@@ -605,15 +630,21 @@ export default {
     show(params) {
         this.params = params || {};
         this.visible = true;
+        // our own syncUrl() routing back here, not a link the user followed
+        const echo = this.urlEcho;
+        this.urlEcho = null;
         if (this.v && this.st.autos) {
-            this.applyParams();
+            this.applyParams({ echo: !!echo && echo === this.params.scenario });
             // built while another tab was showing: put the option's id in the address now
             if (!this.params.scenario) this.syncUrl();
+            // a Verdict started (on its own tab) since this default opened: follow it from here
+            if (this.st.source?.implicit) this.watchVerdict();
         }
     },
 
     hide() {
         this.visible = false;
+        this.urlEcho = null;
         if (this.barShown) { this.ctx.shell.rerun.hide(); this.barShown = false; }
     },
 
@@ -698,7 +729,7 @@ export default {
         // that price, unless it's being edited here.
         if (src?.kind === 'auto' && !this.isDirty()) {
             const over = this.overrideFor(src.id);
-            if (!!over !== !!src.priced || (over && sig(normalizeSystem(clone(over))) !== this.st.base)) { this.loadById(src.id, { quiet: true }); return; }
+            if (!!over !== !!src.priced || (over && sig(normalizeSystem(clone(over))) !== this.st.base)) { this.loadById(src.id, { quiet: true, implicit: src.implicit }); return; }
         }
         this.renderBar();
         this.renderEditor();
@@ -793,19 +824,85 @@ export default {
         const params = this.params ?? this.ctx.router.params?.() ?? {};
         if (params.scenario && this.loadById(params.scenario, { quiet: false })) return;
         if (this.st.draft) {
-            // A data reload keeps the build being edited; an untouched ready-made one follows the new data.
+            // A data reload keeps the build being edited; an untouched ready-made one follows the new
+            // data, and an untouched default the new data's Verdict.
             const src = this.st.source;
-            if (src?.kind === 'auto' && !this.isDirty() && this.loadById(src.id, { quiet: true })) return;
+            if (src?.kind === 'auto' && !this.isDirty() && (src.implicit ? this.openDefault() : this.loadById(src.id, { quiet: true }))) return;
             this.renderAll();
             this.scheduleRun(0, { user: false });
             return;
         }
         const active = this.store().get().scenarios?.activeId;
         if (active && this.loadById(active, { quiet: true })) return;
-        if (this.loadById(DEFAULT_ID, { quiet: true })) return;
+        if (this.openDefault()) return;
         const first = this.st.autos.find(s => s.route !== 'reference');
-        if (first) this.setDraft(normalizeSystem(clone(first)), { kind: 'auto', id: first.id });
+        if (first) this.setDraft(normalizeSystem(clone(first)), { kind: 'auto', id: first.id, implicit: true });
         else this.startBlank();
+    },
+
+    /**
+     * What to open when nothing asks for an option: the Verdict's pick when a Verdict for these
+     * inputs is in, else S01.
+     * @returns {{ id: string, why: 'best'|'closest'|null }}
+     */
+    defaultPick() {
+        return verdictPick(this.ctx.data.verdictIfReady?.() ?? null, this.st.autos) ?? { id: DEFAULT_ID, why: null };
+    },
+
+    /** Open the default (defaultPick) as nobody's choice: it isn't made the active scenario. */
+    openDefault() {
+        const { id, why } = this.defaultPick();
+        const ok = this.loadById(id, { quiet: true, implicit: true })
+            || (id !== DEFAULT_ID && this.loadById(DEFAULT_ID, { quiet: true, implicit: true }));
+        if (ok && !why) this.watchVerdict();
+        return ok;
+    },
+
+    /**
+     * A Verdict running for these inputs (from the Verdict or Compare tab): take its best buy as soon
+     * as it's shown (the 'plugin' stage; it never flips after), not only when every answer is in.
+     * Never starts one — with none running, the 'verdict' event is what brings the pick.
+     */
+    watchVerdict() {
+        const data = this.ctx.data;
+        if (this.watchingVerdict || !this.st.source?.implicit || !data.verdictIfReady || data.verdictIfReady()) return;
+        const running = data.verdictIfReady({ wait: true });
+        if (!running) return;
+        running.catch(() => {});   // a cancelled verdict is no error here
+        this.watchingVerdict = true;
+        const take = (stage, partial) => {
+            if (stage === 'usage' || !this.alive) return;
+            this.followVerdict(verdictPick(partial, this.st.autos, { partial: true }));
+        };
+        // the key matches the running one (verdictIfReady said so), so this joins it
+        data.verdict({ onPartial: take })
+            .catch(() => {})
+            .finally(() => { this.watchingVerdict = false; });
+    },
+
+    /** A Verdict finished (the hub's 'verdict' event): an untouched default follows its pick. */
+    onVerdict() {
+        if (!this.v || !this.st.draft || !this.st.autos) return;
+        if (this.st.source?.implicit && this.followVerdict(this.defaultPick())) return;
+        this.renderBar();   // the "Best buy" badge
+    },
+
+    /**
+     * Swap the untouched default on screen for `pick`. Says so when the old option's figures were
+     * already up (a swap before the first results is just the page opening on the right one).
+     * @returns {boolean} swapped
+     */
+    followVerdict(pick) {
+        const src = this.st.source;
+        if (!pick || !this.v || !this.st.draft || !src?.implicit || this.isDirty() || pick.id === src.id) return false;
+        const res = this.st.result;
+        const seen = this.visible && !!res && sig(res.system) === sig(this.st.draft);
+        if (!this.loadById(pick.id, { quiet: true, implicit: true })) return false;
+        if (seen) {
+            const what = pick.why === 'best' ? 'the Verdict’s best buy' : pick.why === 'closest' ? 'the option the Verdict says comes closest to paying back' : 'the default option';
+            this.ctx.ui.toast(`Now showing ${what}, the ${this.st.draft.name}.`, { timeoutMs: 6000 });
+        }
+        return true;
     },
 
     /** Start from a custom plug-in build (nothing else to start from). */
@@ -820,23 +917,36 @@ export default {
         }
     },
 
-    applyParams() {
+    applyParams({ echo = false } = {}) {
         const id = this.params?.scenario;
-        if (!id || id === this.st.source?.id) return;
+        if (!id) return;
+        if (id === this.st.source?.id) {
+            // a link to the default already on screen: now it's the user's choice
+            if (this.st.source.implicit && !echo) {
+                this.st.source = { ...this.st.source, implicit: false };
+                this.persistActive();
+                this.renderBar();
+            }
+            return;
+        }
         const prev = this.snapshot();
         if (this.loadById(id, { quiet: false })) {
             if (prev.dirty) this.offerUndo(prev, `Opened “${this.st.draft.name}”.`);
         } else this.syncUrl();   // a dead link: put the option actually on screen back in the address
     },
 
-    loadById(id, { quiet = true } = {}) {
+    /**
+     * Open a saved or ready-made option. implicit: Design's own default (openDefault), which isn't
+     * made the active scenario.
+     */
+    loadById(id, { quiet = true, implicit = false } = {}) {
         const saved = this.savedList().find(s => s.id === id);
         if (saved) { this.setDraft(normalizeSystem(clone(saved)), { kind: 'saved', id }); return true; }
         const auto = this.st.autos?.find(s => s.id === id);
         if (auto) {
             // at the user's own price when Compare has one for it
             const over = this.overrideFor(id);
-            this.setDraft(normalizeSystem(clone(over ?? auto)), { kind: 'auto', id, priced: !!over });
+            this.setDraft(normalizeSystem(clone(over ?? auto)), { kind: 'auto', id, priced: !!over, ...(implicit ? { implicit: true } : {}) });
             return true;
         }
         if (!quiet) this.ctx.ui.toast(`Couldn’t find the option “${id}” — it may have been deleted.`, { tone: 'warn' });
@@ -849,7 +959,8 @@ export default {
     offerUndo(prev, message) {
         this.ctx.ui.toast(`${message} Your unsaved changes to “${prev.draft.name}” were set aside.`, {
             timeoutMs: 9000,
-            action: { label: 'Undo', onClick: () => { this.st.draft = prev.draft; this.st.source = prev.source; this.st.base = prev.base; this.afterSourceChange(); this.focusBar(); } },
+            // going back to it is a choice: an edited default becomes the active scenario too
+            action: { label: 'Undo', onClick: () => { this.st.draft = prev.draft; this.st.source = prev.source?.implicit ? { ...prev.source, implicit: false } : prev.source; this.st.base = prev.base; this.afterSourceChange(); this.focusBar(); } },
         });
     },
 
@@ -864,12 +975,21 @@ export default {
     afterSourceChange() {
         this.st.later = null;
         this.st.rules = null;
-        const id = this.persistentId();
-        const sc = this.store().get().scenarios || {};
-        if (id && sc.activeId !== id) this.store().set({ scenarios: { activeId: id } });
+        this.persistActive();
         this.syncUrl();
         this.renderAll();
         this.scheduleRun(0, { user: false });
+    },
+
+    /**
+     * Make the option on screen the active scenario (Orientation follows it) — unless it's the
+     * default Design opened by itself, which the user never chose.
+     */
+    persistActive() {
+        const id = this.persistentId();
+        if (!id || this.st.source?.implicit) return;
+        const sc = this.store().get().scenarios || {};
+        if (sc.activeId !== id) this.store().set({ scenarios: { activeId: id } });
     },
 
     syncUrl() {
@@ -877,8 +997,10 @@ export default {
         if (router.current?.() !== 'design') return;
         const id = this.persistentId();
         const cur = router.params?.().scenario;
-        if (id && cur !== id) router.replace('design', { scenario: id });
-        else if (!id && cur) router.replace('design', {});
+        if (id && cur !== id) {
+            this.urlEcho = id;   // show() is about to see this id: it isn't a link the user followed
+            router.replace('design', { scenario: id });
+        } else if (!id && cur) router.replace('design', {});
     },
 
     /**
@@ -1250,7 +1372,7 @@ export default {
                     onClick: () => {
                         const before = store.get().scenarios;
                         store.update('scenarios', s => ({ ...s, saved: (s.saved || []).filter(x => x?.id !== victim.id), pinned: (s.pinned || []).filter(x => x !== victim.id), activeId: null }));
-                        if (!this.loadById(DEFAULT_ID, { quiet: true })) this.startBlank();
+                        if (!this.openDefault()) this.startBlank();
                         this.focusBar();
                         ui.toast(`Deleted “${victim.name}”.`, {
                             timeoutMs: 12000,
@@ -1276,7 +1398,7 @@ export default {
 
     revert() {
         const src = this.st.source;
-        if (src?.kind === 'saved' || src?.kind === 'auto') { this.loadById(src.id, { quiet: false }); return; }
+        if (src?.kind === 'saved' || src?.kind === 'auto') { this.loadById(src.id, { quiet: false, implicit: src.implicit }); return; }
         if (this.st.origin) this.setDraft(clone(this.st.origin), src);
     },
 
@@ -1552,6 +1674,7 @@ export default {
         else if (src.kind === 'auto') badges.push(ui.badge({ text: 'Ready-made', tone: 'accent' }));
         else badges.push(ui.badge({ text: 'Not saved' }));
         if (src.kind === 'auto' && src.priced) badges.push(ui.badge({ text: 'Your price', tone: 'info', title: 'The price you set on Compare' }));
+        if (src.kind === 'auto' && !dirty && this.ctx.data.verdictIfReady?.()?.bestBuyId === src.id) badges.push(ui.badge({ text: 'Best buy', tone: 'good', title: 'The Verdict’s best buy' }));
         if (dirty && src.kind !== 'catalog' && src.kind !== 'unsaved') badges.push(ui.badge({ text: 'Edited', tone: 'warn' }));
         const actions = [
             dirty && this.st.origin ? ui.button({ label: 'Undo changes', kind: 'ghost', size: 'sm', icon: 'refresh', onClick: () => this.revert() }) : null,

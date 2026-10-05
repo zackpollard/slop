@@ -60,6 +60,15 @@ export function azDiff(a, b) {
  * @returns {Array<{ az: number, tilt: number, kwh: number, gbp: number, pPerKwh: number, peakSharePct: number }>}
  */
 export function sweepCells(engine, system, arrayId, grid, opts = {}) {
+    return runSteps(sweepCellsSteps(engine, system, arrayId, grid, opts));
+}
+
+/**
+ * sweepCells as a step generator: it yields after every cell (a place the caller may pause) and
+ * returns the cells. runSteps() runs it straight through; runStepsAsync() pauses it.
+ * @returns {Generator<undefined, Array<Object>>}
+ */
+export function* sweepCellsSteps(engine, system, arrayId, grid, opts = {}) {
     const ctx = engine._proxyContext(system, arrayId, opts);
     const out = new Array(grid.length);
     const total = grid.length;
@@ -67,8 +76,52 @@ export function sweepCells(engine, system, arrayId, grid, opts = {}) {
         const { az, tilt } = grid[i];
         out[i] = { az, tilt, ...ctx.evaluate(az, tilt) };
         if (opts.onProgress && (i % 25 === 24 || i === total - 1)) opts.onProgress({ done: i + 1, total, pct: (100 * (i + 1)) / total });
+        yield;
     }
     return out;
+}
+
+const clock = () => (typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now());
+
+/**
+ * Run a step generator to the end in one go (its yields are only places it could have paused).
+ * @template T
+ * @param {Generator<unknown, T>} gen
+ * @returns {T}
+ */
+export function runSteps(gen) {
+    let r = gen.next();
+    while (!r.done) r = gen.next();
+    return r.value;
+}
+
+/**
+ * Run a step generator cooperatively: whenever sliceMs has passed since the last pause it awaits
+ * yieldFn() (default: a macrotask) before the next step, so an engine running on the page's own
+ * thread leaves the page room to paint and take input. A yieldFn that throws (a cancelled job)
+ * stops the run there.
+ * @template T
+ * @param {Generator<unknown, T>} gen
+ * @param {{ yieldFn?: () => Promise<unknown>, sliceMs?: number }} [opts]
+ * @returns {Promise<T>}
+ */
+export async function runStepsAsync(gen, { yieldFn, sliceMs = 30 } = {}) {
+    const pause = typeof yieldFn === 'function' ? yieldFn : () => new Promise((resolve) => setTimeout(resolve, 0));
+    const slice = Number.isFinite(sliceMs) && sliceMs >= 0 ? sliceMs : 30;
+    let t = clock();
+    try {
+        let r = gen.next();
+        while (!r.done) {
+            if (clock() - t >= slice) {
+                await pause();
+                t = clock();
+            }
+            r = gen.next();
+        }
+        return r.value;
+    } finally {
+        gen.return?.(undefined);
+    }
 }
 
 /**

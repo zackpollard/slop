@@ -197,8 +197,12 @@ export function validate(system, catalog = null, ctx = {}) {
         const acBattW = sys.battery?.coupling === 'ac' ? Math.min(sys.battery.maxDischargeW, sys.battery.acOutputW || Infinity) : 0;
         const totalAc = (sys.inverter?.acLimitW ?? 0) + acBattW;
         if (totalAc > lim.hardwiredMaxW + 1e-9) {
+            // an inverter limit of 0 W means "not set" (system.normalizeInverter): when the battery
+            // alone takes the whole allowance no inverter limit fixes it
+            const room = Math.floor(lim.hardwiredMaxW - acBattW);
             err('HARDWIRED_AC_LIMIT', `A G98 installation is limited to ${lim.hardwiredMaxW} W in total (16 A per phase); this has ${Math.round(totalAc)} W of inverters.`,
-                [{ label: `Limit the inverter to ${lim.hardwiredMaxW - acBattW} W`, action: { type: 'capAcLimit', w: Math.max(0, lim.hardwiredMaxW - acBattW) } }]);
+                room >= 1 && sys.inverter ? [{ label: `Limit the inverter to ${room} W`, action: { type: 'capAcLimit', w: room } }]
+                    : [{ label: 'Remove the battery', action: { type: 'removeBattery' } }]);
         }
         if (!sys.costs.some((c) => c.kind === 'install')) {
             warn('HARDWIRED_NO_INSTALL', `Wired-in systems need an electrician — add their cost (we assume £${catalog?.electrician?.gbp ?? 350}).`,

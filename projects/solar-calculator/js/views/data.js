@@ -11,7 +11,7 @@
  * from — is listed with what it means, and the ones you can change open an inline editor that
  * re-fetches from that step (DataHub.load with navigate:false) while the old figures stay visible.
  *
- * View-specific components (prefixed dv-, styles injected once as #style-data):
+ * View-specific components (prefixed da- — not dv-, which is Design's — styles injected once as #style-data):
  *   sourcePicker()   a radio group of four source cards with roving focus
  *   meter()          a thin proportion bar whose legend prints every value (no hover-only data)
  *   locationFields() postcode + optional map pin (map.js) + optional electricity region
@@ -21,132 +21,132 @@
 const STYLE_ID = 'style-data';
 
 const CSS = `
-.dv-head-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.dv-connect { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 20px; align-items: start; }
-.dv-sources { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 20px; }
-.dv-source {
+.da-head-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.da-connect { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+.da-sources { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 20px; }
+.da-source {
     position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 5px; min-height: 92px; min-width: 0;
     padding: 12px 14px 13px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--sunk);
     color: var(--text-2); text-align: left; cursor: pointer; transition: border-color .15s, background .15s, color .15s;
 }
-.dv-source:hover { border-color: var(--border-strong); color: var(--text); }
-.dv-source[aria-checked='true'] { border-color: var(--accent); background: var(--accent-dim); color: var(--text); }
-.dv-source[aria-checked='true']::after {
+.da-source:hover { border-color: var(--border-strong); color: var(--text); }
+.da-source[aria-checked='true'] { border-color: var(--accent); background: var(--accent-dim); color: var(--text); }
+.da-source[aria-checked='true']::after {
     content: ''; position: absolute; top: 12px; right: 12px; width: 8px; height: 8px; border-radius: 50%;
     background: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim);
 }
-.dv-source-title { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; padding-right: 14px; }
-.dv-source-title .icon { color: var(--accent); }
-.dv-source-sub { font-size: 12.5px; line-height: 1.42; color: var(--muted); }
-.dv-source-tag { font-family: var(--font-mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); margin-top: auto; }
-.dv-form { display: grid; gap: 16px; }
-.dv-form-2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
-.dv-submit-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
-.dv-lede { color: var(--muted); font-size: 14px; max-width: 64ch; }
-.dv-lede b { color: var(--text-2); font-weight: 600; }
-.dv-sum { font-family: var(--font-mono); font-size: 12.5px; color: var(--text-2); padding: 10px 12px; border: 1px solid var(--hairline); border-radius: var(--radius-sm); background: var(--sunk); }
-.dv-sum b { color: var(--text); font-weight: 600; }
-.dv-streams { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
-.dv-stream { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 2px 12px; padding: 12px 0; border-top: 1px solid var(--hairline); }
-.dv-stream:first-child { border-top: 0; padding-top: 0; }
-.dv-stream-n { grid-row: span 2; font-family: var(--font-mono); font-size: 11px; color: var(--accent); padding-top: 2px; }
-.dv-stream-t { font-size: 14px; font-weight: 600; color: var(--text); }
-.dv-stream-d { font-size: 12.5px; color: var(--muted); line-height: 1.5; }
-.dv-stream-d .mono { color: var(--text-2); font-size: 11.5px; }
-.dv-privacy { display: flex; gap: 8px; align-items: flex-start; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--hairline); font-size: 12.5px; color: var(--muted); }
-.dv-privacy .icon { margin-top: 2px; color: var(--accent); }
+.da-source-title { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; padding-right: 14px; }
+.da-source-title .icon { color: var(--accent); }
+.da-source-sub { font-size: 12.5px; line-height: 1.42; color: var(--muted); }
+.da-source-tag { font-family: var(--font-mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); margin-top: auto; }
+.da-form { display: grid; gap: 16px; }
+.da-form-2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.da-submit-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+.da-lede { color: var(--muted); font-size: 14px; max-width: 64ch; }
+.da-lede b { color: var(--text-2); font-weight: 600; }
+.da-sum { font-family: var(--font-mono); font-size: 12.5px; color: var(--text-2); padding: 10px 12px; border: 1px solid var(--hairline); border-radius: var(--radius-sm); background: var(--sunk); }
+.da-sum b { color: var(--text); font-weight: 600; }
+.da-streams { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
+.da-stream { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 2px 12px; padding: 12px 0; border-top: 1px solid var(--hairline); }
+.da-stream:first-child { border-top: 0; padding-top: 0; }
+.da-stream-n { grid-row: span 2; font-family: var(--font-mono); font-size: 11px; color: var(--accent); padding-top: 2px; }
+.da-stream-t { font-size: 14px; font-weight: 600; color: var(--text); }
+.da-stream-d { font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+.da-stream-d .mono { color: var(--text-2); font-size: 11.5px; }
+.da-privacy { display: flex; gap: 8px; align-items: flex-start; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--hairline); font-size: 12.5px; color: var(--muted); }
+.da-privacy .icon { margin-top: 2px; color: var(--accent); }
 
-.dv-drop {
+.da-drop {
     position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
     min-height: 136px; padding: 18px; border: 1.5px dashed var(--border-strong); border-radius: var(--radius);
     background: var(--sunk); color: var(--text-2); text-align: center; cursor: pointer; transition: border-color .15s, background .15s;
 }
-.dv-drop:hover, .dv-drop.is-over { border-color: var(--accent); background: var(--accent-dim); color: var(--text); }
-.dv-drop:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
-.dv-drop input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
-.dv-drop .icon { color: var(--accent); width: 22px; height: 22px; }
-.dv-drop-t { font-weight: 600; font-size: 14.5px; }
-.dv-drop-s { font-size: 12.5px; color: var(--muted); max-width: 46ch; }
-.dv-file { display: grid; gap: 12px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--sunk); }
-.dv-file-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
-.dv-file-name { font-family: var(--font-mono); font-size: 13px; color: var(--text); overflow-wrap: anywhere; }
-.dv-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px 16px; margin: 0; }
-.dv-facts dt { font-family: var(--font-mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
-.dv-facts dd { margin: 2px 0 0; font-family: var(--font-mono); font-size: 13px; color: var(--text); }
-.dv-warns { margin: 0; padding-left: 18px; font-size: 12.5px; color: var(--warn); display: grid; gap: 3px; }
+.da-drop:hover, .da-drop.is-over { border-color: var(--accent); background: var(--accent-dim); color: var(--text); }
+.da-drop:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.da-drop input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
+.da-drop .icon { color: var(--accent); width: 22px; height: 22px; }
+.da-drop-t { font-weight: 600; font-size: 14.5px; }
+.da-drop-s { font-size: 12.5px; color: var(--muted); max-width: 46ch; }
+.da-file { display: grid; gap: 12px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--sunk); }
+.da-file-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.da-file-name { font-family: var(--font-mono); font-size: 13px; color: var(--text); overflow-wrap: anywhere; }
+.da-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px 16px; margin: 0; }
+.da-facts dt { font-family: var(--font-mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.da-facts dd { margin: 2px 0 0; font-family: var(--font-mono); font-size: 13px; color: var(--text); }
+.da-warns { margin: 0; padding-left: 18px; font-size: 12.5px; color: var(--warn); display: grid; gap: 3px; }
 
-.dv-loc { display: grid; gap: 10px; }
-.dv-loc-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end; }
-.dv-map { height: 280px; }
+.da-loc { display: grid; gap: 10px; }
+.da-loc-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end; }
+.da-map { height: 280px; }
 
-.dv-run { display: grid; gap: 12px; }
-.dv-run:empty { display: none; }
-.dv-run-box { padding: 12px 14px; border: 1px solid var(--hairline); border-radius: var(--radius-sm); background: var(--sunk); }
-.dv-fail { display: grid; gap: 10px; padding: 12px 14px; border: 1px solid rgba(217, 112, 95, 0.45); border-radius: var(--radius-sm); background: var(--bad-dim); }
-.dv-fail-step { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--bad); }
-.dv-fail-msg { display: flex; gap: 8px; align-items: flex-start; font-size: 14px; color: var(--text); }
-.dv-fail-msg .icon { color: var(--bad); margin-top: 2px; }
-.dv-fail-acts { display: flex; gap: 8px; flex-wrap: wrap; }
-.dv-fail:focus, .dv-pick:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
-.dv-more-now { color: var(--accent); font-weight: 500; }
-.dv-pick { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--accent-line); border-radius: var(--radius-sm); background: var(--accent-dim); }
-.dv-pick-t { font-weight: 600; font-size: 14.5px; }
-.dv-pick-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
-.dv-pick-opt { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--sunk); cursor: pointer; }
-.dv-pick-opt:hover { border-color: var(--border-strong); }
-.dv-pick-opt:has(input:checked) { border-color: var(--accent); }
-.dv-pick-opt input { accent-color: var(--accent); width: 16px; height: 16px; margin: 0; flex: none; }
-.dv-pick-main { font-family: var(--font-mono); font-size: 13.5px; color: var(--text); }
-.dv-pick-sub { font-size: 12px; color: var(--muted); }
+.da-run { display: grid; gap: 12px; }
+.da-run:empty { display: none; }
+.da-run-box { padding: 12px 14px; border: 1px solid var(--hairline); border-radius: var(--radius-sm); background: var(--sunk); }
+.da-fail { display: grid; gap: 10px; padding: 12px 14px; border: 1px solid rgba(217, 112, 95, 0.45); border-radius: var(--radius-sm); background: var(--bad-dim); }
+.da-fail-step { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--bad); }
+.da-fail-msg { display: flex; gap: 8px; align-items: flex-start; font-size: 14px; color: var(--text); }
+.da-fail-msg .icon { color: var(--bad); margin-top: 2px; }
+.da-fail-acts { display: flex; gap: 8px; flex-wrap: wrap; }
+.da-fail:focus, .da-pick:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
+.da-more-now { color: var(--accent); font-weight: 500; }
+.da-pick { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--accent-line); border-radius: var(--radius-sm); background: var(--accent-dim); }
+.da-pick-t { font-weight: 600; font-size: 14.5px; }
+.da-pick-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.da-pick-opt { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--sunk); cursor: pointer; }
+.da-pick-opt:hover { border-color: var(--border-strong); }
+.da-pick-opt:has(input:checked) { border-color: var(--accent); }
+.da-pick-opt input { accent-color: var(--accent); width: 16px; height: 16px; margin: 0; flex: none; }
+.da-pick-main { font-family: var(--font-mono); font-size: 13.5px; color: var(--text); }
+.da-pick-sub { font-size: 12px; color: var(--muted); }
 
-.dv-ledger { display: grid; }
-.dv-row { display: grid; grid-template-columns: 148px minmax(0, 1fr) auto; gap: 4px 18px; align-items: start; padding: 14px 0; border-top: 1px solid var(--hairline); }
-.dv-row:first-child { border-top: 0; padding-top: 0; }
-.dv-key { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); padding-top: 4px; }
-.dv-val { min-width: 0; color: var(--text); font-size: 14.5px; overflow-wrap: anywhere; }
-.dv-val .mono { font-size: 13px; color: var(--text-2); }
-.dv-hint { margin-top: 3px; font-size: 12.5px; line-height: 1.5; color: var(--muted); }
-.dv-hint.is-warn { color: var(--warn); }
-.dv-act { justify-self: end; }
-.dv-act .btn[aria-expanded='true'] { border-color: var(--accent-line); color: var(--accent); }
-.dv-editor { grid-column: 1 / -1; display: grid; gap: 14px; margin-top: 10px; padding: 14px; border: 1px solid var(--accent-line); border-radius: var(--radius-sm); background: var(--sunk); }
-.dv-editor-acts { display: flex; gap: 8px; flex-wrap: wrap; }
-.dv-tariffs { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 2px; }
-.dv-tariffs li { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); }
-.dv-tariffs li span { color: var(--muted); }
-.dv-notes { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 13px; color: var(--text-2); }
-.dv-stale { opacity: .45; pointer-events: none; transition: opacity .2s; }
+.da-ledger { display: grid; }
+.da-row { display: grid; grid-template-columns: 148px minmax(0, 1fr) auto; gap: 4px 18px; align-items: start; padding: 14px 0; border-top: 1px solid var(--hairline); }
+.da-row:first-child { border-top: 0; padding-top: 0; }
+.da-key { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); padding-top: 4px; }
+.da-val { min-width: 0; color: var(--text); font-size: 14.5px; overflow-wrap: anywhere; }
+.da-val .mono { font-size: 13px; color: var(--text-2); }
+.da-hint { margin-top: 3px; font-size: 12.5px; line-height: 1.5; color: var(--muted); }
+.da-hint.is-warn { color: var(--warn); }
+.da-act { justify-self: end; }
+.da-act .btn[aria-expanded='true'] { border-color: var(--accent-line); color: var(--accent); }
+.da-editor { grid-column: 1 / -1; display: grid; gap: 14px; margin-top: 10px; padding: 14px; border: 1px solid var(--accent-line); border-radius: var(--radius-sm); background: var(--sunk); }
+.da-editor-acts { display: flex; gap: 8px; flex-wrap: wrap; }
+.da-tariffs { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 2px; }
+.da-tariffs li { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); }
+.da-tariffs li span { color: var(--muted); }
+.da-notes { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 13px; color: var(--text-2); }
+.da-stale { opacity: .45; pointer-events: none; transition: opacity .2s; }
 
-.dv-meter { display: flex; gap: 2px; height: 10px; margin-top: 8px; border-radius: 5px; overflow: hidden; background: var(--surface-3); }
-.dv-meter > span { display: block; min-width: 3px; }
-.dv-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 8px 0 0; padding: 0; list-style: none; font-size: 12.5px; color: var(--text-2); }
-.dv-legend li { display: inline-flex; align-items: center; gap: 6px; }
-.dv-legend i { width: 10px; height: 10px; border-radius: 2px; flex: none; }
-.dv-legend b { font-family: var(--font-mono); font-size: 12px; font-weight: 500; color: var(--text); }
-.dv-device { display: grid; gap: 14px; }
-.dv-device-state { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; color: var(--text-2); }
-.dv-device-state .icon { color: var(--accent); margin-top: 2px; }
-.dv-device-acts { display: flex; gap: 8px; flex-wrap: wrap; }
+.da-meter { display: flex; gap: 2px; height: 10px; margin-top: 8px; border-radius: 5px; overflow: hidden; background: var(--surface-3); }
+.da-meter > span { display: block; min-width: 3px; }
+.da-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 8px 0 0; padding: 0; list-style: none; font-size: 12.5px; color: var(--text-2); }
+.da-legend li { display: inline-flex; align-items: center; gap: 6px; }
+.da-legend i { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+.da-legend b { font-family: var(--font-mono); font-size: 12px; font-weight: 500; color: var(--text); }
+.da-device { display: grid; gap: 14px; }
+.da-device-state { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; color: var(--text-2); }
+.da-device-state .icon { color: var(--accent); margin-top: 2px; }
+.da-device-acts { display: flex; gap: 8px; flex-wrap: wrap; }
 
 @media (max-width: 1023px) {
-    .dv-connect { grid-template-columns: minmax(0, 1fr); }
-    .dv-sources { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .da-connect { grid-template-columns: minmax(0, 1fr); }
+    .da-sources { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 600px) {
-    .dv-form-2 { grid-template-columns: minmax(0, 1fr); }
-    .dv-sources { gap: 8px; margin-bottom: 16px; }
-    .dv-source { min-height: 64px; padding: 10px 12px; gap: 3px; }
-    .dv-source-title { font-size: 13.5px; }
-    .dv-source-sub { display: none; }
-    .dv-submit-row .btn { width: 100%; }
-    .dv-row { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; }
-    .dv-key { grid-column: 1 / -1; padding-top: 0; }
-    .dv-loc-row { grid-template-columns: minmax(0, 1fr); }
-    .dv-map { height: 240px; }
-    .dv-head-actions .btn { flex: 1; }
-    .dv-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .da-form-2 { grid-template-columns: minmax(0, 1fr); }
+    .da-sources { gap: 8px; margin-bottom: 16px; }
+    .da-source { min-height: 64px; padding: 10px 12px; gap: 3px; }
+    .da-source-title { font-size: 13.5px; }
+    .da-source-sub { display: none; }
+    .da-submit-row .btn { width: 100%; }
+    .da-row { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; }
+    .da-key { grid-column: 1 / -1; padding-top: 0; }
+    .da-loc-row { grid-template-columns: minmax(0, 1fr); }
+    .da-map { height: 240px; }
+    .da-head-actions .btn { flex: 1; }
+    .da-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-@media print { .dv-act, .dv-editor, .dv-device-acts, .dv-device-card { display: none !important; } }
+@media print { .da-act, .da-editor, .da-device-acts, .da-device-card { display: none !important; } }
 `;
 
 /* Region letters → names (GSP groups; the same table octopus.js uses for pricing). */
@@ -425,7 +425,7 @@ export default {
                 ui.h('div', { class: 'view-kicker' }, 'Your data'),
                 ui.h('h1', { class: 'view-title' }, title),
                 ui.h('p', { class: 'view-lede' }, lede)),
-            actions.length ? ui.h('div', { class: 'dv-head-actions no-print' }, actions) : null);
+            actions.length ? ui.h('div', { class: 'da-head-actions no-print' }, actions) : null);
     },
 
     /** A short name for the price basis, sized for a stat tile. */
@@ -451,7 +451,7 @@ export default {
 
     renderConnect(summary) {
         const { ui } = this.ctx;
-        this.runHost = ui.h('div', { class: 'dv-run', 'aria-live': 'polite' });
+        this.runHost = ui.h('div', { class: 'da-run', 'aria-live': 'polite' });
         const formHost = ui.h('div');
         const picker = this.sourcePicker(v => {
             this.mode = v;
@@ -465,11 +465,11 @@ export default {
             subtitle: 'Pick one. You can switch at any time — your settings and saved scenarios stay.',
             body: [picker, formHost, this.runHost],
         });
-        this.el.replaceChildren(this.head(summary), ui.h('div', { class: 'dv-connect' }, main, this.streamsCard()));
+        this.el.replaceChildren(this.head(summary), ui.h('div', { class: 'da-connect' }, main, this.streamsCard()));
         if (this.focusPostcode) {
             this.focusPostcode = false;
             requestAnimationFrame(() => {
-                const opts = this.el.querySelector('.dv-options');
+                const opts = this.el.querySelector('.da-options');
                 if (opts) opts.open = true;
                 const pc = this.el.querySelector('input[name="postcode"]');
                 pc?.focus();
@@ -480,14 +480,14 @@ export default {
     /** Four source cards acting as one radio group (arrow keys move and select). */
     sourcePicker(onChange) {
         const { ui } = this.ctx;
-        const group = ui.h('div', { class: 'dv-sources', role: 'radiogroup', 'aria-label': 'Data source' });
+        const group = ui.h('div', { class: 'da-sources', role: 'radiogroup', 'aria-label': 'Data source' });
         const cards = SOURCES.map(s => ui.h('button', {
-            type: 'button', role: 'radio', class: 'dv-source', dataset: { v: s.value },
+            type: 'button', role: 'radio', class: 'da-source', dataset: { v: s.value },
             on: { click: () => choose(s.value, true) },
         },
-        ui.h('span', { class: 'dv-source-title' }, ui.icon(s.icon), s.title),
-        ui.h('span', { class: 'dv-source-sub' }, s.sub),
-        s.tag ? ui.h('span', { class: 'dv-source-tag' }, s.tag) : null));
+        ui.h('span', { class: 'da-source-title' }, ui.icon(s.icon), s.title),
+        ui.h('span', { class: 'da-source-sub' }, s.sub),
+        s.tag ? ui.h('span', { class: 'da-source-tag' }, s.tag) : null));
         const paint = () => cards.forEach(c => {
             const on = c.dataset.v === this.mode;
             c.setAttribute('aria-checked', String(on));
@@ -524,17 +524,17 @@ export default {
     /** The right-hand card: the four data streams, where each comes from, and the privacy promise. */
     streamsCard() {
         const { ui } = this.ctx;
-        const item = (n, t, d) => ui.h('li', { class: 'dv-stream' }, ui.h('span', { class: 'dv-stream-n' }, n), ui.h('span', { class: 'dv-stream-t' }, t), ui.h('span', { class: 'dv-stream-d' }, d));
+        const item = (n, t, d) => ui.h('li', { class: 'da-stream' }, ui.h('span', { class: 'da-stream-n' }, n), ui.h('span', { class: 'da-stream-t' }, t), ui.h('span', { class: 'da-stream-d' }, d));
         return ui.card({
             eyebrow: 'What we fetch',
             title: 'Four streams, joined by the half-hour',
             body: [
-                ui.h('ol', { class: 'dv-streams' },
+                ui.h('ol', { class: 'da-streams' },
                     item('01', 'Your usage', ['Half-hourly kWh from your smart meter, for the latest full year. ', ui.h('span', { class: 'mono' }, 'api.octopus.energy')]),
                     item('02', 'Your prices', ['The tariffs you were on, plus Agile and export rates for your region. ', ui.h('span', { class: 'mono' }, 'api.octopus.energy')]),
                     item('03', 'Your sunshine', ['Satellite irradiance for your home every half-hour, and 20 years of averages. ', ui.h('span', { class: 'mono' }, 'open-meteo.com')]),
                     item('04', 'Your location', ['Postcode to map position and electricity region. ', ui.h('span', { class: 'mono' }, 'api.postcodes.io')])),
-                ui.h('p', { class: 'dv-privacy' }, ui.icon('lock'),
+                ui.h('p', { class: 'da-privacy' }, ui.icon('lock'),
                     ui.h('span', null, 'Your API key stays in this browser and is only ever sent to api.octopus.energy. Nothing is uploaded to us — there is no “us” server.')),
             ],
         });
@@ -579,7 +579,7 @@ export default {
      */
     moreSummary(base, kind) {
         const { ui, fmt } = this.ctx;
-        const now = ui.h('span', { class: 'dv-more-now' });
+        const now = ui.h('span', { class: 'da-more-now' });
         const paint = () => {
             const d = this.draft;
             const parts = [];
@@ -601,7 +601,7 @@ export default {
     locationFields({ withRegion = true, required = false } = {}) {
         const { ui } = this.ctx;
         const d = this.draft;
-        const mapHost = ui.h('div', { class: 'dv-map', hidden: true });
+        const mapHost = ui.h('div', { class: 'da-map', hidden: true });
         const pinNote = ui.h('div', { class: 'field-hint' });
         const paintPin = () => { pinNote.textContent = finite(d.lat) && finite(d.lon) ? `Pinned at ${d.lat.toFixed(5)}, ${d.lon.toFixed(5)}${d.postcode ? ' — your postcode takes priority' : ''}.` : ''; };
         paintPin();
@@ -630,7 +630,7 @@ export default {
             },
         });
         const kids = [
-            ui.h('div', { class: 'dv-loc-row' },
+            ui.h('div', { class: 'da-loc-row' },
                 ui.field({ label: required ? 'Your postcode' : 'Postcode (optional — we use the one on your account)', input: pc }),
                 mapBtn),
             pinNote, mapHost,
@@ -646,7 +646,7 @@ export default {
                 }),
             }));
         }
-        return ui.h('div', { class: 'dv-loc' }, kids);
+        return ui.h('div', { class: 'da-loc' }, kids);
     },
 
     locationSpec() {
@@ -670,8 +670,8 @@ export default {
         const acct = ui.textInput({ placeholder: 'A-1234ABCD', value: d.account, mono: true, name: 'octopus-account', onInput: v => { d.account = v; } });
         const remember = ui.checkbox({ label: 'Remember my key on this device', checked: d.remember, onChange: v => { d.remember = v; } });
         const submit = ui.h('button', { type: 'submit', class: 'btn btn-primary btn-lg' }, ui.h('span', null, 'Analyse my home'), ui.icon('arrowRight'));
-        const form = ui.h('form', { class: 'dv-form', novalidate: true, autocomplete: 'off' },
-            ui.h('div', { class: 'dv-form-2' },
+        const form = ui.h('form', { class: 'da-form', novalidate: true, autocomplete: 'off' },
+            ui.h('div', { class: 'da-form-2' },
                 ui.field({ label: 'Octopus API key', input: keyField, hint: keyHint }),
                 ui.field({ label: 'Account number (optional — we can find it)', input: acct, hint: 'Leave it blank and we’ll look it up from your key.' })),
             ui.details({
@@ -682,10 +682,10 @@ export default {
                 ],
             }),
             (() => {
-                const body = ui.h('div', { class: 'dv-form' }, this.locationFields({ withRegion: false }), this.installedField(), this.basisFields('octopus'));
-                return ui.details({ className: 'dv-options', summary: this.moreSummary('More options — postcode, existing solar, how to price your usage', 'octopus'), body });
+                const body = ui.h('div', { class: 'da-form' }, this.locationFields({ withRegion: false }), this.installedField(), this.basisFields('octopus'));
+                return ui.details({ className: 'da-options', summary: this.moreSummary('More options — postcode, existing solar, how to price your usage', 'octopus'), body });
             })(),
-            ui.h('div', { class: 'dv-submit-row' }, remember, submit));
+            ui.h('div', { class: 'da-submit-row' }, remember, submit));
         form.addEventListener('submit', e => {
             e.preventDefault();
             if (this.busy) return;
@@ -715,10 +715,10 @@ export default {
         const d = this.draft;
         const preview = ui.h('div');
         const input = ui.h('input', { type: 'file', accept: '.csv,.txt,text/csv,text/plain', 'aria-label': 'Choose a CSV file of your half-hourly usage' });
-        const drop = ui.h('label', { class: 'dv-drop' },
+        const drop = ui.h('label', { class: 'da-drop' },
             input, ui.icon('upload'),
-            ui.h('span', { class: 'dv-drop-t' }, 'Drop your CSV here, or choose a file'),
-            ui.h('span', { class: 'dv-drop-s' }, 'Octopus: My energy → Download your data → half-hourly consumption. Any file with a start time and kWh (or Wh) per reading works too.'));
+            ui.h('span', { class: 'da-drop-t' }, 'Drop your CSV here, or choose a file'),
+            ui.h('span', { class: 'da-drop-s' }, 'Octopus: My energy → Download your data → half-hourly consumption. Any file with a start time and kWh (or Wh) per reading works too.'));
         // Back after a reload with a CSV last time: the file itself is never stored, so say why it's gone.
         const again = !mem.csv && this.ctx.store.get().connection.kind === 'csv' && !this.ctx.data.summary()
             ? ui.h('div', { class: 'notice' }, ui.icon('info'), ui.h('span', null, 'Last time you used a CSV file. Files are never stored, so choose it again — your postcode and settings are remembered.'))
@@ -729,21 +729,21 @@ export default {
             if (!f) { preview.replaceChildren(); drop.hidden = false; return; }
             drop.hidden = true;
             const p = f.preview;
-            const head = ui.h('div', { class: 'dv-file-head' },
-                ui.h('span', { class: 'dv-file-name' }, `${f.name} · ${fileSize(f.size)}`),
+            const head = ui.h('div', { class: 'da-file-head' },
+                ui.h('span', { class: 'da-file-name' }, `${f.name} · ${fileSize(f.size)}`),
                 ui.button({
                     label: 'Choose another file', size: 'sm', kind: 'ghost',
                     // The button goes with the preview, so focus moves to the file chooser it opens.
                     onClick: () => { mem.csv = null; input.value = ''; paint(); input.focus(); try { input.click(); } catch { /* picker blocked: the drop zone has focus */ } },
                 }));
             if (f.error) {
-                preview.replaceChildren(ui.h('div', { class: 'dv-file' }, head,
+                preview.replaceChildren(ui.h('div', { class: 'da-file' }, head,
                     ui.h('div', { class: 'notice notice-bad' }, ui.icon('alert'), ui.h('span', null, f.error))));
                 return;
             }
-            if (!p) { preview.replaceChildren(ui.h('div', { class: 'dv-file' }, head, ui.skeleton({ lines: 3 }))); return; }
+            if (!p) { preview.replaceChildren(ui.h('div', { class: 'da-file' }, head, ui.skeleton({ lines: 3 }))); return; }
             const fmtLabel = { octopus: 'Octopus download', generic: 'Start time + kWh', headerless: 'No header (time, kWh)' }[p.format] || p.format;
-            const facts = ui.h('dl', { class: 'dv-facts' },
+            const facts = ui.h('dl', { class: 'da-facts' },
                 ...[['Format', fmtLabel], ['Readings', `≈ ${fmt.num(p.lines)}`], ['Resolution', p.resolution],
                     ['First', fmtSlot(p.first)], ['Last', fmtSlot(p.last)], ['Spans', `${fmt.num(p.days)} days`]]
                     .flatMap(([k, v]) => [ui.h('div', null, ui.h('dt', null, k), ui.h('dd', null, v))]));
@@ -757,8 +757,8 @@ export default {
                 ui.h('span', null, p.days < 14 ? 'This file covers less than two weeks — at least 14 days of readings are needed.'
                     : `This file covers ${p.days} days. Missing months will be estimated from the nearest weeks, so savings are less certain.`))
                 : p.days > 366 ? ui.h('p', { class: 'field-hint' }, `The latest 365 complete days are used; the ${fmt.num(p.days - 365)} days before that are left out.`) : null;
-            preview.replaceChildren(ui.h('div', { class: 'dv-file' }, head, facts, short,
-                p.warnings.length ? ui.h('ul', { class: 'dv-warns' }, p.warnings.slice(0, 6).map(w => ui.h('li', null, w))) : null,
+            preview.replaceChildren(ui.h('div', { class: 'da-file' }, head, facts, short,
+                p.warnings.length ? ui.h('ul', { class: 'da-warns' }, p.warnings.slice(0, 6).map(w => ui.h('li', null, w))) : null,
                 tbl));
         };
         const take = async file => {
@@ -786,14 +786,14 @@ export default {
         paint();
 
         const submit = ui.h('button', { type: 'submit', class: 'btn btn-primary btn-lg' }, ui.h('span', null, 'Analyse this file'), ui.icon('arrowRight'));
-        const form = ui.h('form', { class: 'dv-form', novalidate: true, autocomplete: 'off' },
+        const form = ui.h('form', { class: 'da-form', novalidate: true, autocomplete: 'off' },
             again, drop, preview,
             this.locationFields({ required: true }),
             (() => {
-                const body = ui.h('div', { class: 'dv-form' }, this.installedField(), this.basisFields('csv'));
+                const body = ui.h('div', { class: 'da-form' }, this.installedField(), this.basisFields('csv'));
                 return ui.details({ summary: this.moreSummary('More options — existing solar, how to price your usage', 'csv'), body });
             })(),
-            ui.h('div', { class: 'dv-submit-row' }, ui.h('span', { class: 'field-hint' }, 'The file is read in your browser and never uploaded.'), submit));
+            ui.h('div', { class: 'da-submit-row' }, ui.h('span', { class: 'field-hint' }, 'The file is read in your browser and never uploaded.'), submit));
         form.addEventListener('submit', e => {
             e.preventDefault();
             if (this.busy) return;
@@ -812,7 +812,7 @@ export default {
     manualForm() {
         const { ui, fmt } = this.ctx;
         const d = this.draft;
-        const sum = ui.h('div', { class: 'dv-sum', 'aria-live': 'polite' });
+        const sum = ui.h('div', { class: 'da-sum', 'aria-live': 'polite' });
         const paint = () => {
             const base = Math.max(0, d.baseW || 0), other = Math.max(0, d.otherKwhYr || 0);
             const baseKwh = base * 8.76;
@@ -823,10 +823,10 @@ export default {
         };
         paint();
         const submit = ui.h('button', { type: 'submit', class: 'btn btn-primary btn-lg' }, ui.h('span', null, 'Build my profile'), ui.icon('arrowRight'));
-        const form = ui.h('form', { class: 'dv-form', novalidate: true, autocomplete: 'off' },
-            ui.h('p', { class: 'dv-lede' }, 'No smart meter data? Tell us two numbers and we’ll build a typical year: your ', ui.h('b', null, 'always-on load'),
+        const form = ui.h('form', { class: 'da-form', novalidate: true, autocomplete: 'off' },
+            ui.h('p', { class: 'da-lede' }, 'No smart meter data? Tell us two numbers and we’ll build a typical year: your ', ui.h('b', null, 'always-on load'),
                 ' (servers, fridge, router — check a plug-in meter or your lowest overnight reading) plus ', ui.h('b', null, 'everything else'), ' you use in a year.'),
-            ui.h('div', { class: 'dv-form-2' },
+            ui.h('div', { class: 'da-form-2' },
                 ui.field({ label: 'Always-on load', hint: 'Watts, around the clock.', input: ui.numberInput({ value: d.baseW, min: 0, max: 5000, step: 10, unit: 'W', onChange: v => { d.baseW = v; paint(); } }) }),
                 ui.field({ label: 'Everything else per year', hint: 'A typical home uses 2,700 kWh before any servers.', input: ui.numberInput({ value: d.otherKwhYr, min: 0, max: 30000, step: 100, unit: 'kWh', onChange: v => { d.otherKwhYr = v; paint(); } }) })),
             sum,
@@ -835,7 +835,7 @@ export default {
                 const body = this.basisFields('manual');
                 return ui.details({ summary: this.moreSummary('More options — how to price your usage', 'manual'), body });
             })(),
-            ui.h('div', { class: 'dv-submit-row' }, ui.h('span', { class: 'field-hint' }, 'The shape of the day is a typical UK household; only the totals are yours.'), submit));
+            ui.h('div', { class: 'da-submit-row' }, ui.h('span', { class: 'field-hint' }, 'The shape of the day is a typical UK household; only the totals are yours.'), submit));
         form.addEventListener('submit', e => {
             e.preventDefault();
             if (this.busy) return;
@@ -861,17 +861,17 @@ export default {
         });
         const submit = ui.button({ label: 'Load the example', kind: 'primary', icon: 'arrowRight', onClick: () => { if (!this.busy) this.connect({ kind: 'demo', serverW: d.serverW }); } });
         submit.classList.add('btn-lg');
-        return ui.h('div', { class: 'dv-form' },
-            ui.h('p', { class: 'dv-lede' }, 'A real London year — Agile prices and satellite sunshine from 1 Oct 2025 to 30 Sep 2026 — with a ',
+        return ui.h('div', { class: 'da-form' },
+            ui.h('p', { class: 'da-lede' }, 'A real London year — Agile prices and satellite sunshine from 1 Oct 2025 to 30 Sep 2026 — with a ',
                 ui.h('b', null, 'synthetic household'), ' of 2,700 kWh a year plus servers running 24/7. It loads instantly and works offline.'),
             ui.field({ label: 'Servers in the example home', hint: ['Always-on load on top of the household: ', out, '.'], input: sl }),
-            ui.h('div', { class: 'dv-submit-row' }, ui.h('span', { class: 'field-hint' }, 'Swap in your own data whenever you like.'), submit));
+            ui.h('div', { class: 'da-submit-row' }, ui.h('span', { class: 'field-hint' }, 'Swap in your own data whenever you like.'), submit));
     },
 
     showFormError(message, focus) {
         const { ui } = this.ctx;
-        this.runHost?.replaceChildren(ui.h('div', { class: 'dv-fail', role: 'alert' },
-            ui.h('div', { class: 'dv-fail-msg' }, ui.icon('alert'), ui.h('span', null, message))));
+        this.runHost?.replaceChildren(ui.h('div', { class: 'da-fail', role: 'alert' },
+            ui.h('div', { class: 'da-fail-msg' }, ui.icon('alert'), ui.h('span', null, message))));
         focus?.();
     },
 
@@ -884,10 +884,10 @@ export default {
         if (this.busy) return;
         const host = this.runHost;
         const pl = ui.progressList(ui.loadStepsFor(spec.kind));
-        host.replaceChildren(ui.h('div', { class: 'dv-run-box' }, pl.el));
-        const form = this.el.querySelector('.dv-form');
-        form?.classList.add('dv-stale');
-        this.el.querySelectorAll('.dv-source, button[type="submit"]').forEach(b => { b.disabled = true; });
+        host.replaceChildren(ui.h('div', { class: 'da-run-box' }, pl.el));
+        const form = this.el.querySelector('.da-form');
+        form?.classList.add('da-stale');
+        this.el.querySelectorAll('.da-source, button[type="submit"]').forEach(b => { b.disabled = true; });
         this.busy = true;
         const run = { failed: null };
         try {
@@ -904,8 +904,8 @@ export default {
             // A key Octopus rejected is no use to keep (it stays in the field to correct).
             if (err?.code === 'AUTH') { try { store.clearApiKey(); } catch { /* storage blocked */ } }
             pl.settle(run.failed || err?.step || null);
-            form?.classList.remove('dv-stale');
-            this.el.querySelectorAll('.dv-source, button[type="submit"]').forEach(b => { b.disabled = false; });
+            form?.classList.remove('da-stale');
+            this.el.querySelectorAll('.da-source, button[type="submit"]').forEach(b => { b.disabled = false; });
             const panel = this.failure(err, spec, { onRetry: s => this.connect(s) });
             host.appendChild(panel);
             this.reveal(panel);
@@ -1035,10 +1035,10 @@ export default {
                 if (err?.retryable !== false) acts.push(retry());
                 acts.push(demo());
         }
-        return ui.h('div', { class: 'dv-fail', role: 'alert' },
-            step ? ui.h('div', { class: 'dv-fail-step' }, `Stopped at: ${step}`) : null,
-            ui.h('div', { class: 'dv-fail-msg' }, ui.icon('alert'), ui.h('span', null, err?.message || 'Something went wrong while fetching your data.')),
-            ui.h('div', { class: 'dv-fail-acts' }, acts.filter(Boolean)));
+        return ui.h('div', { class: 'da-fail', role: 'alert' },
+            step ? ui.h('div', { class: 'da-fail-step' }, `Stopped at: ${step}`) : null,
+            ui.h('div', { class: 'da-fail-msg' }, ui.icon('alert'), ui.h('span', null, err?.message || 'Something went wrong while fetching your data.')),
+            ui.h('div', { class: 'da-fail-acts' }, acts.filter(Boolean)));
     },
 
     /** Several accounts on one key, or several import meters on one property: pick one and carry on. */
@@ -1054,8 +1054,8 @@ export default {
             const sub = meters ? (c.serials?.length ? `Meter serial${c.serials.length > 1 ? 's' : ''} ${c.serials.join(', ')}` : '') : (typeof c === 'object' && c?.label) || '';
             const radio = ui.h('input', { type: 'radio', name, value, on: { change: () => { chosen = value; go.disabled = false; } } });
             if (i === 0) { radio.checked = true; chosen = value; }
-            return ui.h('li', null, ui.h('label', { class: 'dv-pick-opt' }, radio,
-                ui.h('span', null, ui.h('span', { class: 'dv-pick-main' }, main), sub ? ui.h('span', { class: 'dv-pick-sub' }, ` · ${sub}`) : null)));
+            return ui.h('li', null, ui.h('label', { class: 'da-pick-opt' }, radio,
+                ui.h('span', null, ui.h('span', { class: 'da-pick-main' }, main), sub ? ui.h('span', { class: 'da-pick-sub' }, ` · ${sub}`) : null)));
         }).filter(Boolean);
         const go = ui.button({
             label: 'Continue', kind: 'primary', icon: 'arrowRight',
@@ -1071,10 +1071,10 @@ export default {
                 }
             },
         });
-        return ui.h('div', { class: 'dv-pick', role: 'group', 'aria-label': meters ? 'Pick your electricity meter' : 'Pick your account' },
-            ui.h('div', { class: 'dv-pick-t' }, meters ? 'This home has more than one electricity meter — which one is yours?' : 'Your key can see more than one account — which one?'),
+        return ui.h('div', { class: 'da-pick', role: 'group', 'aria-label': meters ? 'Pick your electricity meter' : 'Pick your account' },
+            ui.h('div', { class: 'da-pick-t' }, meters ? 'This home has more than one electricity meter — which one is yours?' : 'Your key can see more than one account — which one?'),
             ui.h('p', { class: 'field-hint' }, meters ? 'Pick the meter on your main supply — its serial number is printed on the meter itself.' : 'Pick the account for the home you want to analyse.'),
-            ui.h('ul', { class: 'dv-pick-list' }, opts),
+            ui.h('ul', { class: 'da-pick-list' }, opts),
             ui.h('div', null, go));
     },
 
@@ -1088,7 +1088,7 @@ export default {
             return;
         }
         this.render();
-        requestAnimationFrame(() => this.el.querySelector('.dv-source[aria-checked="true"]')?.focus());
+        requestAnimationFrame(() => this.el.querySelector('.da-source[aria-checked="true"]')?.focus());
     },
 
     /* ── loaded: the ledger ───────────────────────────────────────────────── */
@@ -1144,7 +1144,7 @@ export default {
             body: monthsHost,
         }) : null;
         const sunshine = ui.card({ title: 'Where the sunshine came from', subtitle: 'Each half-hour’s irradiance, by source', body: this.sunshineBody(summary) });
-        const device = ui.card({ title: 'Your key and this device', className: 'dv-device-card', body: this.deviceBody(summary) });
+        const device = ui.card({ title: 'Your key and this device', className: 'da-device-card', body: this.deviceBody(summary) });
         this.ledgerEl = ledger;
         this.el.replaceChildren(
             this.head(summary),
@@ -1159,7 +1159,7 @@ export default {
         if (this.focusRow) {
             const id = this.focusRow;
             this.focusRow = null;
-            requestAnimationFrame(() => this.el.querySelector(`[data-row="${id}"] .dv-act .btn`)?.focus({ preventScroll: true }));
+            requestAnimationFrame(() => this.el.querySelector(`[data-row="${id}"] .da-act .btn`)?.focus({ preventScroll: true }));
         }
 
         if (!monthsHost) return;
@@ -1211,14 +1211,14 @@ export default {
         const meter = this.meter(parts.map(p => ({ label: p.label, color: p.color, value: p.n, text: `${fmt.pct((100 * p.n) / total, { dp: (100 * p.n) / total < 1 ? 2 : 1 })} · ${fmt.num(p.n)}` })),
             'Share of half-hours by sunshine source');
         const notes = [];
-        notes.push(ui.h('p', { class: 'dv-hint' }, 'SARAH-3 is the 30-minute satellite record (about 3 days behind). The newest days come from the 15-minute MSG satellite; if neither has a half-hour, the ECMWF IFS weather model fills it, scaled by 0.93 because it reads about 7% high.'));
-        if (wx.sarahLastMs) notes.push(ui.h('p', { class: 'dv-hint' }, `Latest SARAH-3 half-hour: ${fmtSlot(wx.sarahLastMs)}.`));
-        if (finite(wx.gridLat) && finite(wx.gridLon)) notes.push(ui.h('p', { class: 'dv-hint' }, `Satellite grid cell ${fmt.num(wx.gridLat, 2)}°, ${fmt.num(wx.gridLon, 2)}° (about 5 km across).`));
+        notes.push(ui.h('p', { class: 'da-hint' }, 'SARAH-3 is the 30-minute satellite record (about 3 days behind). The newest days come from the 15-minute MSG satellite; if neither has a half-hour, the ECMWF IFS weather model fills it, scaled by 0.93 because it reads about 7% high.'));
+        if (wx.sarahLastMs) notes.push(ui.h('p', { class: 'da-hint' }, `Latest SARAH-3 half-hour: ${fmtSlot(wx.sarahLastMs)}.`));
+        if (finite(wx.gridLat) && finite(wx.gridLon)) notes.push(ui.h('p', { class: 'da-hint' }, `Satellite grid cell ${fmt.num(wx.gridLat, 2)}°, ${fmt.num(wx.gridLon, 2)}° (about 5 km across).`));
         // weather.js's own notes already count the model half-hours; only a real share earns a warning.
         if (wx.ifsScaled && total && (counts[2] || 0) / total >= 0.01) {
-            notes.push(ui.h('p', { class: 'dv-hint is-warn' }, `${fmt.pct((100 * counts[2]) / total, { dp: 1 })} of half-hours had no satellite data and use the weather model, which is less accurate for any single hour.`));
+            notes.push(ui.h('p', { class: 'da-hint is-warn' }, `${fmt.pct((100 * counts[2]) / total, { dp: 1 })} of half-hours had no satellite data and use the weather model, which is less accurate for any single hour.`));
         }
-        for (const n of (wx.notes || []).filter(n => !/^Prices:|Weather data by/i.test(n))) notes.push(ui.h('p', { class: 'dv-hint' }, n));
+        for (const n of (wx.notes || []).filter(n => !/^Prices:|Weather data by/i.test(n))) notes.push(ui.h('p', { class: 'da-hint' }, n));
         return total ? [meter, ...notes] : ui.h('p', { class: 'muted' }, 'No weather details for this dataset.');
     },
 
@@ -1227,9 +1227,9 @@ export default {
         const { ui } = this.ctx;
         const total = parts.reduce((a, p) => a + p.value, 0) || 1;
         return ui.h('div', null,
-            ui.h('div', { class: 'dv-meter', role: 'img', 'aria-label': `${label}: ${parts.map(p => `${p.label} ${p.text}`).join('; ')}` },
+            ui.h('div', { class: 'da-meter', role: 'img', 'aria-label': `${label}: ${parts.map(p => `${p.label} ${p.text}`).join('; ')}` },
                 parts.map(p => ui.h('span', { style: { flex: `${p.value / total} 1 0`, background: p.color }, title: `${p.label}: ${p.text}` }))),
-            ui.h('ul', { class: 'dv-legend', 'aria-hidden': 'true' },
+            ui.h('ul', { class: 'da-legend', 'aria-hidden': 'true' },
                 parts.map(p => ui.h('li', null, ui.h('i', { style: { background: p.color } }), p.label, ui.h('b', null, p.text)))));
     },
 
@@ -1240,14 +1240,16 @@ export default {
         const conn = store.get().connection;
         const state = !key ? 'No Octopus API key is stored in this browser.'
             : conn.rememberKey ? 'Your API key is remembered on this device until you forget it.'
-                : 'Your API key is kept for this tab only — it is forgotten when you close it.';
+                // sessionStorage, not memory: a browser that restores tabs (Ctrl+Shift+T, "continue where
+                // you left off") restores it too, and app.js reconnects with it — so don't promise "forgotten"
+                : 'Your API key is kept in this tab’s session storage, not remembered on this device. Closing the tab usually clears it, but a browser that restores tabs can bring it back — use Forget my key to remove it now.';
         // data-fk: refreshDevice() rebuilds the card, and focus goes back to the same control
         const fk = (el, k) => { el.dataset.fk = k; return el; };
         const acts = [];
         if (key) {
             acts.push(fk(ui.toggle({
                 label: 'Remember my key on this device', checked: !!conn.rememberKey,
-                onChange: v => { store.setApiKey(key, v); ui.toast(v ? 'Your key will be remembered on this device.' : 'Your key is now kept for this tab only.', { tone: 'good' }); this.refreshDevice(); },
+                onChange: v => { store.setApiKey(key, v); ui.toast(v ? 'Your key will be remembered on this device.' : 'Your key is no longer remembered on this device — it’s kept in this tab’s session storage.', { tone: 'good' }); this.refreshDevice(); },
             }), 'dev-remember'));
         }
         const btns = [];
@@ -1263,11 +1265,11 @@ export default {
             }), 'dev-forget-key'));
         }
         btns.push(fk(ui.button({ label: 'Forget this device…', size: 'sm', kind: 'danger', onClick: () => this.forgetDevice() }), 'dev-forget-device'));
-        return ui.h('div', { class: 'dv-device' },
-            ui.h('div', { class: 'dv-device-state' }, ui.icon('lock'), ui.h('span', null, state)),
+        return ui.h('div', { class: 'da-device' },
+            ui.h('div', { class: 'da-device-state' }, ui.icon('lock'), ui.h('span', null, state)),
             acts.length ? acts : null,
-            ui.h('div', { class: 'dv-device-acts' }, btns),
-            ui.h('p', { class: 'dv-hint' }, 'To also clear your settings and saved scenarios, use ', ui.h('a', { href: '#method?s=reset' }, 'Method → Reset everything'), '.'));
+            ui.h('div', { class: 'da-device-acts' }, btns),
+            ui.h('p', { class: 'da-hint' }, 'To also clear your settings and saved scenarios, use ', ui.h('a', { href: '#method?s=reset' }, 'Method → Reset everything'), '.'));
     },
 
     /**
@@ -1277,7 +1279,7 @@ export default {
      */
     refreshDevice() {
         const { ui } = this.ctx;
-        const host = this.el.querySelector('.dv-device');
+        const host = this.el.querySelector('.da-device');
         const s = this.ctx.data.summary();
         if (!host || !s) return;
         const fresh = this.deviceBody(s);
@@ -1329,7 +1331,7 @@ export default {
         const rows = [];
         const row = (id, key, value, hint, editable, editor) => {
             const open = this.editing === id && editable;
-            const edId = `dv-ed-${id}`;
+            const edId = `da-ed-${id}`;
             const act = editable ? ui.button({
                 label: open ? 'Close' : 'Change', size: 'sm', kind: 'ghost',
                 // Every row's button reads "Change": the accessible name says which choice.
@@ -1337,11 +1339,11 @@ export default {
                 onClick: () => { if (this.busy) return; if (open) this.closeEditor(id); else this.openEditor(id); },
             }) : null;
             if (act) { act.setAttribute('aria-expanded', String(open)); act.setAttribute('aria-controls', edId); act.dataset.fk = `row-${id}`; }
-            rows.push(ui.h('div', { class: 'dv-row', dataset: { row: id } },
-                ui.h('div', { class: 'dv-key' }, key),
-                ui.h('div', { class: 'dv-val' }, value, hint ? (Array.isArray(hint) ? hint : [hint]).filter(Boolean).map(x => (x instanceof Node ? x : ui.h('div', { class: 'dv-hint' }, x))) : null),
-                ui.h('div', { class: 'dv-act' }, act),
-                open ? ui.h('div', { class: 'dv-editor', id: edId }, editor()) : null));
+            rows.push(ui.h('div', { class: 'da-row', dataset: { row: id } },
+                ui.h('div', { class: 'da-key' }, key),
+                ui.h('div', { class: 'da-val' }, value, hint ? (Array.isArray(hint) ? hint : [hint]).filter(Boolean).map(x => (x instanceof Node ? x : ui.h('div', { class: 'da-hint' }, x))) : null),
+                ui.h('div', { class: 'da-act' }, act),
+                open ? ui.h('div', { class: 'da-editor', id: edId }, editor()) : null));
         };
 
         // Source
@@ -1351,10 +1353,10 @@ export default {
             csv: mem.csv?.text ? 'Read from the file in your browser.' : 'Files aren’t kept between visits — upload it again to change anything below.',
             manual: 'A typical household’s daily shape, scaled to your two numbers below. No meter readings are used.',
         }[src];
-        rows.push(ui.h('div', { class: 'dv-row' },
-            ui.h('div', { class: 'dv-key' }, 'Source'),
-            ui.h('div', { class: 'dv-val' }, this.sourceLine(summary), ui.h('div', { class: 'dv-hint' }, srcHint)),
-            ui.h('div', { class: 'dv-act' })));
+        rows.push(ui.h('div', { class: 'da-row' },
+            ui.h('div', { class: 'da-key' }, 'Source'),
+            ui.h('div', { class: 'da-val' }, this.sourceLine(summary), ui.h('div', { class: 'da-hint' }, srcHint)),
+            ui.h('div', { class: 'da-act' })));
 
         if (src === 'manual') {
             row('usage', 'Usage', `${fmt.w(conn.manual?.baseW)} always on + ${fmt.kwh(conn.manual?.otherKwhYr)} a year of everything else`,
@@ -1370,36 +1372,36 @@ export default {
             : ui.h('span', { class: 'mono' }, `${fmt.num(summary.lat, 4)}, ${fmt.num(summary.lon, 4)}`);
         const locWarn = summary.locationSource === 'region-centroid';
         row('location', 'Location', where,
-            ui.h('div', { class: ['dv-hint', locWarn && 'is-warn'] }, LOCATION_SOURCE[summary.locationSource] || 'Used for the sun’s path and the satellite sunshine.'),
+            ui.h('div', { class: ['da-hint', locWarn && 'is-warn'] }, LOCATION_SOURCE[summary.locationSource] || 'Used for the sun’s path and the satellite sunshine.'),
             canRefetch, () => this.locationEditor(summary));
 
         // Region
-        rows.push(ui.h('div', { class: 'dv-row' },
-            ui.h('div', { class: 'dv-key' }, 'Region'),
-            ui.h('div', { class: 'dv-val' }, ui.h('span', { class: 'mono' }, summary.region || '?'), ' · ', summary.regionName || REGIONS[summary.region] || 'Unknown',
-                ui.h('div', { class: 'dv-hint' }, src === 'octopus' ? 'From your tariff code — it sets which regional Agile prices apply.' : 'Sets which regional Agile and export prices apply.')),
-            ui.h('div', { class: 'dv-act' })));
+        rows.push(ui.h('div', { class: 'da-row' },
+            ui.h('div', { class: 'da-key' }, 'Region'),
+            ui.h('div', { class: 'da-val' }, ui.h('span', { class: 'mono' }, summary.region || '?'), ' · ', summary.regionName || REGIONS[summary.region] || 'Unknown',
+                ui.h('div', { class: 'da-hint' }, src === 'octopus' ? 'From your tariff code — it sets which regional Agile prices apply.' : 'Sets which regional Agile and export prices apply.')),
+            ui.h('div', { class: 'da-act' })));
 
         // Period
         // coverage.days counts the whole window, so real days come from the share of real half-hours.
         const realDays = finite(summary.coverage?.realPct) ? (summary.days * summary.coverage.realPct) / 100 : summary.days;
-        rows.push(ui.h('div', { class: 'dv-row' },
-            ui.h('div', { class: 'dv-key' }, 'Period'),
-            ui.h('div', { class: 'dv-val' }, `${fmt.date(isoDay(summary.from))} – ${fmt.date(isoDay(summary.to))}`, ' ', ui.h('span', { class: 'mono' }, `${fmt.num(summary.days)} days`),
-                ui.h('div', { class: 'dv-hint' }, src === 'demo' ? 'The year the example prices and sunshine were recorded.'
+        rows.push(ui.h('div', { class: 'da-row' },
+            ui.h('div', { class: 'da-key' }, 'Period'),
+            ui.h('div', { class: 'da-val' }, `${fmt.date(isoDay(summary.from))} – ${fmt.date(isoDay(summary.to))}`, ' ', ui.h('span', { class: 'mono' }, `${fmt.num(summary.days)} days`),
+                ui.h('div', { class: 'da-hint' }, src === 'demo' ? 'The year the example prices and sunshine were recorded.'
                     : src === 'manual' ? 'A typical year ending a few days ago, so the prices and sunshine are recent.'
                         : `The latest 365 complete days with readings${conn.installedSolarDate ? ', ending before your existing solar' : ''}${realDays < 330 ? ' — shorter histories are filled in from the nearest weeks' : ''}.`)),
-            ui.h('div', { class: 'dv-act' })));
+            ui.h('div', { class: 'da-act' })));
 
         // Prices
         const tariffs = summary.tariffs || [];
-        const tariffList = tariffs.length ? ui.h('ul', { class: 'dv-tariffs' }, tariffs.slice(-6).map(t => ui.h('li', null,
+        const tariffList = tariffs.length ? ui.h('ul', { class: 'da-tariffs' }, tariffs.slice(-6).map(t => ui.h('li', null,
             `${tariffName(t.code)} `, ui.h('span', null, `${t.code} · ${fmt.date(t.fromMs, { year: true })} – ${fmt.date(Math.max(t.fromMs, (t.toMs ?? t.fromMs) - 1), { year: true })}${t.assumed ? ' · assumed' : ''}`)))) : null;
         const basisValue = src === 'demo' ? 'Agile Octopus, London' : BASIS_LABEL[summary.priceBasis] || summary.priceBasis || '—';
         row('prices', 'Prices', basisValue,
-            [ui.h('div', { class: 'dv-hint' }, src === 'demo' ? 'Real Agile half-hourly prices for London.' : BASIS_HINT[summary.priceBasis] || ''),
+            [ui.h('div', { class: 'da-hint' }, src === 'demo' ? 'Real Agile half-hourly prices for London.' : BASIS_HINT[summary.priceBasis] || ''),
                 tariffList,
-                ui.h('div', { class: 'dv-hint' }, FORWARD_HINT[src === 'demo' ? 'agile' : summary.priceBasis] || FORWARD_HINT.mine,
+                ui.h('div', { class: 'da-hint' }, FORWARD_HINT[src === 'demo' ? 'agile' : summary.priceBasis] || FORWARD_HINT.mine,
                     ui.h('a', { href: '#method?s=prices' }, 'How prices are valued'), '.')],
             canRefetch, () => this.pricesEditor(summary));
 
@@ -1423,27 +1425,27 @@ export default {
         ].filter(p => p.value > 0);
         // A built profile (by hand, or the example household) has no meter readings to count.
         const coverageVal = src === 'manual'
-            ? ['No meter readings — a typical profile', ui.h('div', { class: 'dv-hint' }, 'Every half-hour comes from the profile built from your numbers, so there are no gaps to fill. Savings are an estimate of a typical home with your totals, not of your actual days.')]
+            ? ['No meter readings — a typical profile', ui.h('div', { class: 'da-hint' }, 'Every half-hour comes from the profile built from your numbers, so there are no gaps to fill. Savings are an estimate of a typical home with your totals, not of your actual days.')]
             : src === 'demo'
-                ? ['A synthetic household — no meter readings', ui.h('div', { class: 'dv-hint' }, 'The example household’s usage is generated for every half-hour; the prices and the sunshine are real.')]
+                ? ['A synthetic household — no meter readings', ui.h('div', { class: 'da-hint' }, 'The example household’s usage is generated for every half-hour; the prices and the sunshine are real.')]
                 : [`${fmt.pct(cov.realPct, { dp: cov.realPct > 99.5 ? 0 : 1 })} of half-hours are real readings`,
                     this.meter(covParts, 'Half-hours by kind'),
-                    ui.h('div', { class: 'dv-hint' }, filledN + extN === 0 ? 'Every half-hour in the period has a reading.'
+                    ui.h('div', { class: 'da-hint' }, filledN + extN === 0 ? 'Every half-hour in the period has a reading.'
                         : 'Gaps are filled from the same half-hour on similar days nearby (never with zeros). Usage figures only use real readings; savings use the filled year.')];
-        rows.push(ui.h('div', { class: 'dv-row' },
-            ui.h('div', { class: 'dv-key' }, 'Coverage'),
-            ui.h('div', { class: 'dv-val' }, coverageVal),
-            ui.h('div', { class: 'dv-act' })));
+        rows.push(ui.h('div', { class: 'da-row' },
+            ui.h('div', { class: 'da-key' }, 'Coverage'),
+            ui.h('div', { class: 'da-val' }, coverageVal),
+            ui.h('div', { class: 'da-act' })));
 
         // Notes
         const notes = (summary.notes || []).filter(Boolean);
         if (notes.length) {
-            rows.push(ui.h('div', { class: 'dv-row' },
-                ui.h('div', { class: 'dv-key' }, 'Notes'),
-                ui.h('div', { class: 'dv-val' }, ui.h('ul', { class: 'dv-notes' }, notes.slice(0, 8).map(t => ui.h('li', null, t)))),
-                ui.h('div', { class: 'dv-act' })));
+            rows.push(ui.h('div', { class: 'da-row' },
+                ui.h('div', { class: 'da-key' }, 'Notes'),
+                ui.h('div', { class: 'da-val' }, ui.h('ul', { class: 'da-notes' }, notes.slice(0, 8).map(t => ui.h('li', null, t)))),
+                ui.h('div', { class: 'da-act' })));
         }
-        return ui.h('div', { class: 'dv-ledger', 'aria-live': 'polite' }, rows);
+        return ui.h('div', { class: 'da-ledger', 'aria-live': 'polite' }, rows);
     },
 
     /**
@@ -1460,8 +1462,8 @@ export default {
         const swap = () => { old.replaceWith(fresh); this.ledgerEl = fresh; };
         // ui.keepFocus: an open editor's first field, else the row asked for, else the rebuilt twin
         // of whatever had focus in the ledger (row buttons carry data-fk)
-        const target = () => fresh.querySelector('.dv-editor')?.querySelector('input, select, button')
-            ?? (focusRow ? fresh.querySelector(`[data-row="${focusRow}"] .dv-act .btn`) : null);
+        const target = () => fresh.querySelector('.da-editor')?.querySelector('input, select, button')
+            ?? (focusRow ? fresh.querySelector(`[data-row="${focusRow}"] .da-act .btn`) : null);
         if (old.parentElement) this.ctx.ui.keepFocus(old.parentElement, swap, target, { preventScroll: false });
         else swap();
     },
@@ -1492,7 +1494,7 @@ export default {
 
     editorActions(label, onApply) {
         const { ui } = this.ctx;
-        return ui.h('div', { class: 'dv-editor-acts' },
+        return ui.h('div', { class: 'da-editor-acts' },
             ui.button({ label, kind: 'primary', icon: 'refresh', onClick: onApply }),
             ui.button({ label: 'Cancel', kind: 'ghost', onClick: () => this.closeEditor() }));
     },
@@ -1542,7 +1544,7 @@ export default {
     usageEditor() {
         const { ui, fmt } = this.ctx;
         const d = this.draft;
-        const sum = ui.h('div', { class: 'dv-sum', 'aria-live': 'polite' });
+        const sum = ui.h('div', { class: 'da-sum', 'aria-live': 'polite' });
         const paint = () => {
             const base = Math.max(0, d.baseW || 0), other = Math.max(0, d.otherKwhYr || 0);
             sum.replaceChildren('About ', ui.h('b', null, fmt.kwh(base * 8.76 + other)), ' a year in total.');
@@ -1550,7 +1552,7 @@ export default {
         paint();
         const box = ui.h('div', { class: 'stack-sm' });
         box.append(
-            ui.h('div', { class: 'dv-form-2' },
+            ui.h('div', { class: 'da-form-2' },
                 ui.field({ label: 'Always-on load', hint: 'Watts, around the clock.', input: ui.numberInput({ value: d.baseW, min: 0, max: 5000, step: 10, unit: 'W', onChange: v => { d.baseW = v; paint(); } }) }),
                 ui.field({ label: 'Everything else per year', hint: 'A typical home uses 2,700 kWh before any servers.', input: ui.numberInput({ value: d.otherKwhYr, min: 0, max: 30000, step: 100, unit: 'kWh', onChange: v => { d.otherKwhYr = v; paint(); } }) })),
             sum,
@@ -1567,7 +1569,7 @@ export default {
         const had = this.ctx.store.get().connection.installedSolarDate;
         const opts = { row: 'installed', editLabel: 'Pick another date' };
         const box = ui.h('div', { class: 'stack-sm' });
-        box.append(this.installedField(), ui.h('div', { class: 'dv-editor-acts' },
+        box.append(this.installedField(), ui.h('div', { class: 'da-editor-acts' },
             ui.button({ label: 'Re-fetch my usage', kind: 'primary', icon: 'refresh', onClick: () => this.refetch({ installedSolarDate: d.installed || null }, box, opts) }),
             had ? ui.button({ label: 'I have no solar', kind: 'ghost', onClick: () => { d.installed = ''; this.refetch({ installedSolarDate: null }, box, opts); } }) : null,
             ui.button({ label: 'Cancel', kind: 'ghost', onClick: () => this.closeEditor() })));
@@ -1657,10 +1659,10 @@ export default {
             return;
         }
         const pl = ui.progressList(ui.loadStepsFor(spec.kind));
-        box.replaceChildren(ui.h('div', { class: 'dv-run-box', 'aria-live': 'polite' }, pl.el));
-        const rows = [...(this.ledgerEl?.querySelectorAll('.dv-row') || [])].filter(r => !r.contains(box));
-        rows.forEach(r => r.classList.add('dv-stale'));
-        this.el.querySelectorAll('.tiles, .grid-main > .stack').forEach(x => x.classList.add('dv-stale'));
+        box.replaceChildren(ui.h('div', { class: 'da-run-box', 'aria-live': 'polite' }, pl.el));
+        const rows = [...(this.ledgerEl?.querySelectorAll('.da-row') || [])].filter(r => !r.contains(box));
+        rows.forEach(r => r.classList.add('da-stale'));
+        this.el.querySelectorAll('.tiles, .grid-main > .stack').forEach(x => x.classList.add('da-stale'));
         this.busy = true;
         const state = { failed: null };
         try {
@@ -1679,8 +1681,8 @@ export default {
         } catch (err) {
             this.busy = false;
             if (isAbort(err)) { this.render(); return; }
-            rows.forEach(r => r.classList.remove('dv-stale'));
-            this.el.querySelectorAll('.dv-stale').forEach(x => x.classList.remove('dv-stale'));
+            rows.forEach(r => r.classList.remove('da-stale'));
+            this.el.querySelectorAll('.da-stale').forEach(x => x.classList.remove('da-stale'));
             pl.settle(state.failed || err?.step || null);
             const panel = this.failure(err, spec, {
                 // A picker's choice (meter or account) comes back in the spec it retries with.
@@ -1689,7 +1691,7 @@ export default {
                 editLabel,
             });
             box.appendChild(panel);
-            box.appendChild(ui.h('div', { class: 'dv-editor-acts' },
+            box.appendChild(ui.h('div', { class: 'da-editor-acts' },
                 ui.button({ label: 'Keep my current data', kind: 'ghost', onClick: () => this.closeEditor(row) })));
             this.reveal(panel);
         } finally {

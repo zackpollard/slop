@@ -7,7 +7,8 @@ for your home, half-hour by half-hour, and tells you what to buy, what it pays b
 Live at **[solar-calculator.slop.zackpollard.pro](https://solar-calculator.slop.zackpollard.pro)**.
 
 Everything runs in the browser. Your Octopus API key is only ever sent to `api.octopus.energy`
-and is kept in memory unless you tick "Remember on this device".
+and is kept in the tab's session storage unless you tick "Remember on this device" (the Data page
+can forget it at any time).
 
 ## What it answers
 

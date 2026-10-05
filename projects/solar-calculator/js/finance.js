@@ -10,10 +10,13 @@
  * PV fades mid-year per pv-reference degradationFactor (first-year LID is 0 by default because the
  * 5.9% DC loss stack already has lid 1%). A battery fades linearly with calendar and cycle ageing
  * and stops at 70% SoH or its life; its standby draw is not faded (it is a fixed cost while the
- * battery exists), so the battery term is (Sav_batt + standby)·SoH_mid − standby.
+ * battery exists), so the battery term is (Sav_batt + standby)·SoH_mid − standby. Each cycle wears
+ * what the maker's rating says — "4000 cycles to 80%" is 0.2/4000 of capacity per cycle — whatever
+ * SoH the user calls worn out.
  */
 
 import { DEFAULT_VAT_SCHEDULE, vatAt } from './vat.js';
+import { cycleRatingSohFor } from './system.js';
 
 /** Defaults (CONTRACTS §12), plus dcInverterOnBatteryEol (see project()). */
 export const DEFAULT_FINANCE = Object.freeze({
@@ -79,15 +82,19 @@ export function pvDegradation(y, firstYear = 0, annual = 0.004) {
 
 /**
  * Battery state of health and end-of-life year.
- * SoH_end(a) = 1 − (aCal + bCyc·EFC)·a, SoH_mid(a) = 1 − (aCal + bCyc·EFC)·(a − 0.5), bCyc = (1 − eol)/cycles;
- * the battery serves ages a ≤ a* = min(life, last a with SoH_end(a − 1) ≥ eol).
- * @param {{ efcPerYear?: number, cycles?: number, lifeYears?: number }} battery
+ * SoH_end(a) = 1 − (aCal + bCyc·EFC)·a, SoH_mid(a) = 1 − (aCal + bCyc·EFC)·(a − 0.5),
+ * bCyc = (1 − ratedSoh)/cycles where ratedSoh is the SoH the cycle rating runs to
+ * (cycleRatingSoh: "4000 cycles to 80%" → 0.8; default by coupling, system.cycleRatingSohFor);
+ * the battery serves ages a ≤ a* = min(life, last a with SoH_end(a − 1) ≥ eol). The end-of-life
+ * threshold only decides when the battery stops: it does not change how much a cycle wears it.
+ * @param {{ coupling?: string, efcPerYear?: number, cycles?: number, cycleRatingSoh?: number, lifeYears?: number }} battery
  * @param {{ batteryCalendarFade?: number, batteryEolSoh?: number }} [o]
  * @returns {{ rate: number, sohMid: (a: number) => number, sohEnd: (a: number) => number, endAge: number }}
  */
 export function batteryHealth(battery, o = DEFAULT_FINANCE) {
     const eol = finite(o.batteryEolSoh, 0.7);
-    const bCyc = (1 - eol) / (finite(battery?.cycles, 0) > 0 ? battery.cycles : 6000);
+    const rated = clampNum(battery?.cycleRatingSoh, cycleRatingSohFor(battery?.coupling), 0.5, 0.99);
+    const bCyc = (1 - rated) / (finite(battery?.cycles, 0) > 0 ? battery.cycles : 6000);
     const rate = finite(o.batteryCalendarFade, 0.015) + bCyc * Math.max(0, finite(battery?.efcPerYear, 0));
     const life = finite(battery?.lifeYears, 15);
     const byFade = rate > 0 ? Math.floor(1 + (1 - eol) / rate + 1e-9) : Infinity;
@@ -199,7 +206,7 @@ const val = (m, k) => (m && Number.isFinite(m[k]) ? m[k] : 0);
  * @param {Array<Object>|null} [a.battMonthly] marginal MonthlyFwd: full system − pvMonthly
  * @param {number|Array} [a.standbyCostFwdP] battery standby cost, forward basis EXC VAT, annualised
  *   (simulate annual.standbyCostFwdExcP of the full run minus the PV-only run), or a 12-array by month0
- * @param {{ coupling: string, efcPerYear: number, cycles?: number, lifeYears?: number, capexGbp?: number }|null} [a.battery]
+ * @param {{ coupling: string, efcPerYear: number, cycles?: number, cycleRatingSoh?: number, lifeYears?: number, capexGbp?: number }|null} [a.battery]
  * @param {boolean} [a.hasMicro] a separate micro-inverter that needs replacing in microReplaceYear
  * @param {{ atYear: number, costs: Array, stage2PvMonthly?: Array, stage2BattMonthly?: Array, battery?: Object,
  *   standbyCostFwdP?: number|Array }|null} [a.upgrade] bought at the end of year atYear; stage-2 savings from

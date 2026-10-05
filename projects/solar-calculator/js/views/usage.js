@@ -38,6 +38,8 @@ const DRIFT_FLAG_PCT = 15;                  // UX critique: flag |drift| ≥ 15 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const WX_SOURCES = ['SARAH-3 satellite', 'MSG satellite (recent days)', 'forecast model, scaled', 'example data', 'interpolated'];
 const SCALE_NOTE = 'The colour scale leaves out the most extreme 1% at each end, so a few spikes don’t wash out the rest';
+/* coverage.synthetic (set by the worker for the example household and typed-in figures): never "real readings". */
+const SYNTHETIC_WHAT = { demo: 'a synthetic example household', manual: 'a typical profile built from your figures' };
 
 const CSS = `
 .uv { display: flex; flex-direction: column; gap: 20px; transition: opacity .2s ease; }
@@ -342,6 +344,8 @@ export default {
             ctx.data.on('dataset', () => this.render()),
             ctx.data.on('settings', () => this.render()),
             ctx.data.on('status', () => this.render()),
+            // a finished verdict brings the forward "switch 100 W off" saving for the hero readout
+            ctx.data.on('verdict', () => { if (this.v?.ins && this.v.summary) this.fillHero(this.v.summary, this.v.ins); }),
         ];
         this.render();
     },
@@ -689,13 +693,21 @@ export default {
             floorGlyph(h, fmt, ins.profiles?.load, bl.w, bl.sharePct));
 
         const perDay = finite(bl.costBilledGbpYr) ? bl.costBilledGbpYr / 365 : null;
+        // £ per 100 W here is last year's cost, as billed. What switching 100 W off SAVES is the
+        // verdict's forward figure (next year's prices: the Agile levy cut, VAT back to 5% from
+        // April 2027) — the one the Verdict and Compare quote — shown once a verdict is ready.
+        const V = this.ctx.data.verdictIfReady?.() ?? null;
+        const fwd = V && V.usage && finite(V.usage.gbpPer100W) ? V.usage.gbpPer100W : null;
+        const fwdWhen = V?.context?.firstYear?.label;
         p.readout.replaceChildren(
             h('div', { class: 'uv-readout-label' }, 'It costs you'),
             h('div', { class: 'uv-readout-fig' }, fmt.gbp(bl.costBilledGbpYr), h('small', null, 'a year')),
             h('div', { class: 'uv-readout-sub' }, `${fmt.gbp(perDay, { dp: 2 })} a day · ${fmt.kwh(bl.kwhYr)} a year`),
             h('dl', { class: 'uv-readout-rows' },
                 h('div', { class: 'uv-readout-row' }, h('dt', null, 'Of that, 4–7pm'), h('dd', null, fmt.gbp(bl.costPeakGbpYr))),
-                h('div', { class: 'uv-readout-row' }, h('dt', null, 'Every 100 W you switch off saves'), h('dd', null, `${fmt.gbp(bl.gbpPer100W)}/yr`))));
+                h('div', { class: 'uv-readout-row' }, h('dt', null, 'Each 100 W cost you'), h('dd', null, `${fmt.gbp(bl.gbpPer100W)}/yr`)),
+                fwd != null ? h('div', { class: 'uv-readout-row', title: `In your first year${fwdWhen ? ` (${fwdWhen})` : ''}, at next year’s prices — the figure the Verdict and Compare use` },
+                    h('dt', null, 'Switch 100 W off and you’d save'), h('dd', null, `${fmt.gbp(fwd)}/yr`)) : null));
     },
 
     fillTiles(summary, ins) {
@@ -785,7 +797,7 @@ export default {
             h('p', null, 'You use ', h('b', null, `${fmt.kwh(pk.kwhPerDay)} a day`), ' in those three hours — ',
                 h('b', null, fmt.pct(pk.kwhSharePct, { dp: 0 })), ' of your electricity but ', h('b', null, fmt.pct(pk.costSharePct, { dp: 0 })),
                 ` of what it costs${finite(perDayGbp) ? `, about ${fmt.gbp(perDayGbp, { dp: 2 })} a day` : ''}.`),
-            finite(ratio) && ratio > 1.2 ? h('p', null, `Each peak kWh costs ${fmt.num(ratio, 1)}× the rest — which is why panels facing west and batteries are worth testing. There’s little sun after 4pm from November to February, though.`) : null,
+            finite(ratio) && ratio > 1.2 ? h('p', null, `Each peak kWh costs ${fmt.num(ratio, 1)}× the rest — which is why panels facing west and batteries are worth testing. Around midwinter there’s little sun after 4pm, though.`) : null,
             h('div', { class: 'uv-panel-links' },
                 ui.button({ label: 'Does facing west pay?', kind: 'link', size: 'sm', href: '#orientation', icon: 'arrowRight' }),
                 ui.button({ label: 'See the verdict', kind: 'link', size: 'sm', href: '#verdict', icon: 'arrowRight' })));
@@ -942,7 +954,7 @@ export default {
             gaps.noReading ? h('span', { class: 'key key-hatch', 'aria-hidden': 'true' }) : null,
             h('span', null, gaps.noReading
                 ? `Hatched: no meter reading${why.length ? ` — ${why.join('; ')}` : ` (${fmt.num(gaps.noReading)} half-hour${gaps.noReading === 1 ? '' : 's'})`}. The always-on load and the average day leave them out; the bills include their estimates.${dstNote} ${SCALE_NOTE}.`
-                : `Every half-hour has a real meter reading.${dstNote} ${SCALE_NOTE}.`));
+                : `${cov.synthetic ? `Every half-hour has a figure — ${SYNTHETIC_WHAT[cov.synthetic] || 'synthetic usage'}, not meter readings.` : 'Every half-hour has a real meter reading.'}${dstNote} ${SCALE_NOTE}.`));
 
         const priceVals = hm.price || new Float32Array(0);
         const [p1, p99] = quantilesOf(priceVals, [0.01, 0.99]);
@@ -1040,7 +1052,7 @@ export default {
         const tariffs = summary.tariffs || [];
         const basis = { mine: 'your own tariffs, as billed', agile: 'Agile today', flexible: 'Octopus Flexible', flat: 'a flat price' }[summary.priceBasis] || summary.priceBasis;
         const facts = [
-            ['Usage', [h('b', null, `${fmt.pct(cov.realPct, { dp: cov.realPct >= 99.95 ? 0 : 1 })} real meter readings`),
+            ['Usage', [h('b', null, cov.synthetic ? `Not meter readings: ${SYNTHETIC_WHAT[cov.synthetic] || 'synthetic usage'}` : `${fmt.pct(cov.realPct, { dp: cov.realPct >= 99.95 ? 0 : 1 })} real meter readings`),
                 ` over ${fmt.num(Math.round(cov.days ?? summary.days))} days.`,
                 cov.filledSlots ? ` ${fmt.num(cov.filledSlots)} missing half-hours were filled in from the same time on similar days.` : ' No gaps to fill.',
                 cov.extrapolatedSlots ? ` ${fmt.num(cov.extrapolatedSlots)} half-hours were estimated to complete a year.` : '']],

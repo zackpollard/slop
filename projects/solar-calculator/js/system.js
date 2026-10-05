@@ -57,6 +57,9 @@ export const DEFAULTS = Object.freeze({
         standbyW: 10, allowGridExport: false, strategy: 'threshold', fixedOutputW: null,
         schedule: Object.freeze({ chargeBelowP: null, chargeWindow: Object.freeze(['00:00', '06:00']), dischargeWindow: Object.freeze(['16:00', '19:00']) }),
         replanAt: '16:00', wearPPerKwh: 2, deltaKwh: 0.025, cycles: 6000, lifeYears: 15, pvForecast: 'persistence',
+        // the state of health the maker's cycle rating runs to ("6000 cycles to 70%"); null = the
+        // usual basis for the coupling (cycleRatingSohFor)
+        cycleRatingSoh: null,
         ups: null,
     }),
     // Power-station defaults from the UPS research loss model (P_dc = P_ac/0.94 + P0 while inverting,
@@ -69,6 +72,47 @@ export const DEFAULTS = Object.freeze({
         inputLimitW: 2990,
     }),
 });
+
+/**
+ * The state of health a cycle rating runs to when the maker doesn't say: home batteries (Anker
+ * Solarbank, Zendure, EcoFlow STREAM) quote "6000 cycles to 70%", portable power stations
+ * (EcoFlow, BLUETTI, Anker SOLIX, DJI) "4000 cycles to 80%" (research REPORT-agile §4, REPORT-ups).
+ * A cycle then wears (1 − this)/cycles of capacity — it says nothing about when the battery is
+ * worn out, which is the user's own threshold (finance batteryEolSoh).
+ * @param {string} [coupling]
+ * @returns {number}
+ */
+export function cycleRatingSohFor(coupling) {
+    return coupling === 'ups' ? 0.8 : 0.7;
+}
+
+/**
+ * Tilt (°) from which panels are on a wall rather than a frame: vertical panels get the wall
+ * mounting physics (Faiman wall preset, ground self-shading), as the 'wall' mount spot does.
+ */
+export const WALL_TILT = 85;
+
+/**
+ * An array turned to (azimuth, tilt), with the mounting physics the new direction implies rather
+ * than the spot it came from: frame panels turned vertical are a wall mount (mounting 'wall',
+ * ground self-shading), wall panels turned to a frame tilt are a frame (mounting 'open', no
+ * self-shading), and an explicit Faiman override that described the old mounting is dropped.
+ * A turn that stays on the same side of WALL_TILT keeps everything (so pointing panels where
+ * they already are changes nothing), and a railing stays a railing at any tilt.
+ * @param {Object} a PvArray
+ * @param {number} azimuth
+ * @param {number} tilt
+ * @returns {Object} PvArray
+ */
+export function pointArray(a, azimuth, tilt) {
+    const out = { ...a, azimuth, tilt };
+    const was = Number.isFinite(a?.tilt) ? a.tilt >= WALL_TILT : a?.mounting === 'wall';
+    const now = tilt >= WALL_TILT;
+    if (a?.mounting === 'railing' || was === now) return out;
+    delete out.faiman;
+    if (now) return { ...out, mounting: 'wall', groundSelfShade: true };
+    return { ...out, mounting: a?.mounting === 'roof' ? 'roof' : 'open', groundSelfShade: false };
+}
 
 /* ── small coercion helpers (never throw) ── */
 
@@ -164,7 +208,10 @@ export function normalizeArray(p = {}, i = 0, nInputs = Infinity) {
 export function normalizeInverter(p, minInputs = 1) {
     const d = DEFAULTS.inverter;
     if (!p || typeof p !== 'object') p = {};
-    const acLimitW = num(p.acLimitW, d.acLimitW, 0, 100000);
+    // 0 W (a cleared or zeroed field) is "not set", as pv.js reads it: one meaning everywhere, or
+    // the panels would run at 800 W while a dc battery delivered nothing and the rules saw 0 W
+    const lim = num(p.acLimitW, d.acLimitW, 0, 100000);
+    const acLimitW = lim > 0 ? lim : d.acLimitW;
     let inputs;
     if (Array.isArray(p.inputs) && p.inputs.length) {
         // Explicit wiring wins: arrays that name a missing input are clamped onto the last one
@@ -258,6 +305,7 @@ export function normalizeBattery(p) {
         wearPPerKwh: num(p.wearPPerKwh, d.wearPPerKwh, 0, 100),
         deltaKwh: num(p.deltaKwh, d.deltaKwh, 0.005, 1),
         cycles: num(p.cycles, d.cycles, 100, 100000),
+        cycleRatingSoh: num(p.cycleRatingSoh, cycleRatingSohFor(coupling), 0.5, 0.99),
         lifeYears: num(p.lifeYears, d.lifeYears, 1, 40),
         pvForecast: oneOf(p.pvForecast, ['persistence', 'perfect'], d.pvForecast),
         ups: coupling === 'ups' ? normalizeUps(p.ups, acOutputW) : null,

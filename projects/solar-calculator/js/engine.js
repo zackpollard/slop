@@ -10,6 +10,13 @@
  * before it says it's ready, the same dispatcher (worker.js) runs inline on the main thread — slower
  * and blocking, but the app still works. Messages are structured-cloned in both modes, so a view
  * that accidentally passes a function fails the same way in development as in production.
+ *
+ * A module that failed to download stays failed in the worker's module map, and worker.js's
+ * cache-busting retry can't reach a module imported by another (dataset.js is imported back by
+ * octopus.js and csv.js). So when a call fails with MISSING_MODULE before any dataset lives in the
+ * worker — nothing to lose — the worker is replaced by a fresh one (a fresh module map) and the call
+ * replayed, once per call. After a dataset has loaded, the error goes to the page (whose message
+ * offers a reload).
  */
 
 /**
@@ -57,11 +64,13 @@ export function createEngine({ inThread = false, createDispatcher = null } = {})
     let workerReady = false;
     let inline = null;            // Promise<dispatcher>
     let terminated = false;
+    let datasetLoaded = false;   // a dataset lives in this worker: replacing the worker would lose it
     let resolveReady;
     const ready = new Promise(r => { resolveReady = r; });
 
-    function deliver(msg) {
+    function deliver(msg, from) {
         if (!msg || typeof msg !== 'object') return;
+        if (from && from !== worker) return;   // a replaced worker's late messages
         if (msg.type === 'ready') { workerReady = true; resolveReady('worker'); return; }
         const p = pending.get(msg.id);
         if (!p) return;   // cancelled or unknown: drop late messages
@@ -70,10 +79,46 @@ export function createEngine({ inThread = false, createDispatcher = null } = {})
             for (const fn of listeners.get(msg.id) || []) { try { fn(msg.value); } catch (err) { console.error(err); } }
             return;
         }
+        if (msg.type === 'error' && msg.error?.code === 'MISSING_MODULE' && worker && !datasetLoaded && !p.respawned) {
+            p.respawned = true;
+            respawn();
+            return;
+        }
         pending.delete(msg.id);
         listeners.delete(msg.id);
-        if (msg.type === 'result') p.resolve(msg.value);
-        else p.reject(reviveError(msg.error));
+        if (msg.type === 'result') {
+            if (p.msg?.method === 'loadDataset') datasetLoaded = true;
+            p.resolve(msg.value);
+        } else p.reject(reviveError(msg.error));
+    }
+
+    /* Start a module worker; null when this browser can't run one. */
+    function spawn() {
+        let moduleOk = false;
+        // Browsers without module workers never read `type`, so this getter is the feature test.
+        const w = new Worker(new URL('./worker.js', import.meta.url), { get type() { moduleOk = true; return 'module'; } });
+        if (!moduleOk) { w.terminate(); return null; }
+        w.addEventListener('message', e => deliver(e.data, w));
+        w.addEventListener('error', e => {
+            if (w !== worker) return;
+            if (!workerReady) { e.preventDefault?.(); failover('worker failed to start'); return; }
+            console.error('engine worker error', e.message || e);
+        });
+        w.addEventListener('messageerror', () => console.error('engine worker sent an unreadable message'));
+        return w;
+    }
+
+    /* Replace the worker with a fresh one (a fresh module map) and send it everything still unanswered. */
+    function respawn() {
+        const old = worker;
+        let w = null;
+        try { w = spawn(); } catch { w = null; }
+        if (!w) { failover('worker could not be restarted'); return; }
+        worker = w;
+        workerReady = false;
+        try { old?.terminate(); } catch { /* already gone */ }
+        console.info('solar engine worker restarted after a module failed to download');
+        for (const p of pending.values()) { try { w.postMessage(p.msg); } catch { /* cloned fine the first time */ } }
     }
 
     function startInline(reason) {
@@ -105,18 +150,9 @@ export function createEngine({ inThread = false, createDispatcher = null } = {})
         startInline(inThread || createDispatcher ? null : 'no Worker support');
     } else {
         try {
-            let moduleOk = false;
-            // Browsers without module workers never read `type`, so this getter is the feature test.
-            const w = new Worker(new URL('./worker.js', import.meta.url), { get type() { moduleOk = true; return 'module'; } });
-            if (!moduleOk) { w.terminate(); startInline('module workers unsupported'); } else {
-                worker = w;
-                worker.addEventListener('message', e => deliver(e.data));
-                worker.addEventListener('error', e => {
-                    if (!workerReady) { e.preventDefault?.(); failover('worker failed to start'); return; }
-                    console.error('engine worker error', e.message || e);
-                });
-                worker.addEventListener('messageerror', () => console.error('engine worker sent an unreadable message'));
-            }
+            const w = spawn();
+            if (!w) startInline('module workers unsupported');
+            else worker = w;
         } catch (err) {
             startInline(`worker blocked: ${err?.message || err}`);
         }

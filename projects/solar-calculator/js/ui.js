@@ -235,6 +235,20 @@ export function keepFocus(host, build, target = null, { fallback = null, prevent
     return fb ? focus(fb) : null;
 }
 
+/**
+ * The `behavior` for scrollIntoView / scrollTo: 'smooth', or 'auto' (an instant jump) when the user
+ * asks for reduced motion. The CSS reduced-motion rule can't reach a JS smooth scroll, so every
+ * call site passes `{ behavior: scrollBehavior() }` instead of a hard-coded 'smooth'.
+ * @returns {'smooth'|'auto'}
+ */
+export function scrollBehavior() {
+    try {
+        return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+    } catch {
+        return 'smooth';
+    }
+}
+
 /* Small inline icon set (stroke icons on a 16px grid). */
 const ICONS = {
     check: 'M3.5 8.5l3 3 6-7',
@@ -561,14 +575,27 @@ export function figurePair(items = [], { className } = {}) {
         h('div', { class: 'fig-pair-fig' }, it.value == null || it.value === '' ? DASH : it.value, it.unit ? h('small', null, it.unit) : null))));
 }
 
+/* What the coverage chip says when the usage isn't meter readings at all (coverage.synthetic). */
+const SYNTHETIC_USAGE = {
+    demo: 'Example household · synthetic usage',
+    manual: 'Typical usage · from your figures',
+};
+
 /**
  * The data-coverage chip: "100% real readings", or "53.7% real readings · 166 days estimated" in
- * amber below 95%, linking to the Data view. null when the coverage is unknown.
- * @param {{ realPct?: number, extrapolatedSlots?: number }|null} coverage summary.coverage or insights.coverage
- * @param {{ href?: string }} [opts]
+ * amber below 95%, linking to the Data view. Usage that isn't meter readings (coverage.synthetic:
+ * 'demo' | 'manual', or opts.source) says that instead — the example household is complete, but
+ * none of it is real. null when the coverage is unknown.
+ * @param {{ realPct?: number, extrapolatedSlots?: number, synthetic?: string }|null} coverage summary.coverage or insights.coverage
+ * @param {{ href?: string, source?: string }} [opts] source: DatasetSummary.source, for coverage that isn't marked
  * @returns {HTMLAnchorElement|null}
  */
-export function coverageChip(coverage, { href = '#data' } = {}) {
+export function coverageChip(coverage, { href = '#data', source } = {}) {
+    const synthetic = coverage?.synthetic || (source in SYNTHETIC_USAGE ? source : null);
+    if (synthetic && coverage) {
+        return h('a', { class: ['cov-chip', 'is-synthetic'], href, title: 'Not meter readings — see where this data came from' },
+            h('span', { class: 'cov-chip-dot', 'aria-hidden': 'true' }), SYNTHETIC_USAGE[synthetic] || 'Synthetic usage, not meter readings');
+    }
     const real = coverage?.realPct;
     if (!ok(real)) return null;
     const estDays = ok(coverage?.extrapolatedSlots) ? Math.round(coverage.extrapolatedSlots / 48) : 0;
@@ -883,12 +910,15 @@ export function compassInput({ azimuth = 180, onChange, size = 200, step = 5, la
  *   sortable?: boolean, sortValue?: (row: object) => any, width?: string, mobile?: 'title'|'primary'|'show'|'hide', help?: string }>,
  *   rows?: object[], groups?: Array<{ key?: string, title?: string|Node, note?: string|Node, rows: object[], divider?: boolean,
  *   collapsible?: boolean, collapsed?: boolean, className?: string }>, sortKey?: string, onRowClick?: (row: object) => void,
+ *   rowAction?: string|((row: object) => string),
  *   rowClass?: (row: object) => string, emptyText?: string, caption?: string, dense?: boolean, note?: string|Node,
  *   followSort?: boolean, onSort?: (key: string) => void, onToggle?: (key: string, open: boolean) => void }} o
  *   sortKey: column key, prefixed with '-' for descending
+ *   onRowClick: the row's title cell becomes a button that calls it (and a click anywhere on the row
+ *   does too); rowAction is extra screen-reader text for that button, e.g. 'open it in Design'
  * @returns {HTMLElement & { update(rows: object[]): void, setGroups(groups: object[]): void, setSort(key: string): void, sortKey(): string|null }}
  */
-export function table({ columns = [], rows = [], groups = null, sortKey, onRowClick, rowClass, emptyText = 'Nothing to show yet.', caption, dense = false,
+export function table({ columns = [], rows = [], groups = null, sortKey, onRowClick, rowAction, rowClass, emptyText = 'Nothing to show yet.', caption, dense = false,
     note = null, followSort = false, onSort, onToggle } = {}) {
     let data = rows;
     let grouped = Array.isArray(groups) ? groups : null;
@@ -926,20 +956,39 @@ export function table({ columns = [], rows = [], groups = null, sortKey, onRowCl
             return desc ? cmp(b, a) : cmp(a, b);
         });
     }
-    const rowEl = row => {
+    /*
+     * A clickable row's title is a real button (keyboard reachable, announced as something to press,
+     * named by the title itself); the rest of the row stays a mouse convenience. Only a title that
+     * already holds a control of its own falls back to a focusable row.
+     */
+    const CONTROL = 'a,button,input,select,textarea';
+    const holdsControl = x => (Array.isArray(x) ? x.some(holdsControl)
+        : x instanceof Node && x.nodeType === 1 && (x.matches(CONTROL) || !!x.querySelector(CONTROL)));
+    const rowEl = (row, i) => {
         const tr = h('tr', { class: rowClass ? rowClass(row) : null });
-        if (onRowClick) {
-            tr.tabIndex = 0;
-            tr.addEventListener('click', e => { if (!e.target.closest('a,button,input,select')) onRowClick(row); });
-            tr.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target === tr) onRowClick(row); });
-        }
+        let asButton = null;
         for (const col of columns) {
             const raw = row[col.key];
-            const v = col.format ? col.format(raw, row) : raw == null || (typeof raw === 'number' && !Number.isFinite(raw)) ? DASH
+            let v = col.format ? col.format(raw, row) : raw == null || (typeof raw === 'number' && !Number.isFinite(raw)) ? DASH
                 : typeof raw === 'number' ? fmt.num(raw, Number.isInteger(raw) ? 0 : 1) : raw;
+            if (onRowClick && col.key === titleCol && !holdsControl(v)) {
+                const hint = typeof rowAction === 'function' ? rowAction(row) : rowAction;
+                v = asButton = h('button', { type: 'button', class: 'tbl-row-btn', dataset: { fk: `tbl-row:${row?.id ?? i}` }, on: { click: () => onRowClick(row) } },
+                    v, hint ? h('span', { class: 'sr-only' }, ` — ${hint}`) : null);
+                // callers that put focus back on a re-rendered row (tr.focus()) land on its button
+                const btn = asButton;
+                tr.focus = opts => btn.focus(opts);
+            }
             tr.appendChild(h(col.key === titleCol ? 'th' : 'td', {
                 class: [`al-${col.align || 'left'}`, `m-${mobileOf(col)}`], scope: col.key === titleCol ? 'row' : null, dataset: { label: col.label },
             }, v));
+        }
+        if (onRowClick) {
+            tr.addEventListener('click', e => { if (!e.target.closest(`${CONTROL},label`)) onRowClick(row); });
+            if (!asButton) {
+                tr.tabIndex = 0;
+                tr.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target === tr) onRowClick(row); });
+            }
         }
         return tr;
     };
@@ -1172,6 +1221,11 @@ export function connectCard(ctx = {}, { compact = false } = {}) {
                 break;
             case 'useDemo':
                 acts.push(demo);
+                break;
+            case 'reload':
+                // a part of the calculator didn't download: Retry asks for it afresh; a reload is the
+                // backstop when something it depends on failed too (an unremembered key survives it)
+                acts.push(retry, button({ label: 'Reload the page', size: 'sm', kind: 'ghost', onClick: () => location.reload() }));
                 break;
             default:
                 if (err?.retryable !== false) acts.push(retry);

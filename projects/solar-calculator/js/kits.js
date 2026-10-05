@@ -96,6 +96,26 @@ function etaFrom(eff, basis, flags) {
 }
 
 /**
+ * The state of health a battery's cycle rating runs to: the catalog field when there is one,
+ * else what its notes say ("6000 cycles to 70%", "4,000+ cycles to 80%"), else `fallback`.
+ * Makers rate to different ends — EcoFlow's and BLUETTI's stations to 80%, Jackery and the home
+ * batteries to 70% — and reading every rating as cycles to 70% wore the 80% ones out 1.5× too fast.
+ */
+function cycleRatingFrom(raw, fallback, flags) {
+    if (finite(raw.cycleRatingSoh) && raw.cycleRatingSoh >= 0.5 && raw.cycleRatingSoh < 1) return raw.cycleRatingSoh;
+    const m = /\d[\d,]*\+?\s*(?:full\s+)?cycles?\s*(?:to|until|at)\s*(\d{2})\s*%/i.exec(String(raw.notes ?? ''));
+    const pct = m ? Number(m[1]) : NaN;
+    if (pct >= 50 && pct < 100) return pct / 100;
+    flags.push('cycleRatingAssumed');
+    return fallback;
+}
+
+/** Hold-up a server PSU can be relied on for at full load (ATX 3.1: ~12 ms; REPORT-ups). */
+export const SERVER_HOLDUP_MS = 12;
+/** Switchover the research recommends for servers: "prefer 10 ms units" (REPORT-ups server caveat). */
+export const SERVER_SAFE_SWITCH_MS = 10;
+
+/**
  * Inverter solar inputs from the catalog. Dual-input 800 W micro-inverters (Fox M1-800-E,
  * Hoymiles HMS-800, Marstek, the EcoFlow micro) behave as independent channels of acLimit/inputs
  * each (verified on the HMS-800), so maxAcW = acLimit/inputs. All-in-one battery units put every
@@ -155,6 +175,8 @@ function batteryFrom(raw, kind, etaNom, acLimitW, flags) {
         maxChargeW,
         acChargeW,
         cycles: pos(raw.cycles) ?? 6000,
+        // home batteries are usually rated to 70% (Anker Solarbank, Zendure, EcoFlow STREAM)
+        cycleRatingSoh: cycleRatingFrom(raw, 0.7, flags),
         lifeYears: 15,
         warrantyYears: pos(raw.warrantyYears),
         standbyW: 10,
@@ -259,7 +281,11 @@ function normalizeKit(raw) {
  * @property {Array<{ maxDcW: number }>} pvInputs
  * @property {number} pvWireablePanels  typical 400–450 W panels that can really be wired (Voc/Isc limits)
  * @property {boolean} smartPlugOnly  no app schedule or TOU mode: automation = a smart plug on its mains lead
+ * @property {number} cycles  rated cycles (4000 when not stated)
+ * @property {number} cycleRatingSoh  the state of health that rating runs to (0.8 unless stated otherwise; Jackery 0.7)
  * @property {number} lifeYears  min(15, 2 × warranty)
+ * @property {number|null} upsSwitchMs  standby-UPS transfer time
+ * @property {boolean} serverSafeSwitch  upsSwitchMs ≤ SERVER_SAFE_SWITCH_MS (10 ms): servers ride through the switchover
  */
 
 /** @returns {Station} */
@@ -308,9 +334,14 @@ function normalizeStation(raw, d) {
         pvWireablePanels: finite(raw.pvWireablePanels) ? Math.max(0, Math.round(raw.pvWireablePanels)) : Math.min(1, pvInputs.length),
         pvNote: raw.pvNote ?? null,
         cycles: pos(raw.cycles) ?? 4000,
+        // power stations are usually rated to 80% (EcoFlow, BLUETTI, Anker SOLIX, DJI); Jackery to 70%
+        cycleRatingSoh: cycleRatingFrom(raw, /jackery/i.test(`${raw.brand ?? ''} ${raw.id ?? ''}`) ? 0.7 : 0.8, flags),
         warrantyYears: warranty,
         lifeYears: warranty !== null ? Math.min(15, 2 * warranty) : 10,
         upsSwitchMs: pos(raw.upsSwitchMs),
+        // a 15–20 ms transfer can reboot a heavily loaded server (ATX 3.1 PSUs hold up ~12 ms at full
+        // load): only a ≤10 ms unit is a UPS the servers can rely on without testing it first
+        serverSafeSwitch: pos(raw.upsSwitchMs) !== null && raw.upsSwitchMs <= SERVER_SAFE_SWITCH_MS,
         hid: /\bHID\b/.test(String(raw.scheduling ?? '')),
         touMode: raw.touMode === true,
         smartPlugOnly,
@@ -635,6 +666,7 @@ export function stationToSystem(station, { dedicatedW = 'baseload', panels = nul
             standbyW: 0,
             strategy,
             cycles: st.cycles,
+            cycleRatingSoh: st.cycleRatingSoh,
             lifeYears: st.lifeYears,
             schedule: st.smartPlugOnly
                 ? { chargeBelowP: null, chargeWindow: ['19:00', '16:00'], dischargeWindow: ['16:00', '19:00'] }

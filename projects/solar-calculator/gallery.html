@@ -91,7 +91,9 @@ root.append(section('Figure pair · coverage chip (promoted from Usage)',
     ui.card({ title: 'Coverage chip', body: h('div', { class: 'g-row' },
       ui.coverageChip({ realPct: 100, extrapolatedSlots: 0 }),
       ui.coverageChip({ realPct: 53.7, extrapolatedSlots: 166 * 48 }),
-      ui.coverageChip({ realPct: 98.2, extrapolatedSlots: 0 }, { href: '#data?edit=prices' })) }))));
+      ui.coverageChip({ realPct: 98.2, extrapolatedSlots: 0 }, { href: '#data?edit=prices' }),
+      ui.coverageChip({ realPct: 100, extrapolatedSlots: 0, synthetic: 'demo' }),
+      ui.coverageChip({ realPct: 100, extrapolatedSlots: 0, synthetic: 'manual' })) }))));
 
 root.append(section('Badges, buttons, tooltip',
   h('div', { class: 'stack-sm' },

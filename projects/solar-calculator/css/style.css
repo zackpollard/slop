@@ -234,6 +234,9 @@ img, svg, canvas { display: block; }
 .app-main { padding: 28px 0 80px; min-height: 62vh; }
 .view { animation: rise 0.35s ease both; }
 .view-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
+/* The router focuses a view's heading after a navigation (tabindex -1): a ring only for keyboard users. */
+.view:focus, .view-title:focus, .view .empty-title:focus { outline: none; }
+.view-title:focus-visible, .view .empty-title:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 2px; }
 .view-title { font-size: 26px; font-weight: 700; letter-spacing: -0.03em; }
 .view-kicker { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); margin-bottom: 6px; }
 .view-lede { color: var(--muted); max-width: 70ch; margin-top: 6px; }
@@ -558,6 +561,7 @@ img, svg, canvas { display: block; }
 .empty-title { font-size: 16px; font-weight: 600; }
 .empty-body { color: var(--muted); max-width: 52ch; font-size: 14px; }
 .empty-action { margin-top: 10px; }
+.empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
 
 .progress-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
 .pl-row {
@@ -598,7 +602,15 @@ img, svg, canvas { display: block; }
 .tbl .al-center { text-align: center; }
 .tbl tbody tr:hover { background: rgba(255, 255, 255, 0.018); }
 .tbl-clickable tbody tr { cursor: pointer; }
-.tbl-clickable tbody tr:hover { background: var(--surface-2); }
+.tbl-clickable tbody tr:hover, .tbl-clickable tbody tr:focus-within { background: var(--surface-2); }
+/* A clickable row's title is a real button that looks like the title it is. */
+.tbl-row-btn {
+    display: inline; padding: 0; margin: 0; border: 0; background: none; cursor: pointer;
+    font: inherit; color: inherit; text-align: inherit; letter-spacing: inherit; line-height: inherit;
+}
+.tbl-row-btn:hover { text-decoration: underline; text-decoration-color: var(--accent-line); text-underline-offset: 3px; }
+.tbl-row-btn:focus { outline: none; }
+.tbl-row-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
 .tbl-dense th, .tbl-dense td { padding: 6px 8px; }
 .tbl tr.is-muted td, .tbl tr.is-muted th { opacity: 0.5; }
 .tbl tr.is-highlight { background: var(--accent-dim); }
@@ -654,6 +666,8 @@ img, svg, canvas { display: block; }
 .cov-chip-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--good); flex: none; }
 .cov-chip.is-warn { border-color: rgba(217, 163, 58, 0.4); }
 .cov-chip.is-warn .cov-chip-dot { background: var(--warn); }
+.cov-chip.is-synthetic { border-style: dashed; }
+.cov-chip.is-synthetic .cov-chip-dot { background: var(--info); }
 
 /* ── charts ─────────────────────────────────────────────────────────────────── */
 .chart { margin: 0; min-width: 0; }
@@ -799,6 +813,9 @@ html.rerun-open .app-main { padding-bottom: 104px; }
     .tbl-note a, .tbl-note .btn-link, .tbl-note button { display: inline-flex; align-items: center; min-height: 44px; }
     .tbl-group-toggle { min-height: 44px; }
     .cov-chip { min-height: 44px; padding: 0 12px; }
+    .tbl-row-btn { display: inline-flex; align-items: center; min-height: 44px; }
+    /* iOS Safari zooms the page into any focused field under 16px and leaves it zoomed. */
+    .input, .select, .input-mono, .input-num, textarea { font-size: 16px; }
 }
 
 @media (max-width: 1023px) {
@@ -948,6 +965,8 @@ html.rerun-open .app-main { padding-bottom: 104px; }
     .stat-label, .stat-sub, .card-sub, .muted, .context-line, .footer { color: #555 !important; }
     .chart-table { display: block !important; max-height: none; overflow: visible; border-color: #ddd; }
     .chart-table:empty { display: none !important; }
+    /* Huge grids (a year of half-hours, a 309-cell sweep) stay off paper even when opened on screen. */
+    .no-print-table .chart-table { display: none !important; }
     .tbl thead th { background: #fff; color: #555; white-space: normal; }
     .tbl th, .tbl td { border-color: #e2e2e2; }
     .disclosure:not([open]) > .disclosure-body { display: block; }

@@ -16,7 +16,9 @@
  *   4 scatter cost vs yearly saving with payback lines, weather whiskers and the best-value front
  *   5 questions  west vs south, battery, power station, growing later, how sure, always-on load —
  *             each a one-line answer that opens to the reasoning, a chart and a link onward
- * Phones (≤ 600 px) reorder to: best buy → top options → questions → tiles → chart (folded).
+ * Below 1024 px one column: tiles → best buy → options → questions → chart; phones (≤ 600 px)
+ * best buy → top options → questions → tiles → chart (folded). The DOM is always in the order on
+ * screen (arrange(), not CSS order), so reading and Tab order follow what is seen.
  *
  * Recomputing (settings, a new demo load) keeps every block on screen, dimmed, until the stage
  * that refreshes it arrives — figures never jump between a typical and an actual year.
@@ -96,6 +98,8 @@ const CSS = `
 .vd-badges { display: flex; flex-wrap: wrap; gap: 6px; }
 .vd-best-title { font-size: 30px; font-weight: 700; letter-spacing: -.035em; line-height: 1.12; }
 .vd-best-title .vd-name { color: var(--accent-strong); }
+.vd-best-title:focus { outline: none; }
+.vd-best-title:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 2px; }
 .vd-best-none .vd-best-title { font-size: 25px; }
 .vd-lede { margin-top: 12px; color: var(--text-2); font-size: 15.5px; line-height: 1.55; max-width: 60ch; }
 .vd-lede b, .vd-rich b { color: var(--text); font-weight: 600; }
@@ -157,6 +161,7 @@ const CSS = `
 .vd-opt-later + .vd-opt-later { margin-top: -2px; }
 .vd-opt-badges .badge { height: 19px; font-size: 10.5px; padding: 0 6px; }
 .vd-sav { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.vd-sav small { font-size: 11.5px; font-weight: 500; color: var(--muted); margin-left: 2px; }
 .vd-range { position: relative; display: block; width: 64px; height: 4px; border-radius: 2px; background: var(--surface-3); }
 .vd-range-band { position: absolute; top: 0; bottom: 0; border-radius: 2px; background: var(--accent); opacity: .55; min-width: 2px; }
 .vd-range-mid { position: absolute; top: -3px; width: 2px; height: 10px; margin-left: -1px; border-radius: 1px; background: var(--text); }
@@ -208,15 +213,10 @@ const CSS = `
 .vd-print-only { display: none; }
 @media (min-width: 601px) { .vd-chart-fold > summary { display: none; } .vd-chart-fold { border: 0; } .vd-chart-fold > .disclosure-body { padding: 0; } }
 
+/* one column below 1024 px: arrange() puts the blocks in the DOM in the order they are seen */
 @media (max-width: 1023px) {
     .vd-grid { display: flex; flex-direction: column; align-items: stretch; }
     .vd-col { display: contents; }
-    .vd-b-tiles { order: 1; }
-    .vd-b-best { order: 2; }
-    .vd-b-options { order: 3; }
-    .vd-b-questions { order: 4; }
-    .vd-b-scatter { order: 5; }
-    .vd-b-assume { order: 6; }
 }
 @media (max-width: 760px) {
     .vd-readout { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -229,12 +229,6 @@ const CSS = `
     .vd-ctx-short { display: inline; }
     .vd-demo { flex-basis: 100%; }
     .vd-best { padding: 18px 16px 16px; }
-    .vd-b-best { order: 1; }
-    .vd-b-options { order: 2; }
-    .vd-b-questions { order: 3; }
-    .vd-b-tiles { order: 4; }
-    .vd-b-scatter { order: 5; }
-    .vd-b-assume { order: 6; }
     .vd-best-title { font-size: 24px; }
     .vd-lede { font-size: 14.5px; }
     .vd-readout dd { font-size: 19px; }
@@ -429,6 +423,38 @@ function injectStyle(h) {
     document.head.appendChild(h('style', { id: STYLE_ID }, CSS));
 }
 
+/** Give a control a stable key ([data-fk]) so holdFocus() can find its rebuilt twin. */
+function fk(el, key) {
+    if (el) el.dataset.fk = key;
+    return el;
+}
+
+/**
+ * Rebuild part of the page (build()) without throwing keyboard or screen-reader focus away: if
+ * focus was inside `host` on an element the rebuild replaced, it goes to the rebuilt twin with the
+ * same [data-fk] — a fold's <summary> included, which ui.keepFocus can't target — else to
+ * `fallback`. Folds ([data-fk] <details>) that were open stay open. Focus elsewhere is untouched.
+ * @param {HTMLElement} host
+ * @param {() => void} build
+ * @param {HTMLElement|null} [fallback]
+ */
+function holdFocus(host, build, fallback = null) {
+    const doc = host.ownerDocument || (typeof document !== 'undefined' ? document : null);
+    const a = doc?.activeElement ?? null;
+    const inside = !!a && a !== doc.body && host.contains(a);
+    const holder = inside ? a.closest('[data-fk]') : null;
+    const key = holder && host.contains(holder) ? holder.dataset.fk : null;
+    const open = new Set([...host.querySelectorAll('details[data-fk]')].filter(d => d.open).map(d => d.dataset.fk));
+    build();
+    for (const d of host.querySelectorAll('details[data-fk]')) if (open.has(d.dataset.fk)) d.open = true;
+    if (!inside || (a.isConnected && host.contains(a))) return;
+    const twin = key != null ? [...host.querySelectorAll('[data-fk]')].find(x => x.dataset.fk === key) ?? null : null;
+    // a fold is keyed on its <details>: its summary is what takes focus
+    const target = twin ? (twin.localName === 'details' ? twin.querySelector('summary') : twin) : fallback;
+    if (!target) return;
+    try { target.focus({ preventScroll: true }); } catch { target.focus?.(); }
+}
+
 /* ── the view ─────────────────────────────────────────────────────────────── */
 
 export default {
@@ -451,15 +477,20 @@ export default {
             // opts.overrides): a change re-runs it — a hidden tab catches up when shown
             ctx.data.on('overrides', () => { if (this.v) this.render(); }),
         ];
-        this.mq = typeof window !== 'undefined' && window.matchMedia ? window.matchMedia('(max-width: 600px)') : null;
+        const mm = q => (typeof window !== 'undefined' && window.matchMedia ? window.matchMedia(q) : null);
+        this.mq = mm('(max-width: 600px)');
+        this.mqMid = mm('(max-width: 1023px)');
         this.onMq = () => {
+            if (this.v) this.arrange();
             if (this.v && this.V) {
                 if (stageIdx(this.V.stage) >= stageIdx('plugin')) { this.fillOptions(this.V); this.fillBest(this.V); }
                 this.fillQuestions(this.V, true);
             }
             if (this.v) this.syncFolds();
         };
+        this.onMqMid = () => { if (this.v) this.arrange(); };
         this.mq?.addEventListener?.('change', this.onMq);
+        this.mqMid?.addEventListener?.('change', this.onMqMid);
         this.render();
     },
 
@@ -473,6 +504,7 @@ export default {
     unmount() {
         this.offs?.forEach(off => off());
         this.mq?.removeEventListener?.('change', this.onMq);
+        this.mqMid?.removeEventListener?.('change', this.onMqMid);
         this.teardown();
     },
 
@@ -484,6 +516,8 @@ export default {
     },
 
     get isPhone() { return !!this.mq?.matches; },
+    /** 'wide' (≥ 1024 px, two columns), 'mid' (601–1023 px, one column) or 'phone' (≤ 600 px). */
+    get layout() { return this.isPhone ? 'phone' : this.mqMid?.matches ? 'mid' : 'wide'; },
 
     /* ── state machine ──────────────────────────────────────────────────── */
 
@@ -616,13 +650,18 @@ export default {
     skeletonPage() {
         const { ui } = this.ctx;
         const h = ui.h;
+        const tiles = h('div', { class: 'tiles' }, ['Always-on load', 'It costs', 'Your electricity'].map(label => ui.statTile({ label, loading: true })));
+        const best = ui.card({ accent: true, body: ui.skeleton({ lines: 6 }) });
+        const options = ui.card({ title: 'Every option, ranked', body: ui.skeleton({ height: 360 }) });
+        // the same order as the page it stands in for (arrange())
+        const layout = this.layout;
+        const grid = layout === 'wide'
+            ? h('div', { class: 'vd-grid' }, h('div', { class: 'vd-col' }, tiles, best), h('div', { class: 'vd-col' }, options))
+            : h('div', { class: 'vd-grid' }, layout === 'phone' ? [best, options, tiles] : [tiles, best, options]);
         return h('div', { class: 'vd', 'aria-busy': 'true' },
             h('div', { class: 'view-head' }, h('div', { class: 'vd-head-main' },
                 h('div', { class: 'view-kicker' }, 'Verdict'), h('h1', { class: 'view-title' }, 'What to buy, and why'), ui.skeleton({ lines: 1 }))),
-            h('div', { class: 'vd-grid' },
-                h('div', { class: 'vd-col' }, h('div', { class: 'tiles' }, ['Always-on load', 'It costs', 'Your electricity'].map(label => ui.statTile({ label, loading: true }))),
-                    ui.card({ accent: true, body: ui.skeleton({ lines: 6 }) })),
-                h('div', { class: 'vd-col' }, ui.card({ title: 'Every option, ranked', body: ui.skeleton({ height: 360 }) }))));
+            grid);
     },
 
     build() {
@@ -680,18 +719,51 @@ export default {
             assume: h('div', { class: 'vd-block vd-b-assume' }, ui.card({ body: assumeFold })),
         };
         const qBlocks = Object.fromEntries(QUESTIONS.map(q => [`q:${q.key}`, p.questions[q.key].d]));
+        const grid = h('div', { class: 'vd-grid' });
+        const cols = [h('div', { class: 'vd-col' }), h('div', { class: 'vd-col' })];
         const root = h('div', { class: 'vd' },
             h('div', { class: 'view-head' },
                 h('div', { class: 'vd-head-main' }, p.kicker, p.title, p.context, p.print),
                 h('div', { class: 'vd-head-actions' }, pdf)),
-            p.toolbar, p.banner, p.error, p.live,
-            h('div', { class: 'vd-grid' },
-                h('div', { class: 'vd-col' }, blocks.tiles, blocks.best),
-                h('div', { class: 'vd-col' }, blocks.questions, blocks.scatter),
-                blocks.options, blocks.assume));
-        this.v = { root, parts: p, blocks: { ...blocks, ...qBlocks }, charts: {}, filled: new Set(), fresh: new Set() };
+            p.toolbar, p.banner, p.error, p.live, grid);
+        this.v = { root, parts: p, blocks: { ...blocks, ...qBlocks }, layoutBlocks: blocks, grid, cols, layout: null, charts: {}, filled: new Set(), fresh: new Set() };
+        this.arrange();
         this.el.replaceChildren(root);
         this.syncFolds();
+    },
+
+    /**
+     * Put the blocks in the DOM in the order they are seen, so screen-reader and Tab order follow
+     * the screen (WCAG 1.3.2 / 2.4.3) — never CSS `order`. ≥ 1024 px: two columns (tiles and best
+     * buy | questions and chart), then the options and assumptions across both; 601–1023 px: tiles,
+     * best buy, options, questions, chart; phones: best buy, options, questions, tiles, chart
+     * (critique mobile order). Keeps keyboard focus on whatever it was on.
+     */
+    arrange() {
+        const v = this.v;
+        if (!v) return;
+        const layout = this.layout;
+        if (v.layout === layout) return;
+        v.layout = layout;
+        const b = v.layoutBlocks;
+        const [c1, c2] = v.cols;
+        const doc = v.grid.ownerDocument || (typeof document !== 'undefined' ? document : null);
+        const had = doc?.activeElement && doc.activeElement !== doc.body && v.grid.contains(doc.activeElement) ? doc.activeElement : null;
+        if (layout === 'wide') {
+            c1.append(b.tiles, b.best);
+            c2.append(b.questions, b.scatter);
+            v.grid.append(c1, c2, b.options, b.assume);
+        } else {
+            c1.remove();
+            c2.remove();
+            v.grid.append(...(layout === 'phone'
+                ? [b.best, b.options, b.questions, b.tiles, b.scatter, b.assume]
+                : [b.tiles, b.best, b.options, b.questions, b.scatter, b.assume]));
+        }
+        // moving a node drops its focus: put it back
+        if (had && had.isConnected && doc.activeElement !== had) {
+            try { had.focus({ preventScroll: true }); } catch { had.focus?.(); }
+        }
     },
 
     /** Phones fold the cost/saving chart away (critique: 'Show chart'); wider screens show it. */
@@ -838,32 +910,45 @@ export default {
         this.v.parts.tiles.replaceChildren(
             ui.statTile({ label: 'Always-on load', value: fmt.num(bl.w), unit: 'W', sub: `${fmt.num(bl.kwhYr)} kWh/yr · ${fmt.pct(bl.sharePct)} of your use` }),
             ui.statTile({ label: 'It costs', value: fmt.gbp(bl.costBilledGbpYr), unit: 'a year', sub: `${fmt.gbp(bl.costPeakGbpYr)} of it 4–7pm · ${fmt.gbp(bl.gbpPer100W)} per 100 W`,
-                help: 'Your always-on load priced at what you actually paid over the last 12 months, VAT included.' }),
+                help: 'Your always-on load priced at what you actually paid over the last 12 months, VAT included. What switching load off saves from now on (at next year’s prices) is under ‘How much does my always-on load matter?’.' }),
             ui.statTile({ label: 'Your electricity, last 12 months', value: fmt.gbp(t.energyGbp), sub: `+ ${fmt.gbp(t.standingGbp)} standing charges` }));
         this.fresh('tiles');
     },
 
     /* ── 2 best buy ─────────────────────────────────────────────────────── */
 
+    /**
+     * The best-buy card. Streamed stages redraw it only when something on it changed (a signature
+     * of what it shows), and a redraw keeps keyboard focus on the rebuilt twin of the control it
+     * was on (holdFocus, [data-fk]) — a reader who starts on the card as soon as it appears isn't
+     * thrown back to the top of the page by a later stage.
+     */
     fillBest(V) {
         const { ui, fmt } = this.ctx;
         const h = ui.h;
         const hd = V.headline;
         const host = this.v.parts.best;
         if (!hd) return;
+        const shown = hd.kind === 'buy' ? V.ranked.find(r => r.id === V.bestBuyId) : hd.closestId ? V.ranked.find(r => r.id === hd.closestId) : null;
+        if (hd.kind === 'buy' && !shown) return;
+        const sig = JSON.stringify([hd, shown, V.runnerUpId, V.stepUp?.id ?? null, V.context?.weatherNote ?? null, V.context?.maxPaybackYears ?? null, this.isPhone]);
+        if (sig === this.v.bestSig && host.firstChild) return;
+        this.v.bestSig = sig;
+        // the card's heading takes focus when the control focus was on is gone from the new card
+        const title = (...kids) => h('h2', { class: 'vd-best-title', tabindex: '-1' }, ...kids);
         if (hd.kind !== 'buy') {
-            const closest = hd.closestId ? V.ranked.find(r => r.id === hd.closestId) : null;
-            ui.put(host, h('div', { class: 'vd-best-none' },
+            const closest = shown;
+            const t = title(hd.title);
+            holdFocus(host, () => ui.put(host, h('div', { class: 'vd-best-none' },
                 h('div', { class: 'vd-best-top' }, h('div', { class: 'card-eyebrow' }, 'The verdict')),
-                h('h2', { class: 'vd-best-title' }, hd.title),
+                t,
                 h('p', { class: 'vd-lede' }, rich(h, hd.lede)),
                 h('div', { class: 'vd-actions' },
-                    closest ? ui.button({ label: `See the ${closest.name}`, href: `#design?scenario=${encodeURIComponent(closest.id)}`, icon: 'arrowRight' }) : null,
-                    ui.button({ label: `Change the ${fmt.num(V.context?.maxPaybackYears ?? 10)}-year cut-off`, kind: 'ghost', href: '#method' }))));
+                    closest ? fk(ui.button({ label: `See the ${closest.name}`, href: `#design?scenario=${encodeURIComponent(closest.id)}`, icon: 'arrowRight' }), 'best:closest') : null,
+                    fk(ui.button({ label: `Change the ${fmt.num(V.context?.maxPaybackYears ?? 10)}-year cut-off`, kind: 'ghost', href: '#method' }), 'best:cutoff')))), t);
             return;
         }
-        const best = V.ranked.find(r => r.id === V.bestBuyId);
-        if (!best) return;
+        const best = shown;
         const level = best.confidence ? LEVEL[best.confidence.level] : null;
         const badges = h('div', { class: 'vd-badges' },
             ui.badge({ text: ROUTE_LABEL[best.route] || best.route, tone: best.route }),
@@ -878,41 +963,42 @@ export default {
             cell('Payback', finite(best.payback.typical) ? [fmt.num(best.payback.typical, 1), h('small', null, 'yrs')] : 'never'),
             cell('Ahead after 10 yrs', fmt.gbp(best.net10Gbp), { class: best.net10Gbp > 0 ? 'is-good' : null }));
         const points = [hd.why, hd.equivalent].filter(Boolean).map(t => h('li', null, ui.icon(t === hd.equivalent ? 'sun' : 'check'), h('span', { class: 'vd-rich' }, rich(h, t))));
-        const steps = (hd.nextSteps ?? []).map(st => h('li', null, h('span', null, st.text,
-            st.href ? [' ', h('a', { href: st.href, target: '_blank', rel: 'noopener noreferrer' }, st.label || 'Source', ui.icon('external'))] : null)));
+        const steps = (hd.nextSteps ?? []).map((st, i) => h('li', null, h('span', null, st.text,
+            st.href ? [' ', fk(h('a', { href: st.href, target: '_blank', rel: 'noopener noreferrer' }, st.label || 'Source', ui.icon('external')), `best:step:${i}:${st.href}`)] : null)));
         const stepsList = h('ol', null, steps);
         const stepsBlock = steps.length
             ? (this.isPhone
-                ? h('div', { class: 'vd-steps' }, ui.details({ summary: `Next steps (${steps.length})`, body: stepsList, className: 'vd-steps-fold' }))
+                ? h('div', { class: 'vd-steps' }, fk(ui.details({ summary: `Next steps (${steps.length})`, body: stepsList, className: 'vd-steps-fold' }), 'best:fold:steps'))
                 : h('div', { class: 'vd-steps' }, h('div', { class: 'vd-steps-title' }, 'Next steps'), stepsList))
             : null;
         const alt = [];
         if (hd.runnerUp && V.runnerUpId) {
             alt.push(h('div', null, h('span', { class: 'vd-rich' }, rich(h, hd.runnerUp)),
-                ui.button({ label: 'Details', size: 'sm', kind: 'ghost', href: `#design?scenario=${encodeURIComponent(V.runnerUpId)}`, ariaLabel: 'Details of the runner-up' })));
+                fk(ui.button({ label: 'Details', size: 'sm', kind: 'ghost', href: `#design?scenario=${encodeURIComponent(V.runnerUpId)}`, ariaLabel: 'Details of the runner-up' }), 'best:runner-up')));
         }
         if (hd.stepUp && V.stepUp) {
             alt.push(h('div', null, h('span', { class: 'vd-rich' }, rich(h, hd.stepUp)),
-                ui.button({ label: 'Details', size: 'sm', kind: 'ghost', href: `#design?scenario=${encodeURIComponent(V.stepUp.id)}`, ariaLabel: 'Details of the bigger option' })));
+                fk(ui.button({ label: 'Details', size: 'sm', kind: 'ghost', href: `#design?scenario=${encodeURIComponent(V.stepUp.id)}`, ariaLabel: 'Details of the bigger option' }), 'best:step-up')));
         }
         const wx = hd.weatherNote || V.context?.weatherNote
             ? h('p', { class: 'vd-wxnote' }, ui.icon('sun'), h('span', null, [hd.weatherNote, V.context?.weatherNote && !hd.weatherNote ? V.context.weatherNote : null].filter(Boolean).join(' '),
                 hd.weatherNote ? ' Every figure here uses a typical year instead.' : ''))
             : null;
-        ui.put(host,
+        const t = title('Buy the ', h('span', { class: 'vd-name' }, hd.name), '.');
+        holdFocus(host, () => ui.put(host,
             h('div', { class: 'vd-best-top' }, h('div', { class: 'card-eyebrow' }, 'The verdict · best buy'), badges),
-            h('h2', { class: 'vd-best-title' }, 'Buy the ', h('span', { class: 'vd-name' }, hd.name), '.'),
+            t,
             h('p', { class: 'vd-lede' }, rich(h, hd.lede)),
             readout,
             vdRunway(h, fmt, { cashflow: hd.cashflow, payback: best.payback.typical, capex: best.capexGbp }),
             points.length ? h('ul', { class: 'vd-points' }, points) : null,
             stepsBlock,
             h('div', { class: 'vd-actions' },
-                ui.button({ label: 'See the details', kind: 'primary', icon: 'arrowRight', href: `#design?scenario=${encodeURIComponent(best.id)}` }),
-                ui.button({ label: 'Compare options', href: '#compare', onClick: null })),
+                fk(ui.button({ label: 'See the details', kind: 'primary', icon: 'arrowRight', href: `#design?scenario=${encodeURIComponent(best.id)}` }), 'best:details'),
+                fk(ui.button({ label: 'Compare options', href: '#compare', onClick: null }), 'best:compare')),
             this.isPhone && (alt.length || wx)
-                ? h('div', { class: 'vd-steps' }, ui.details({ summary: alt.length ? `Other options${wx ? ' and the weather' : ''}` : 'About the weather', body: [alt.length ? h('div', { class: 'vd-alts' }, alt) : null, wx], className: 'vd-steps-fold' }))
-                : [alt.length ? h('div', { class: 'vd-alts' }, alt) : null, wx]);
+                ? h('div', { class: 'vd-steps' }, fk(ui.details({ summary: alt.length ? `Other options${wx ? ' and the weather' : ''}` : 'About the weather', body: [alt.length ? h('div', { class: 'vd-alts' }, alt) : null, wx], className: 'vd-steps-fold' }), 'best:fold:alts'))
+                : [alt.length ? h('div', { class: 'vd-alts' }, alt) : null, wx]), t);
     },
 
     /* ── 3 options ──────────────────────────────────────────────────────── */
@@ -920,9 +1006,9 @@ export default {
     optionCols(maxP90) {
         const { ui, fmt } = this.ctx;
         const h = ui.h;
-        // Phones get card rows: title (with the route as a tag), the saving, then cost and payback
-        // only — the critique's "2 secondary figures". The 10-year value and confidence stay on
-        // wider screens, in the design view and in print.
+        // Phones get card rows: title (with the route as a tag), the saving a year as the card's
+        // figure, then cost, payback and the 10-year value the list is ordered by (as Compare's
+        // cards); confidence stays on wider screens, in the design view and in print.
         const phone = this.isPhone;
         const name = (v, r) => {
             const tags = [];
@@ -938,13 +1024,20 @@ export default {
                 : null;
             // one table now holds every group: a beaten row names what beats it under its own name
             const beatenBy = r.beatenBy ? h('span', { class: 'vd-opt-later' }, `beaten by ${r.beatenBy}`) : null;
-            return h('span', { class: 'vd-opt-name' }, h('span', null, v), later, beatenBy, tags.length ? h('span', { class: 'vd-opt-badges' }, tags) : null);
+            // a battery or power station that wears out inside the 10 years says so: it is why
+            // a quick payback can still leave a small (or no) 10-yr value
+            const end = r._row.battery && finite(r._row.batteryEndYear) && r._row.batteryEndYear < 10 ? r._row.batteryEndYear : null;
+            const wears = end == null ? null : r._row.batteryReplaced
+                ? h('span', { class: 'vd-opt-later' }, `battery bought again after year ${fmt.num(end)}`)
+                : h('span', { class: 'vd-opt-later', title: 'Its savings stop then; the 10-yr value counts that.' }, `wears out in year ${fmt.num(end)}`);
+            return h('span', { class: 'vd-opt-name' }, h('span', null, v), later, beatenBy, wears, tags.length ? h('span', { class: 'vd-opt-badges' }, tags) : null);
         };
         const sav = (v, r) => {
             const s = r._row.savings;
             const hasBand = finite(s.p10) && finite(s.p90) && Math.abs(s.p90 - s.p10) > 0.5;
+            // on a phone card the saving stands alone, top right, beside the cost: say what it is
             return h('span', { class: 'vd-sav', title: hasBand ? `${fmt.gbp(s.p10)}–${fmt.gbp(s.p90)} across 2006–2025 weather` : null },
-                h('span', null, fmt.gbp(v)),
+                h('span', null, phone ? h('span', { class: 'sr-only' }, 'Saves ') : null, fmt.gbp(v), phone ? h('small', null, '/yr') : null),
                 hasBand ? vdRange(h, { lo: s.p10, mid: s.typical, hi: s.p90, max: maxP90 }) : null,
                 hasBand ? h('span', { class: 'sr-only' }, ` (${fmt.gbp(s.p10)} to ${fmt.gbp(s.p90)} depending on the weather)`) : null);
         };
@@ -967,7 +1060,7 @@ export default {
             { key: 'capex', label: 'Cost', align: 'right', format: v => fmt.gbp(v), sortable: false },
             { key: 'sav', label: 'Saves/yr', align: 'right', format: sav, sortable: false, mobile: 'primary' },
             { key: 'payback', label: 'Payback', align: 'right', format: pay, sortable: false },
-            { key: 'npv10', label: '10-yr value', align: 'right', format: ahead, sortable: false, mobile: 'hide',
+            { key: 'npv10', label: '10-yr value', align: 'right', format: ahead, sortable: false, mobile: 'show',
                 help: `What you’re ahead after 10 years once it has paid for itself, in today’s money (later savings count ${disc} a year less). The list is in this order.` },
             { key: 'conf', label: 'Confidence', format: conf, sortable: false, mobile: 'hide',
                 help: 'How sure the saving is: your data, the spread of 20 years of weather, and how well the model knows this kind of setup.' },
@@ -1033,10 +1126,7 @@ export default {
         }
         const disc = fmt.pct(100 * (V.context?.finance?.discountRate ?? 0.04));
         const plain = bestRow ? ` In plain pounds the best buy is ${fmt.gbp(bestRow.net10Gbp)} ahead, as on its card.` : '';
-        const note = phone
-            // the 10-yr value column is hidden on cards: say what the order is instead
-            ? [`In order of what each leaves you ahead after 10 years, in today’s money (later savings count ${disc} a year less).`, plain]
-            : [h('b', null, '10-yr value'), `: what you’re ahead after 10 years once it has paid for itself, in today’s money (later savings count ${disc} a year less) — the order of this list.`, plain];
+        const note = [h('b', null, '10-yr value'), `: what you’re ahead after 10 years once it has paid for itself, in today’s money (later savings count ${disc} a year less) — the order of this list.`, plain];
         const groups = og.groups.map(g => ({ ...g, rows: this.rowsFor(g.rows) }));
         const tbl = ui.table({
             columns: this.optionCols(maxP90), groups, rowClass, onRowClick: open, dense: true, note: h('span', null, note),
@@ -1120,30 +1210,52 @@ export default {
         }
     },
 
+    /**
+     * Redraw one part of a question (its one-line answer, reasoning, extra figures or links) only
+     * when what it shows changed, keeping focus on a rebuilt link — later stages re-send every
+     * answer, and a reader inside an open question shouldn't lose their place each time.
+     * @param {HTMLElement} el
+     * @param {string} sig what the part shows
+     * @param {() => any[]} make its new children
+     * @param {HTMLElement|null} [fallback] focus target when the focused link is gone
+     */
+    putPart(el, sig, make, fallback = null) {
+        if (el.vdSig === sig) return;
+        el.vdSig = sig;
+        holdFocus(el, () => el.replaceChildren(...make().filter(k => k != null)), fallback);
+    },
+
     fillQuestion(key, a, V, slot) {
         const { ui, fmt, charts } = this.ctx;
         const h = ui.h;
+        const summaryEl = slot.d.querySelector('summary');
         if (a.status === 'error') {
-            slot.answer.replaceChildren(h('span', { class: 'muted' }, 'Couldn’t work this one out.'));
-            slot.text.replaceChildren(h('p', null, a.message || 'Something went wrong.'));
+            this.putPart(slot.answer, 'error', () => [h('span', { class: 'muted' }, 'Couldn’t work this one out.')]);
+            this.putPart(slot.text, `error:${a.message}`, () => [h('p', null, a.message || 'Something went wrong.')]);
             return;
         }
-        slot.answer.replaceChildren(...rich(h, a.summary || '—'));
-        slot.text.replaceChildren(...(key === 'growth'
+        this.putPart(slot.answer, `a:${a.summary}`, () => rich(h, a.summary || '—'));
+        this.putPart(slot.text, JSON.stringify(a.body ?? []), () => (key === 'growth'
             ? [h('ul', null, (a.body ?? []).map(t => h('li', null, rich(h, t))))]
             : (a.body ?? []).map(t => h('p', null, rich(h, t)))));
-        const link = (label, href) => ui.button({ label, kind: 'link', size: 'sm', icon: 'arrowRight', href });
         const enc = encodeURIComponent;
-        if (a.status === 'none') { slot.extra.replaceChildren(); slot.link.replaceChildren(); return; }
+        // the links under an answer, keyed on their target so focus finds them after a redraw
+        const links = (...pairs) => this.putPart(slot.link, JSON.stringify(pairs),
+            () => pairs.map(([label, href]) => fk(ui.button({ label, kind: 'link', size: 'sm', icon: 'arrowRight', href }), `q:${key}:${href}`)), summaryEl);
+        if (a.status === 'none') {
+            this.putPart(slot.extra, 'none', () => []);
+            links();
+            return;
+        }
         switch (key) {
             case 'orientation': {
                 this.chart('orient', charts.createScatter, slot.chart, this.orientationSpec(a));
-                slot.link.replaceChildren(link('Explore every direction', `#orientation?scenario=${enc(a.forId)}`));
+                links(['Explore every direction', `#orientation?scenario=${enc(a.forId)}`]);
                 break;
             }
             case 'battery': {
                 const s = a.split;
-                slot.extra.replaceChildren();
+                this.putPart(slot.extra, 'none', () => []);
                 this.chart('battery', charts.createBars, slot.chart, {
                     tableCaption: 'What the battery adds, £ a year', ariaLabel: 'Battery value split into cheap-slot charging, stored solar and standby, with its total realistic and with perfect timing',
                     categories: ['Cheap-slot charging', 'Storing your solar', 'Standby power', 'Battery in total', 'Perfect timing'],
@@ -1153,7 +1265,7 @@ export default {
                     ],
                     stacked: true, horizontal: true, y: { format: v => fmt.gbp(v) }, x: { label: 'Part' }, totalLabel: 'Total',
                 });
-                slot.link.replaceChildren(link('Open it in Design', `#design?scenario=${enc(a.bestId)}`), link('Battery-size curve', '#compare'));
+                links(['Open it in Design', `#design?scenario=${enc(a.bestId)}`], ['Battery-size curve', '#compare']);
                 break;
             }
             case 'ups': {
@@ -1170,11 +1282,11 @@ export default {
                     horizontal: true, y: { format: v => fmt.gbp(v) }, x: { label: 'How it runs' },
                     note: ownPanels ? `Every bar includes what its ${ownPanels} panel${ownPanels === 1 ? '' : 's'} make — they charge it on its own solar inputs, so none of it is exported.` : null,
                 });
-                slot.link.replaceChildren(link('Open it in Design', `#design?scenario=${enc(a.bestId)}`), link('Every power station', '#compare'));
+                links(['Open it in Design', `#design?scenario=${enc(a.bestId)}`], ['Every power station', '#compare']);
                 break;
             }
             case 'growth': {
-                slot.link.replaceChildren(link('Compare the options', '#compare'));
+                links(['Compare the options', '#compare']);
                 break;
             }
             case 'confidence': {
@@ -1186,7 +1298,7 @@ export default {
                     return h('div', { class: 'vd-level' }, h('span', { class: 'vd-level-k' }, label), h('span', { class: ['vd-level-v', `tone-${L.tone}`] }, L.label),
                         p.reason ? h('span', { class: 'vd-level-r' }, p.reason) : null);
                 };
-                slot.extra.replaceChildren(h('div', { class: 'vd-levels' }, lv('data', 'Your data'), lv('weather', 'Weather'), lv('model', 'The model')));
+                this.putPart(slot.extra, JSON.stringify(parts), () => [h('div', { class: 'vd-levels' }, lv('data', 'Your data'), lv('weather', 'Weather'), lv('model', 'The model'))]);
                 const t = V.tornado;
                 if (t?.rows?.length && finite(t.center)) {
                     const cap = (V.context?.finance?.years ?? 20) + 5;
@@ -1200,12 +1312,12 @@ export default {
                         note: 'Bars run from the central payback to the payback at each setting; the longest bar matters most.',
                     });
                 }
-                slot.link.replaceChildren(link('How the model works', '#method'));
+                links(['How the model works', '#method']);
                 break;
             }
             case 'baseLoad': {
                 this.chart('baseload', charts.createLine, slot.chart, this.baseLoadSpec(a, V));
-                slot.link.replaceChildren(link('Your always-on load', '#usage'));
+                links(['Your always-on load', '#usage']);
                 break;
             }
             default:

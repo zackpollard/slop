@@ -13,7 +13,7 @@
  * The value column is the import/consumption one: an Export or generation column is never
  * read as usage (it is all zeros for most homes, which the gap rules would then discard).
  * Timestamps without an offset are read as Europe/London wall-clock time, unless the
- * header says UTC/GMT. In the October repeated hour, the first 01:xx is BST and the second
+ * header says UTC/GMT (and not also BST/UK/local, as in 'Date/Time (GMT/BST)'). In the October repeated hour, the first 01:xx is BST and the second
  * GMT (file order decides). a/b/yyyy dates are day-first unless the file proves otherwise
  * (a middle field above 12), and impossible dates are rejected rather than rolled over.
  * A file with only an end-of-interval column is shifted back by the reading length.
@@ -178,11 +178,16 @@ function mapHeader(cells) {
     let endOnly = false;
     if (start < 0 && end >= 0) { start = end; endOnly = true; }
     const timeHeaders = [start, time, end, date].filter(i => i >= 0).map(i => low[i]).join(' ');
+    // 'Date/Time (GMT/BST)' or 'UK time (GMT)' is UK clock time, not UTC: only a header that
+    // names UTC/GMT/Z without a local-time word switches the naive times to UTC.
+    const zoneWord = /utc|gmt|\bz\b|zulu/.test(timeHeaders);
+    const localWord = /bst|\buk\b|local|london|british|summer|wall.?clock/.test(timeHeaders);
     return {
         value, start, time, endOnly,
         end: endOnly ? -1 : end,
         date: date >= 0 && date !== start ? date : -1,
-        utc: /utc|gmt|\bz\b|zulu/.test(timeHeaders),
+        utc: zoneWord && !localWord,
+        ukClockHeader: zoneWord && localWord,
         scale: value >= 0 && /\bwh\b/.test(low[value]) && !/kwh/.test(low[value]) ? 0.001 : 1,
         octopus: low.some(c => /^consumption \(kwh\)$/.test(c)),
         text: cells.join(', '),
@@ -234,6 +239,7 @@ export function parseConsumptionCsv(text) {
     if (dataFrom > 1 || (format === 'headerless' && dataFrom > 0)) warnings.push(`${format === 'headerless' ? dataFrom : dataFrom - 1} lines before the data were skipped.`);
     if (cols.scale !== 1) warnings.push('Readings are in Wh and were converted to kWh.');
     if (cols.utc) warnings.push('Times are read as UTC, as the header says.');
+    else if (cols.ukClockHeader) warnings.push('Times are read as UK clock time (GMT in winter, BST in summer), as the header says.');
 
     const body = [];
     for (let i = dataFrom; i < lines.length; i++) body.push({ line: i + 1, cells: splitLine(lines[i], delim) });

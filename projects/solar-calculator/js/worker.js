@@ -15,10 +15,18 @@
  * fetches are aborted); the verdict also polls an isCancelled() hook between options; synchronous
  * engine work that never reports progress runs to completion and its result is dropped.
  *
- * Methods (whitelist): loadDataset, insights, runScenario, autoScenarios, verdict, orientationSweep,
- * answerOrientation, upsStrategies, tornado, weatherInfo, baseLoadCurve, panelCountCurve,
- * batterySizeCurve, typicalDay, exportCsv, setProjectBaseW, normalizeSystem, validate, applyFix,
- * catalog, buildSystem.
+ * Methods (whitelist): loadDataset, ensureEngine, insights, runScenario, autoScenarios, verdict,
+ * orientationSweep, answerOrientation, upsStrategies, tornado, weatherInfo, baseLoadCurve,
+ * panelCountCurve, batterySizeCurve, typicalDay, exportCsv, setProjectBaseW, normalizeSystem,
+ * validate, applyFix, catalog, buildSystem.
+ *
+ * Flaky networks: a module or catalog file that fails to download must not strand the page.
+ *  - A failed dynamic import is remembered by the module map for the life of the worker, so asking
+ *    for the same URL again fails at once without a request. need() retries under a URL the map
+ *    hasn't seen (`?retry=n`) and remembers whichever import worked.
+ *  - A dataset whose engine couldn't be built (the product list didn't download) is still kept —
+ *    usage insights work without it — and every engine method rebuilds the engine on demand, so a
+ *    later call (or `ensureEngine`, which the page uses to recover) succeeds once the network does.
  */
 
 const MODULES = {
@@ -48,6 +56,25 @@ export class EngineError extends Error {
 }
 
 const abortError = () => Object.assign(new Error('Cancelled'), { name: 'AbortError', code: 'CANCELLED' });
+
+/* Usage that isn't meter readings: the example household, or a profile built from typed-in figures. */
+const SYNTHETIC_SOURCES = new Set(['demo', 'manual']);
+
+/**
+ * Mark a coverage object ({ realPct, filledSlots, … }) whose usage is synthetic, so the page never
+ * calls it "100% real readings": `synthetic` is 'demo' (the example household) or 'manual' (a
+ * typical profile from the user's own figures). Readings from Octopus or a CSV are left alone.
+ * @param {object|null|undefined} coverage
+ * @param {string|null|undefined} source DatasetSummary.source
+ * @returns {object|null|undefined} a new object when marked, else the input
+ */
+export function markUsageBasis(coverage, source) {
+    if (!coverage || typeof coverage !== 'object' || !SYNTHETIC_SOURCES.has(source)) return coverage;
+    return { ...coverage, synthetic: source };
+}
+
+const withUsageBasis = (summary, source = summary?.source) =>
+    (summary && typeof summary === 'object' && summary.coverage ? { ...summary, coverage: markUsageBasis(summary.coverage, source) } : summary);
 
 const plain = v => (v == null ? v : JSON.parse(JSON.stringify(v)));
 /* An optional trailing options object ({ finance, … }) — anything else becomes {}. */
@@ -205,9 +232,18 @@ export function buildSystemFrom(kits, system, catalog, { kind, id, opts } = {}) 
 async function defaultCatalogLoader(fetchImpl) {
     const base = new URL('../data/', import.meta.url);
     const get = async name => {
-        const res = await fetchImpl(new URL(`${name}.json`, base).href);
-        if (!res.ok) throw new EngineError('CATALOG', `Couldn't load data/${name}.json (${res.status}).`, { retryable: true });
-        return res.json();
+        let res;
+        try {
+            res = await fetchImpl(new URL(`${name}.json`, base).href);
+        } catch {
+            throw new EngineError('CATALOG', `Couldn't download the product list (data/${name}.json). Check your connection and try again.`, { retryable: true });
+        }
+        if (!res.ok) throw new EngineError('CATALOG', `Couldn't download the product list (data/${name}.json, error ${res.status}). Try again in a moment.`, { retryable: true });
+        try {
+            return await res.json();
+        } catch {
+            throw new EngineError('CATALOG', `The product list (data/${name}.json) arrived incomplete. Try again.`, { retryable: true });
+        }
     };
     const [kits, stations, bundles, constants] = await Promise.all(['kits', 'stations', 'bundles', 'constants'].map(get));
     // The data files wrap their arrays ({ kits: [...] }); hand normalizeCatalog the arrays, plus the
@@ -225,26 +261,53 @@ async function defaultCatalogLoader(fetchImpl) {
 /**
  * Create the method dispatcher. In the worker it is bound to postMessage; engine.js uses it inline.
  * @param {{ post: (msg: object) => void, importer?: (spec: string) => Promise<object>, fetch?: typeof fetch,
- *   catalogLoader?: (fetch: typeof fetch) => Promise<object> }} opts
+ *   catalogLoader?: (fetch: typeof fetch) => Promise<object>, retryDelaysMs?: number[] }} opts
  *   importer/catalogLoader are injectable for tests; defaults import sibling modules and data/*.json.
+ *   retryDelaysMs: the waits before each retry of a product list that failed to download while
+ *   loading a dataset (default [400, 1500]).
  * @returns {{ handle(msg: object): Promise<void>, state(): { hasDataset: boolean, hasEngine: boolean } }}
  */
-export function createDispatcher({ post, importer, fetch: fetchImpl, catalogLoader } = {}) {
+export function createDispatcher({ post, importer, fetch: fetchImpl, catalogLoader, retryDelaysMs = [400, 1500] } = {}) {
     const load = importer ?? (spec => import(spec));
     const baseFetch = fetchImpl ?? globalThis.fetch?.bind(globalThis);
     const guardedFetch = makeGuardedFetch(baseFetch);
     const loadCatalog = catalogLoader ?? defaultCatalogLoader;
     const active = new Map();
     const secrets = new Set();
-    const s = { ds: null, engine: null, catalog: null, catalogP: null, scenarios: null, cacheP: null };
+    const s = { ds: null, engine: null, catalog: null, catalogP: null, scenarios: null, cacheP: null, projectBaseW: null };
     let lastCommit = null;   // { id, prev } for the most recent loadDataset that replaced the dataset
+    let rebuild = null;      // { ds, p } an engine being built for a dataset that has none yet
+    const modules = new Map();        // key → the module, under whichever URL imported it
+    const importFailures = new Map(); // key → failed imports so far (the next retry's cache-buster)
+
+    /* Import a sibling module. After a failure, ask for a URL the module map hasn't cached as failed. */
+    async function importModule(key) {
+        if (modules.has(key)) return modules.get(key);
+        let lastErr;
+        for (let attempt = 0; attempt < 2; attempt++) {
+            const n = importFailures.get(key) || 0;
+            try {
+                const mod = await load(n ? `${MODULES[key]}?retry=${n}` : MODULES[key]);
+                modules.set(key, mod);
+                return mod;
+            } catch (err) {
+                lastErr = err;
+                importFailures.set(key, n + 1);
+            }
+        }
+        throw lastErr;
+    }
 
     async function need(key, names = []) {
         let mod;
         try {
-            mod = await load(MODULES[key]);
+            mod = await importModule(key);
         } catch (err) {
-            throw new EngineError('MISSING_MODULE', `The ${key} module (js/${MODULES[key].slice(2)}) isn't available: ${err?.message || err}`);
+            // The browser's text carries the full module URL and says little; the console keeps it.
+            console.warn(`solar: js/${MODULES[key].slice(2)} didn't load:`, err?.message || err);
+            throw new EngineError('MISSING_MODULE',
+                `Couldn’t download part of the calculator (js/${MODULES[key].slice(2)}). Check your connection and try again — if it keeps failing, reload the page.`,
+                { retryable: true, action: 'reload' });
         }
         for (const n of names) {
             if (typeof mod?.[n] === 'undefined') throw new EngineError('MISSING_EXPORT', `js/${MODULES[key].slice(2)} doesn't export ${n}.`);
@@ -272,11 +335,43 @@ export function createDispatcher({ post, importer, fetch: fetchImpl, catalogLoad
         }
     }
 
-    const eng = () => {
+    const noDataset = () => new EngineError('NO_DATASET', 'Load your data first.', { action: 'useDemo' });
+
+    async function buildEngine(ds) {
+        const [{ SolarEngine }, catalog] = await Promise.all([need('core', ['SolarEngine']), getCatalog()]);
+        return new SolarEngine(ds, catalog);
+    }
+
+    /*
+     * The engine for the current dataset — built now if the load couldn't build it (a product list
+     * or module that failed to download). Concurrent callers share one build; a build for a dataset
+     * that was replaced meanwhile is thrown away and the new one is built instead.
+     */
+    async function getEngine() {
         if (s.engine) return s.engine;
-        if (s.ds) throw new EngineError('ENGINE_UNAVAILABLE', 'Your data is loaded, but the simulation engine (js/core.js) isn’t available.');
-        throw new EngineError('NO_DATASET', 'Load your data first.', { action: 'useDemo' });
-    };
+        if (!s.ds) throw noDataset();
+        const ds = s.ds;
+        if (rebuild?.ds !== ds) rebuild = { ds, p: buildEngine(ds) };
+        const job = rebuild;
+        let engine;
+        try {
+            engine = await job.p;
+        } catch (err) {
+            if (rebuild === job) rebuild = null;   // the next call tries again
+            if (err?.name === 'AbortError') throw err;
+            throw new EngineError('ENGINE_UNAVAILABLE', `Your data is loaded, but the simulation engine couldn’t start. ${err?.message || err}`,
+                { retryable: err?.retryable ?? true, action: err?.action ?? null });
+        }
+        if (rebuild === job) rebuild = null;
+        if (s.ds !== ds) return getEngine();
+        if (!s.engine) {
+            s.engine = engine;
+            if (s.projectBaseW != null) engine.setProjectBaseW(s.projectBaseW);
+        }
+        return s.engine;
+    }
+
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
 
     function findScenario(id) {
         const list = s.scenarios || [];
@@ -295,37 +390,65 @@ export function createDispatcher({ post, importer, fetch: fetchImpl, catalogLoad
             });
             ctx.check();
             let engine = null;
-            try {
-                const [{ SolarEngine }, catalog] = await Promise.all([need('core', ['SolarEngine']), getCatalog()]);
-                engine = new SolarEngine(ds, catalog);
-            } catch (err) {
-                // Keep the dataset usable (usage insights work without the engine) and say why.
-                console.warn('solar engine unavailable:', err?.message || err);
+            let engineErr = null;
+            // A product list that failed to download is worth a couple of quick retries before
+            // settling for a dataset without its engine (which getEngine() can still build later).
+            for (let attempt = 0; ; attempt++) {
+                try {
+                    engine = await buildEngine(ds);
+                    break;
+                } catch (err) {
+                    engineErr = err;
+                    const wait = retryDelaysMs[attempt];
+                    if (err?.code !== 'CATALOG' || !(wait >= 0)) break;
+                    await sleep(wait);
+                    ctx.check();
+                }
             }
+            // Keep the dataset usable (usage insights work without the engine) and say why.
+            if (!engine) console.warn('solar engine unavailable:', engineErr?.message || engineErr);
             ctx.check();
             // Remember what this load replaced: if the page cancels it after this point (its result
             // is already on the way but will be dropped), the page still believes in the previous
             // dataset, so the worker must go back to it — see handle('cancel').
-            lastCommit = { id: ctx.id, prev: { ds: s.ds, engine: s.engine, scenarios: s.scenarios } };
+            lastCommit = { id: ctx.id, prev: { ds: s.ds, engine: s.engine, scenarios: s.scenarios, projectBaseW: s.projectBaseW } };
             s.ds = ds;
             s.engine = engine;
             s.scenarios = null;
-            if (engine) return engine.summary;
+            // A new dataset starts at its own always-on load; the page sends its projection again.
+            s.projectBaseW = null;
+            if (engine) return withUsageBasis(engine.summary);
             const { summarize } = await need('dataset', ['summarize']);
-            return { ...summarize(ds), engineUnavailable: true };
+            return withUsageBasis({ ...summarize(ds), engineUnavailable: true, engineError: serializeError(engineErr, secrets) });
+        },
+
+        /**
+         * The summary of the current dataset once its engine is running — building the engine now if
+         * the load couldn't (the page calls this to recover from a failed download). Rejects with
+         * ENGINE_UNAVAILABLE (retryable) while it still can't be built.
+         */
+        async ensureEngine() {
+            const engine = await getEngine();
+            return withUsageBasis(engine.summary);
         },
 
         async insights() {
-            if (s.engine) return s.engine.insights();
-            if (!s.ds) eng();
-            const { analyseUsage } = await need('insights', ['analyseUsage']);
-            return analyseUsage(s.ds);
+            let ins;
+            if (s.engine) ins = s.engine.insights();
+            else {
+                if (!s.ds) throw noDataset();
+                const { analyseUsage } = await need('insights', ['analyseUsage']);
+                ins = analyseUsage(s.ds);
+            }
+            const source = s.ds?.meta?.source;
+            return ins && typeof ins === 'object' && ins.coverage && SYNTHETIC_SOURCES.has(source)
+                ? { ...ins, coverage: markUsageBasis(ins.coverage, source) } : ins;
         },
 
-        runScenario: (ctx, system, opts) => eng().runScenario(system, opts ?? {}),
+        runScenario: async (ctx, system, opts) => (await getEngine()).runScenario(system, opts ?? {}),
 
-        autoScenarios(ctx, opts) {
-            s.scenarios = eng().autoScenarios(opts ?? {});
+        async autoScenarios(ctx, opts) {
+            s.scenarios = (await getEngine()).autoScenarios(opts ?? {});
             return s.scenarios;
         },
 
@@ -335,7 +458,7 @@ export function createDispatcher({ post, importer, fetch: fetchImpl, catalogLoad
          * at the next stage boundary (onPartial stays a cancellation point too).
          */
         async verdict(ctx, opts = {}) {
-            const engine = eng();
+            const engine = await getEngine();
             const { buildVerdict } = await need('verdict', ['buildVerdict']);
             const { scenarios, spots, overrides, ...rest } = opts || {};
             const list = scenarios ?? (s.scenarios = engine.autoScenarios(spots ? { spots } : {}));
@@ -350,26 +473,26 @@ export function createDispatcher({ post, importer, fetch: fetchImpl, catalogLoad
             });
         },
 
-        orientationSweep: (ctx, system, arrayId, opts) =>
-            eng().orientationSweep(system, arrayId, { ...(opts || {}), onProgress: p => ctx.progress(p) }),
+        orientationSweep: async (ctx, system, arrayId, opts) =>
+            (await getEngine()).orientationSweep(system, arrayId, { ...(opts || {}), onProgress: p => ctx.progress(p) }),
 
         /* The verdict's heavy answers, for any system (B1 caches them per system + finance). */
-        answerOrientation: (ctx, system, opts) => eng().answerOrientation(system, bag(opts)),
-        upsStrategies: (ctx, system, opts) => eng().upsStrategies(system, bag(opts)),
-        tornado: (ctx, system, opts) => eng().tornado(system, bag(opts)),
-        weatherInfo: () => eng().weatherInfo(),
+        answerOrientation: async (ctx, system, opts) => (await getEngine()).answerOrientation(system, bag(opts)),
+        upsStrategies: async (ctx, system, opts) => (await getEngine()).upsStrategies(system, bag(opts)),
+        tornado: async (ctx, system, opts) => (await getEngine()).tornado(system, bag(opts)),
+        weatherInfo: async () => (await getEngine()).weatherInfo(),
 
         /* Curves take an optional { finance } (the user's money settings); without it they use the defaults. */
-        baseLoadCurve(ctx, idsOrSystems, xs, opts) {
-            const engine = eng();
+        async baseLoadCurve(ctx, idsOrSystems, xs, opts) {
+            const engine = await getEngine();
             const systems = (idsOrSystems || []).map(x => (typeof x === 'string' ? findScenario(x) : x)).filter(Boolean);
             return engine.baseLoadCurve(systems, xs ?? undefined, bag(opts));
         },
 
-        panelCountCurve: (ctx, system, opts) => eng().panelCountCurve(system, bag(opts)),
-        batterySizeCurve: (ctx, system, opts) => eng().batterySizeCurve(system, bag(opts)),
-        typicalDay: (ctx, system, which) => eng().typicalDay(system, which),
-        exportCsv: (ctx, system) => eng().exportCsv(system),
+        panelCountCurve: async (ctx, system, opts) => (await getEngine()).panelCountCurve(system, bag(opts)),
+        batterySizeCurve: async (ctx, system, opts) => (await getEngine()).batterySizeCurve(system, bag(opts)),
+        typicalDay: async (ctx, system, which) => (await getEngine()).typicalDay(system, which),
+        exportCsv: async (ctx, system) => (await getEngine()).exportCsv(system),
 
         /** A System built from a catalog product: { kind: 'kit'|'bundle'|'station'|'blank', id, opts } (see buildSystemFrom). */
         async buildSystem(ctx, req) {
@@ -383,8 +506,11 @@ export function createDispatcher({ post, importer, fetch: fetchImpl, catalogLoad
             return buildSystemFrom(kitsMod, systemMod, catalog, { kind: req.kind, id: req.id, opts });
         },
 
+        /* Kept even while the engine can't be built, and applied when it is. */
         setProjectBaseW(ctx, w) {
-            eng().setProjectBaseW(Number.isFinite(w) ? w : null);
+            if (!s.ds) throw noDataset();
+            s.projectBaseW = Number.isFinite(w) ? w : null;
+            s.engine?.setProjectBaseW(s.projectBaseW);
             return true;
         },
 

@@ -8,13 +8,18 @@
  *
  * It runs in the worker (worker.js → methods.verdict) and streams partial verdicts through
  * onPartial(stage, verdict) after each stage, so the page can draw the best buy long before the
- * 20-year weather bands and the orientation sweeps are done:
+ * 20-year weather bands are done. `stage` is the last stage completed; a stage can be reported
+ * twice when an early answer inside the next one is ready (the order never goes back):
  *   'usage'   context + usage (insights, the free 'cut 100 W' yardstick)
- *   'plugin'  every solar-only option (plug-in and wired-in panels, no storage) → the best buy
+ *   'plugin'  every solar-only option (plug-in and wired-in panels, no storage) → the best buy;
+ *             then again with the orientation answer (west vs south, the user's headline
+ *             question) for that option — the sweep only, its "this changes if…" checks pending
  *   'all'     batteries, power stations, combinations, future-rules plans → ranking, dominance,
- *             badges, the battery / power-station / growth answers
- *   'bands'   2006–2025 weather band per option → whiskers, payback range, confidence levels
- *   'answers' orientation (sweep + flips), payback tornado, always-on-load curve
+ *             badges, the battery / power-station / growth answers; then again once the options
+ *             the card names (best buy, runner-up, step-up) have their weather band, with the
+ *             payback tornado and a complete "How sure is this?"
+ *   'bands'   2006–2025 weather band for every option → whiskers, payback range, confidence levels
+ *   'answers' the orientation checks (flips), the always-on-load curve
  * Between options it yields to the event loop, so other engine calls and a cancel can get in.
  *
  * Money basis: every £/yr is the engine's first ownership year on the forward basis (install on
@@ -264,6 +269,10 @@ function rowOf(engine, sys, r, ctx) {
         npv20Gbp: fin.npvGbp,
         net10Gbp: hd.net10Gbp,
         irr: fin.irr ?? null,
+        // the last ownership year its battery (or power station) still saves; with 'buy a new
+        // battery when it wears out' on, the figures include the new one (batteryReplaced)
+        batteryEndYear: sys.battery && finite(fin.batteryEndYear) ? fin.batteryEndYear : null,
+        batteryReplaced: !!sys.battery && (fin.flags ?? []).includes('batteryReplaced'),
         selfUsePct: hd.selfUsePct,
         exportIncomeGbp: hd.exportIncomeGbp,
         exportKwh: hd.exportKwh,
@@ -495,6 +504,23 @@ export async function buildVerdict(engine, { scenarios, finance = {}, maxPayback
     emit('plugin');
     await pause();
 
+    /* ── the headline question next: west vs south for the provisional best buy ── */
+    // The sweep is the slowest answer and the one this user asked first, so it is answered as soon
+    // as the option it is about is known (re-reported as 'plugin'); the "this changes if…" checks
+    // follow with the other answers, and it is re-run only if the best buy changes.
+    /** The panels the orientation answer points: the best buy's, or — when it has none — the reference kit's. */
+    const orientFor = () => {
+        const best = focusOf(V, rows);
+        const bestSys = best ? byId.get(best.id) : null;
+        return bestSys?.arrays?.length ? bestSys : byId.get('S01') ?? (best?.panels ? bestSys : null);
+    };
+    const orientSys = orientFor();
+    if (orientSys) {
+        V.answers.orientation = guard(() => orientationAnswer(engine, orientSys, { tieBandPct, finance: fin, flips: false }));
+        emit('plugin');
+        await pause();
+    }
+
     /* ── stage 3: storage, combinations, future rules ── */
     for (const s of list) {
         if (rows.has(s.id)) continue;
@@ -510,40 +536,64 @@ export async function buildVerdict(engine, { scenarios, finance = {}, maxPayback
     emit('all');
     await pause();
 
-    /* ── stage 4: weather bands ── */
-    const order = [V.bestBuyId, V.runnerUpId, V.stepUp?.id, ...V.ranked.map((r) => r.id)].filter((x, i, a) => x && a.indexOf(x) === i);
-    for (const id of order) {
-        const s = byId.get(id);
-        if (!s) continue;
-        const r = run(s, true);
-        const row = rowOf(engine, s, r, ctxRow);
-        row.confidence = confidenceFor(row, confidenceCtx(engine, s, row, summary, coveragePct));
-        rows.set(id, row);
+    /* ── stage 4: weather bands — the options on the card first ── */
+    // The options the card names (the best buy — or, with nothing to recommend, the one that
+    // comes closest — its runner-up and step-up) get their band, and the first of them its payback
+    // tornado, before the rest: the card's weather range and a complete "How sure is this?" are
+    // re-reported as 'all'. The bands stage is done only when every option has its band.
+    const cardIds = [V.bestBuyId ?? V.headline?.closestId, V.runnerUpId, V.stepUp?.id].filter((x, i, a) => x && a.indexOf(x) === i);
+    const order = [...cardIds, ...V.ranked.map((r) => r.id)].filter((x, i, a) => x && a.indexOf(x) === i);
+    const firstN = cardIds.length;
+    const banded = async (ids) => {
+        for (const id of ids) {
+            const s = byId.get(id);
+            if (!s) continue;
+            const r = run(s, true);
+            const row = rowOf(engine, s, r, ctxRow);
+            row.confidence = confidenceFor(row, confidenceCtx(engine, s, row, summary, coveragePct));
+            rows.set(id, row);
+            await pause();
+        }
+        Object.assign(V, decide());
+        V.headline = headlineFor(engine, V, rows, byId, results, { maxYears, per100 });
+        V.scatter = scatterOf(V, rows);
+    };
+    await banded(order.slice(0, firstN));
+    const tornadoFor = (sys) => {
+        const t = guard(() => {
+            const x = engine.tornado(sys, { finance: fin });
+            return { id: x.id, center: x.center, rows: x.rows.map((y) => ({ ...y })) };
+        });
+        return t?.status === 'error' ? null : t;
+    };
+    // the payback tornado: for the best buy, or — when nothing qualifies — the option that comes closest
+    let best = focusOf(V, rows);
+    let bestSys = best ? byId.get(best.id) : null;
+    if (bestSys) {
+        V.tornado = tornadoFor(bestSys);
         await pause();
     }
-    Object.assign(V, decide());
-    V.headline = headlineFor(engine, V, rows, byId, results, { maxYears, per100 });
-    V.scatter = scatterOf(V, rows);
+    V.answers.confidence = guard(() => confidenceAnswer(V, rows, V.tornado));
+    if (order.length > firstN) {
+        emit('all');
+        await pause();
+        await banded(order.slice(firstN));
+    }
     if (V.answers.battery?.status === 'ready') V.answers.battery = guard(() => batteryAnswer(engine, V, rows, results, ins));
-    V.answers.confidence = guard(() => confidenceAnswer(V, rows, null));
+    // (the ranking never changes with the bands, but stay safe: the tornado follows the option)
+    best = focusOf(V, rows);
+    if (best && best.id !== V.tornado?.id) {
+        bestSys = byId.get(best.id) ?? null;
+        V.tornado = bestSys ? tornadoFor(bestSys) : null;
+    }
+    V.answers.confidence = guard(() => confidenceAnswer(V, rows, V.tornado));
     emit('bands');
     await pause();
 
-    /* ── stage 5: orientation, tornado, always-on load ── */
-    // the best buy, or — when nothing qualifies — the option that comes closest
-    const best = focusOf(V, rows);
-    const bestSys = best ? byId.get(best.id) : null;
-    const orientSys = bestSys?.arrays?.length ? bestSys : byId.get('S01') ?? (best?.panels ? bestSys : null);
-    V.answers.orientation = guard(() => orientationAnswer(engine, orientSys, rows.get(orientSys?.id), { tieBandPct, finance: fin }));
-    await pause();
-    if (bestSys) {
-        V.tornado = guard(() => {
-            const t = engine.tornado(bestSys, { finance: fin });
-            return { id: t.id, center: t.center, rows: t.rows.map((x) => ({ ...x })) };
-        });
-        if (V.tornado?.status === 'error') V.tornado = null;
-    }
-    V.answers.confidence = guard(() => confidenceAnswer(V, rows, V.tornado));
+    /* ── stage 5: what would change the direction, always-on load ── */
+    // the same sweep (cached) with the "this changes if…" checks, for the final best buy
+    const finalOrient = orientFor();
+    V.answers.orientation = guard(() => orientationAnswer(engine, finalOrient, { tieBandPct, finance: fin, flips: true }));
     await pause();
     V.answers.baseLoad = guard(() => baseLoadAnswer(engine, V, rows, byId, { maxYears, finance: fin, per100 }));
     emit('answers');
@@ -572,6 +622,27 @@ function confidenceCtx(engine, sys, row, summary, coveragePct) {
 }
 
 /* ── ranking, best buy, badges ──────────────────────────────────────────────── */
+
+/**
+ * The best buy's runner-up (UX critique best-buy rule, kept consistent with the rest of the page):
+ * never an option beaten on both price and savings (dominatedBy — the table lists those as
+ * "beaten by …"). The cheapest other eligible option that pays back within a year of the best buy
+ * and is either cheaper ('Spending less?') or worth as much over 10 years (NPV within the £25 tie
+ * band: 'Close second'); otherwise the cheaper option worth the most over 10 years; otherwise none
+ * — a dearer option that is worth less is no second choice. Pure.
+ * @param {{ id: string, capexGbp: number, npv10Gbp: number, payback: { typical: number|null } }|null} best
+ * @param {Array<{ id: string, capexGbp: number, npv10Gbp: number, payback: { typical: number|null }, dominatedBy?: string|null }>} pool eligible rows
+ * @returns {Object|null}
+ */
+export function pickRunnerUp(best, pool) {
+    if (!best) return null;
+    const others = (pool ?? []).filter((r) => r && r !== best && r.id !== best.id && !r.dominatedBy);
+    const cheaper = (r) => r.capexGbp < best.capexGbp;
+    const tied = (r) => finite(r.npv10Gbp) && finite(best.npv10Gbp) && r.npv10Gbp >= best.npv10Gbp - NPV_TIE_GBP;
+    const near = (r) => finite(r.payback.typical) && finite(best.payback.typical) && r.payback.typical <= best.payback.typical + 1;
+    const close = others.filter((r) => near(r) && (cheaper(r) || tied(r))).sort((a, b) => (a.capexGbp - b.capexGbp) || byNpv(a, b));
+    return close[0] ?? others.filter(cheaper).sort(byNpv)[0] ?? null;
+}
 
 /**
  * Order rows (legal ok/check by 10-year NPV → reference points → future-rules plans), split off
@@ -609,10 +680,7 @@ function decideRows(engine, rows, { maxYears }) {
     let runnerUp = null;
     let stepUp = null;
     if (best) {
-        const others = pool.filter((r) => r !== best);
-        const close = others.filter((r) => finite(r.payback.typical) && r.payback.typical <= best.payback.typical + 1)
-            .sort((a, b) => (a.capexGbp - b.capexGbp) || byNpv(a, b));
-        runnerUp = close[0] ?? others.slice().sort(byNpv)[0] ?? null;
+        runnerUp = pickRunnerUp(best, pool);
         const bigger = eligibleAny.filter((r) => r !== best && r.npv10Gbp > best.npv10Gbp + NPV_TIE_GBP).sort(byNpv)[0] ?? null;
         if (bigger) {
             const dC = bigger.capexGbp - best.capexGbp;
@@ -715,11 +783,13 @@ function headlineFor(engine, V, rows, byId, results, { maxYears, per100 }) {
         weatherNote = `${wx.fullYear === false ? 'With the sunshine your data actually had, scaled to a year' : 'Last 12 months as it happened'}: ${gbp(s.actual)}/yr${rank ? ` — ${rank}${rel}` : ''}.`;
     }
     const ru = V.runnerUpId ? rows.get(V.runnerUpId) : null;
-    const runnerUp = ru
-        ? (ru.capexGbp < best.capexGbp
+    // 'Close second' only for an option worth as much over 10 years (pickRunnerUp never offers a
+    // dearer one that is worth less, nor one the best buy beats on both price and savings)
+    const ruTied = !!ru && finite(ru.npv10Gbp) && ru.npv10Gbp >= best.npv10Gbp - NPV_TIE_GBP;
+    const runnerUp = !ru ? null
+        : ru.capexGbp < best.capexGbp
             ? `Spending less? ${ru.name} costs ${em(gbp(ru.capexGbp))} and pays back in ${years(ru.payback.typical, 'yrs')}.`
-            : `Close second: ${ru.name}, ${gbp(ru.capexGbp)}, pays back in ${years(ru.payback.typical, 'yrs')}.`)
-        : null;
+            : ruTied ? `Close second: ${ru.name}, ${gbp(ru.capexGbp)}, pays back in ${years(ru.payback.typical, 'yrs')}.` : null;
     let stepUp = null;
     if (V.stepUp) {
         const b = rows.get(V.stepUp.id);
@@ -767,13 +837,18 @@ function scatterOf(V, rows) {
 
 /* ── answers ────────────────────────────────────────────────────────────────── */
 
-function orientationAnswer(engine, sys, row, { tieBandPct, finance }) {
+/**
+ * Q1, west vs south, for one system's panels. flips false = the sweep alone (fast, answered first);
+ * the "this changes if…" checks (lower load with Prime, Prime, more panels, a battery) come with
+ * flips true — `checked` lists what was tried, so an empty list means not checked yet.
+ */
+function orientationAnswer(engine, sys, { tieBandPct, finance, flips = true }) {
     if (!sys) return { status: 'none', summary: 'No panels to point in these options.', body: [] };
-    const a = engine.answerOrientation(sys, { tieBandPct, finance });
+    const a = engine.answerOrientation(sys, { tieBandPct, finance, flips });
     const kw = (p) => num(p.kwh);
     const tie = a.tie;
     const out = {
-        status: 'ready', forId: sys.id, forName: sys.name,
+        status: 'ready', forId: sys.id, forName: sys.name, checksPending: !flips,
         best: a.best, s35: a.s35, w45: a.w45, w90: a.w90, ssw45: a.ssw45, current: a.current,
         tie, tieBandPct: a.tieBandPct, westPays: a.westPays, flips: a.flips, checked: a.checked, compass: a.compass,
         proxyNote: a.proxyNote,
@@ -786,7 +861,7 @@ function orientationAnswer(engine, sys, row, { tieBandPct, finance }) {
         const worth = a.w90.pPerKwh > a.best.pPerKwh
             ? `Each of those kWh is worth more (${num(a.w90.pPerKwh, 1)}p vs ${num(a.best.pPerKwh, 1)}p) because ${pct(a.w90.peakSharePct)} lands in the 4–7pm peak, but that doesn’t make up for the lost energy: ${em(`${gbp(a.w90.gbp)} vs ${gbp(a.best.gbp)} a year`)}.`
             : `And they wouldn’t even be worth more per kWh (${num(a.w90.pPerKwh, 1)}p vs ${num(a.best.pPerKwh, 1)}p): ${em(`${gbp(a.w90.gbp)} vs ${gbp(a.best.gbp)} a year`)}.`;
-        body.push(`On a west-facing wall they’d make ${kw(a.w90)} kWh/yr instead of ${kw(a.best)} (${pct(less)} less). ${worth} There’s little or no sun after 4pm from November to February.`);
+        body.push(`On a west-facing wall they’d make ${kw(a.w90)} kWh/yr instead of ${kw(a.best)} (${pct(less)} less). ${worth} Around midwinter there’s little or no sun after 4pm.`);
         if (tie) {
             const azs = tie.azMin === tie.azMax ? compass16(tie.azMin) : `${compass16(tie.azMin)} to ${compass16(tie.azMax)}`;
             const tl = tie.tiltMin === tie.tiltMax ? `${tie.tiltMin}°` : `${tie.tiltMin}–${tie.tiltMax}°`;
@@ -821,7 +896,9 @@ function batteryAnswer(engine, V, rows, results, ins) {
     const dC = P ? B.capexGbp - P.capexGbp : B.capexGbp;
     const dS = P ? B.savings.typical - P.savings.typical : B.savings.typical;
     const inc = dS > 0 ? dC / dS : null;
-    const life = sys.battery?.lifeYears ?? 15;
+    // its real life on this use: the year it wears out (cycles and age), unless a new one is bought then
+    const bl = storageLife(B);
+    const life = bl.endYear != null && !bl.replaced ? Math.min(bl.endYear, sys.battery?.lifeYears ?? 15) : sys.battery?.lifeYears ?? 15;
     const verdict = finite(inc) && inc <= BATTERY_PAYS_YEARS ? 'pays' : finite(inc) && inc <= life ? 'marginal' : 'doesNotPay';
     const split = { ...bx.split };
     const gross = Math.max(0, split.fromGridGbp) + Math.max(0, split.fromSolarGbp);
@@ -835,9 +912,16 @@ function batteryAnswer(engine, V, rows, results, ins) {
     const body = [];
     body.push(`The ${plainName(B.name)}${B.route === 'hardwired' ? ', wired in by an electrician,' : ''} against the ${P?.name ?? 'best plug-in kit'}: ${gbp(B.capexGbp)} vs ${gbp(P?.capexGbp ?? 0)}, ${gbp(B.savings.typical)}/yr vs ${gbp(P?.savings.typical ?? 0)}/yr.`);
     body.push(`The battery itself adds ${em(`${gbp(bx.totalGbp)}/yr`)}${B.panels ? ' to its own panels' : ''}: ${pct(gridPct)} of that comes from charging in cheap Agile slots and ${pct(solarPct)} from storing your own solar, minus ${gbp(Math.abs(split.standbyGbp))}/yr of standby power.`);
+    if (bl.early) {
+        const cyc = finite(bx.cyclesPerYear) && bx.cyclesPerYear >= 1 ? ` (about ${num(bx.cyclesPerYear)} full cycles a year)` : '';
+        body.push(`Its battery is worn out by year ${bl.endYear}${cyc}, so its savings stop then: ${tenYearsText(B) ?? 'it can’t earn more after that'}.`);
+    }
     if (mostlyGrid) body.push('Your servers already use almost all the solar, so for you a battery is mostly a separate decision from solar.');
     if (finite(peak)) body.push(`Your home uses ${num(peak, 1)} kWh between 4 and 7pm each day; usable capacity much beyond that earns less per kWh (see the battery-size curve in Compare).`);
-    body.push(`Any battery has to be wired in by an electrician today — plug-in batteries aren’t legal yet (Octopus hopes for early 2027). With perfect timing the battery’s ${gbp(bx.totalGbp)}/yr could reach ${gbp(bx.optimalGbp)}/yr.`);
+    const perfect = !finite(bx.optimalGbp) ? ''
+        : gbp(bx.optimalGbp) === gbp(bx.totalGbp) ? ' Perfect timing would add nothing more — realistic Agile-aware automation already gets the best case.'
+            : ` With perfect timing the battery’s ${gbp(bx.totalGbp)}/yr could reach ${gbp(bx.optimalGbp)}/yr.`;
+    body.push(`Any battery has to be wired in by an electrician today — plug-in batteries aren’t legal yet (Octopus hopes for early 2027).${perfect}`);
     return {
         status: 'ready', bestId: B.id, bestName: B.name, vsId: P?.id ?? null, vsName: P?.name ?? null,
         deltaCapexGbp: dC, deltaSavingsGbp: dS, incrementalPaybackYears: inc,
@@ -845,6 +929,48 @@ function batteryAnswer(engine, V, rows, results, ins) {
         gridPct, solarPct, mostlyGrid, peakKwhPerDay: peak, lifeYears: life, cyclesPerYear: bx.cyclesPerYear,
         verdict, summary, body,
     };
+}
+
+/** Options are ranked on what they leave you after this many years (UX critique: npv10). */
+const RANK_YEARS = 10;
+
+/**
+ * A battery's or power station's life against the 10 years the options are ranked on: it "wears
+ * out early" when its last saving year comes before year 10 and nobody buys a new one (with
+ * 'buy a new battery when it wears out' on, the figures already include the new one).
+ * @param {{ battery?: object|null, batteryEndYear?: number|null, batteryReplaced?: boolean }|null} row
+ * @returns {{ endYear: number|null, early: boolean, replaced: boolean }}
+ */
+export function storageLife(row) {
+    const end = row?.battery && finite(row.batteryEndYear) ? row.batteryEndYear : null;
+    const replaced = !!row?.batteryReplaced;
+    return { endYear: end, early: end != null && end < RANK_YEARS && !replaced, replaced };
+}
+
+/**
+ * Is a power station worth it? Graded on the 10-year value the options are ranked on (npv10, in
+ * today's money) — not on payback alone, which says nothing about a station that wears out just
+ * after paying back: 'pays' (more than £25 ahead), 'marginal' (within £25 of break-even) or
+ * 'doesNotPay' (more than £25 behind, or it never pays back).
+ * @param {{ payback: { typical: number|null }, npv10Gbp: number }} row
+ * @returns {'pays'|'marginal'|'doesNotPay'}
+ */
+export function stationVerdict(row) {
+    if (!finite(row?.payback?.typical)) return 'doesNotPay';
+    if (!finite(row.npv10Gbp)) return 'pays';
+    if (row.npv10Gbp < -NPV_TIE_GBP) return 'doesNotPay';
+    return row.npv10Gbp <= NPV_TIE_GBP ? 'marginal' : 'pays';
+}
+
+/** '£50 ahead' / '£88 behind' / 'at break-even' (within £1). */
+const sideOf = (v) => (!finite(v) ? null : Math.abs(v) < 1 ? 'at break-even' : v > 0 ? `${gbp(v)} ahead` : `${gbp(-v)} behind`);
+/** 'after 10 years you’re £50 ahead in plain pounds but £88 behind in today’s money'. */
+function tenYearsText(row) {
+    const net = sideOf(row.net10Gbp);
+    const npv = sideOf(row.npv10Gbp);
+    if (!net || !npv) return npv ? `after ${RANK_YEARS} years you’re ${npv} in today’s money` : null;
+    const but = (row.net10Gbp >= 1) !== (row.npv10Gbp >= 1) ? 'but' : 'and';
+    return `after ${RANK_YEARS} years you’re ${net} in plain pounds ${but} ${npv} in today’s money`;
 }
 
 function upsAnswer(engine, V, rows, byId, results, finance) {
@@ -861,13 +987,35 @@ function upsAnswer(engine, V, rows, byId, results, finance) {
     // the row's own saving is used so the answer reads exactly as the options table does
     const st = { ...raw, realisticGbp: main.savings.typical };
     const r = st.realisticGbp;
-    const summary = finite(pb)
-        ? `A power station running your servers saves ${em(`${gbp(r)}/yr`)} (pays back in ${years(pb, 'yrs')}).`
-        : Math.abs(r) < 0.5 ? 'A power station running your servers saves nothing on your data.'
+    const life = storageLife(main);
+    const verdict = stationVerdict(main);
+    const wears = life.early ? `wears out in year ${life.endYear}` : null;
+    let summary;
+    if (!finite(pb)) {
+        summary = Math.abs(r) < 0.5 ? 'A power station running your servers saves nothing on your data.'
             : r < 0 ? `A power station running your servers would cost ${em(`${gbp(-r)}/yr`)} more than it saves.`
                 : `A power station running your servers saves ${em(`${gbp(r)}/yr`)} — it never pays for itself.`;
+    } else if (verdict === 'doesNotPay') {
+        summary = `A power station for your servers isn’t worth it on your data: it saves ${gbp(r)}/yr but ${wears ?? `takes ${years(pb, 'yrs')} to pay back`}, ${em(sideOf(main.npv10Gbp))} after ${RANK_YEARS} years in today’s money.`;
+    } else if (verdict === 'marginal') {
+        summary = `A power station running your servers saves ${gbp(r)}/yr but only ${em('breaks even')}: it pays back in ${years(pb, 'yrs')}${wears ? ` and ${wears}` : ` and is ${sideOf(main.npv10Gbp)} after ${RANK_YEARS} years in today’s money`}.`;
+    } else {
+        summary = `A power station running your servers saves ${em(`${gbp(r)}/yr`)} (pays back in ${years(pb, 'yrs')}${wears ? `, ${wears}` : ''}).`;
+    }
     const body = [];
-    body.push(`That’s the ${main.name.replace(/^Power station( for the servers)?:\s*/i, '')} (${gbp(main.capexGbp)}) with Agile-aware automation; up to ${gbp(st.bestCaseGbp)} if timed perfectly.`);
+    const perfect = !finite(st.bestCaseGbp) ? ''
+        : gbp(st.bestCaseGbp) === gbp(r) ? ' — as much as perfect timing would earn'
+            : `; up to ${gbp(st.bestCaseGbp)} if timed perfectly`;
+    body.push(`That’s the ${main.name.replace(/^Power station( for the servers)?:\s*/i, '')} (${gbp(main.capexGbp)}) with Agile-aware automation${perfect}.`);
+    const cyc = main.batteryValue?.cyclesPerYear;
+    const ten = tenYearsText(main);
+    if (life.early) {
+        body.push(`Its battery is worn out by year ${life.endYear}${finite(cyc) && cyc >= 1 ? ` (about ${num(cyc)} full cycles a year)` : ''}, so the saving stops then: ${ten ?? 'it can’t earn more after that'}.`);
+    } else if (life.replaced && finite(life.endYear) && life.endYear < RANK_YEARS) {
+        body.push(`Its battery wears out in year ${life.endYear}; the figures include buying a new one then${ten ? ` — ${ten}` : ''}.`);
+    } else if (verdict !== 'pays' && finite(pb) && ten) {
+        body.push(`${ten[0].toUpperCase()}${ten.slice(1)}.`);
+    }
     body.push(st.peakCutGbp >= 0.5
         ? `Just cutting its mains with a smart plug from 4–7pm only saves ${gbp(st.peakCutGbp)}/yr — conversion losses eat most of the price gap.`
         : `Just cutting its mains with a smart plug from 4–7pm ${st.peakCutGbp <= -0.5 ? `loses ${gbp(-st.peakCutGbp)}/yr` : 'saves nothing'} — conversion losses eat the price gap.`);
@@ -875,7 +1023,15 @@ function upsAnswer(engine, V, rows, byId, results, finance) {
     if (withPanels && withPanels.id !== main.id) {
         const n = withPanels.panels?.count ?? 2;
         const wpb = withPanels.payback.typical;
-        body.push(`With ${n} panel${n === 1 ? '' : 's'} on its own solar inputs (no 800 W limit, nothing to register): ${em(`${gbp(withPanels.savings.typical)}/yr`)}, ${finite(wpb) ? `paying back in ${years(wpb, 'yrs')}` : 'but it never pays back'}.`);
+        const wLife = storageLife(withPanels);
+        const wVerdict = stationVerdict(withPanels);
+        const wTen = tenYearsText(withPanels);
+        // a station that wears out (or barely pays) says so, with what it leaves you after 10 years
+        const tail = !finite(wpb) ? 'but it never pays back'
+            : wLife.early ? `paying back in ${years(wpb, 'yrs')} — but it wears out in year ${wLife.endYear}${wTen ? `, so ${wTen}` : ''}`
+                : wVerdict !== 'pays' && wTen ? `paying back in ${years(wpb, 'yrs')} — but ${wTen}`
+                    : `paying back in ${years(wpb, 'yrs')}`;
+        body.push(`With ${n} panel${n === 1 ? '' : 's'} on its own solar inputs (no 800 W limit, nothing to register): ${em(`${gbp(withPanels.savings.typical)}/yr`)}, ${tail}.`);
     }
     const sw = finite(st.switchMs) ? `${num(st.switchMs)} ms switchover` : null;
     body.push(`Bonus: it’s a real UPS for the servers${sw || st.hid ? ` (${[sw, st.hid ? 'USB HID for clean shutdown' : null].filter(Boolean).join('; ')})` : ''}.`);
@@ -883,7 +1039,10 @@ function upsAnswer(engine, V, rows, byId, results, finance) {
         status: 'ready', bestId: main.id, bestName: main.name,
         realisticGbp: st.realisticGbp, bestCaseGbp: st.bestCaseGbp, peakCutGbp: st.peakCutGbp,
         onlineGbp: st.onlineGbp, onlinePenaltyGbp: st.onlinePenaltyGbp, paybackYears: pb, capexGbp: main.capexGbp,
-        withPanels: withPanels ? { id: withPanels.id, name: withPanels.name, gbp: withPanels.savings.typical, paybackYears: withPanels.payback.typical, capexGbp: withPanels.capexGbp } : null,
+        npv10Gbp: main.npv10Gbp, net10Gbp: main.net10Gbp, endYear: life.endYear, wearsOutEarly: life.early, verdict,
+        withPanels: withPanels ? { id: withPanels.id, name: withPanels.name, gbp: withPanels.savings.typical, paybackYears: withPanels.payback.typical, capexGbp: withPanels.capexGbp,
+            npv10Gbp: withPanels.npv10Gbp, net10Gbp: withPanels.net10Gbp, endYear: storageLife(withPanels).endYear, wearsOutEarly: storageLife(withPanels).early,
+            verdict: stationVerdict(withPanels) } : null,
         switchMs: st.switchMs ?? null, hid: !!st.hid, automation: station?.touMode ? 'tou' : station?.smartPlugOnly ? 'smartPlug' : 'app',
         summary, body,
     };
@@ -902,7 +1061,14 @@ function growthAnswer(engine, V, rows) {
     const items = [];
     items.push(`You can only have one plug-in kit, and you can’t add panels to it (it must match its ENA registration).${biggest ? ` The biggest kit on sale here is ${em(`${num(size(biggest))} W`)}.` : ''}`);
     if (hw) items.push(`An electrician-installed system can sit alongside it up to 3.68 kW in total (16 A per phase), as long as there’s no battery while you keep the plug-in kit: best here ${hw.name}, ${gbp(hw.capexGbp)}, ${em(`${gbp(hw.savings.typical)}/yr`)} on its own (together they’d save less — your always-on load can only use so much at once).`);
-    if (st) items.push(`A power station with its own panels isn’t connected to the grid: ${st.name}, ${em(`${gbp(st.savings.typical)}/yr`)}.`);
+    if (st) {
+        // the same 10-year test as the power-station answer: a station that wears out says so
+        const life = storageLife(st);
+        const ten = tenYearsText(st);
+        const tail = life.early ? `, though it wears out in year ${life.endYear}${ten ? ` (${ten})` : ''}`
+            : stationVerdict(st) !== 'pays' && ten ? `, though ${ten}` : '';
+        items.push(`A power station with its own panels isn’t connected to the grid: ${st.name}, ${em(`${gbp(st.savings.typical)}/yr`)}${tail}.`);
+    }
     const future = [];
     if (w3 && w3base) future.push(`a second kit (one per circuit, proposed) would add ${em(`${gbp(w3.savings.typical - w3base.savings.typical)}/yr`)}`);
     if (w2) future.push(`adding a plug-in battery later makes the whole plan pay back in ${years(w2.payback.typical, 'yrs')}`);
@@ -912,7 +1078,8 @@ function growthAnswer(engine, V, rows) {
         summary: 'One plug-in kit per home, used as sold — but there are other ways to grow.',
         maxWp: biggest ? size(biggest) : null, maxKitName: biggest?.name ?? null,
         hardwired: hw ? { id: hw.id, name: hw.name, capexGbp: hw.capexGbp, savingsGbp: hw.savings.typical } : null,
-        station: st ? { id: st.id, name: st.name, capexGbp: st.capexGbp, savingsGbp: st.savings.typical } : null,
+        station: st ? { id: st.id, name: st.name, capexGbp: st.capexGbp, savingsGbp: st.savings.typical, npv10Gbp: st.npv10Gbp, net10Gbp: st.net10Gbp,
+            endYear: storageLife(st).endYear, wearsOutEarly: storageLife(st).early, verdict: stationVerdict(st) } : null,
         secondKit: w3 && w3base ? { id: w3.id, baseId: w3base.id, addGbp: w3.savings.typical - w3base.savings.typical } : null,
         laterBattery: w2 ? { id: w2.id, paybackYears: w2.payback.typical, atYear: w2.upgrade?.atYear ?? null } : null,
         body: items,

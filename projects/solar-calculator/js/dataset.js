@@ -447,6 +447,8 @@ function normRegion(r) {
  * @property {number} [serverW]
  * @property {string[]} [notes]
  * @property {number} [createdAtMs]
+ * @property {{ exportMpan, exportSince, zeroTailFrom, suggestedInstallDate }|null} [existingGeneration]  Octopus: signs the
+ *   readings are net of existing solar/battery (see existingGenerationHint); kept in meta
  */
 
 /**
@@ -627,7 +629,10 @@ export function buildDataset(parts) {
             priceBasis,
             ...(serverW !== undefined ? { serverW } : {}),
             baseLoadW: Number.isFinite(estBase) ? estBase : null,
-            coverage: { realPct: 100 * realSlots / n, filledSlots, extrapolatedSlots, days: n / 48 },
+            // kind 'synthetic': a built profile (by hand, or the example household) — every slot
+            // is "real" to the gap rules, but none of it is a meter reading.
+            coverage: { realPct: 100 * realSlots / n, filledSlots, extrapolatedSlots, days: n / 48, kind: source === 'manual' || source === 'demo' ? 'synthetic' : 'meter' },
+            ...(parts.existingGeneration ? { existingGeneration: { ...parts.existingGeneration } } : {}),
             weather: weatherMeta,
             forward: { levyAdjust, levyExcP: LEVY_EXC_P, levyEndMs: LEVY_END_MS, kind: fwd?.kind ?? 'series', code: fwd?.code ?? tariffs[tariffs.length - 1]?.code ?? null },
             notes,
@@ -641,7 +646,9 @@ export function buildDataset(parts) {
  * @param {object} ds
  * @returns {{ id, start, n, days, from, to, region, regionName, postcode, lat, lon, altitude, source, coverage,
  *   tariffs, tariffCode, priceBasis, serverW, baseLoadW, locationSource, notes, weather, createdAtMs,
- *   flexible: { product, code }|null }}
+ *   flexible: { product, code }|null, existingGeneration: { exportMpan, exportSince, zeroTailFrom, suggestedInstallDate }|null }}
+ *   coverage.kind is 'synthetic' for a built profile (manual, demo): none of it is meter readings,
+ *   whatever realPct says (realPct is the share of slots that needed no gap filling)
  */
 export function summarize(ds) {
     const days = ds.local.days;
@@ -659,6 +666,7 @@ export function summarize(ds) {
         notes: [...ds.meta.notes], weather: { ...ds.meta.weather },
         createdAtMs: ds.meta.createdAtMs,
         flexible: ds.flexible ? { product: ds.flexible.product, code: ds.flexible.code } : null,
+        existingGeneration: ds.meta.existingGeneration ? { ...ds.meta.existingGeneration } : null,
     };
 }
 
@@ -747,15 +755,57 @@ export function demoDatasetFromJson(json, { serverW = 500, seed = 1 } = {}) {
 
 // ───────────────────────────── loading ─────────────────────────────
 
+/** Waits between postcodes.io attempts (ms): three tries in all. */
+const POSTCODES_BACKOFF_MS = [500, 1500];
+
+/** setTimeout that rejects with the abort reason as soon as `signal` fires. */
+function abortableSleep(ms, signal) {
+    return new Promise((resolve, reject) => {
+        const aborted = () => signal?.reason ?? Object.assign(new Error('Aborted'), { name: 'AbortError' });
+        if (signal?.aborted) { reject(aborted()); return; }
+        const onAbort = () => { clearTimeout(t); reject(aborted()); };
+        const t = setTimeout(() => { signal?.removeEventListener?.('abort', onAbort); resolve(); }, ms);
+        signal?.addEventListener?.('abort', onAbort, { once: true });
+    });
+}
+
+/**
+ * GET a postcodes.io URL (CORS *, no credentials). Resolves to the parsed body, or null when
+ * postcodes.io answers that it doesn't know the postcode (404, or any other 4xx). Network
+ * errors, unreadable bodies, 429 and 5xx are retried, then thrown with `unreachable: true` — so
+ * "this postcode doesn't exist" and "we couldn't ask" are never confused.
+ */
+async function postcodesIo(fetchImpl, url, { signal, sleep = abortableSleep } = {}) {
+    for (let attempt = 1; ; attempt++) {
+        let status = 0;
+        try {
+            const res = await fetchImpl(url, { signal, credentials: 'omit' });
+            status = res.status;
+            if (res.ok) return await res.json();
+            if (status !== 429 && status < 500) return null;
+        } catch (e) {
+            if (e?.name === 'AbortError') throw e;
+        }
+        if (attempt > POSTCODES_BACKOFF_MS.length) {
+            throw Object.assign(new Error(`postcodes.io could not be reached${status ? ` (HTTP ${status})` : ''}`), { unreachable: true });
+        }
+        await sleep(POSTCODES_BACKOFF_MS[attempt - 1], signal);
+    }
+}
+
 /**
  * Geocode a location. postcodes.io (CORS *, verified 2026-10-05) for full postcodes, its
- * outcode endpoint for partial ones; the region centroid as a last resort.
+ * outcode endpoint for partial ones; the region centroid as a last resort for a postcode
+ * postcodes.io doesn't know (or none given). When postcodes.io can't be reached the load stops
+ * with a retryable error instead: sunshine silently taken from the region's centre can be
+ * 200+ km off (Scilly, Shetland) while everything still said "for <your postcode>".
  *
  * @param {{ postcode?: string, lat?: number, lon?: number }|null} location
- * @param {{ fetch: typeof fetch, region?: string|null, signal?: AbortSignal }} ctx
+ * @param {{ fetch: typeof fetch, region?: string|null, signal?: AbortSignal, sleep?: (ms: number, signal?: AbortSignal) => Promise<void> }} ctx
  * @returns {Promise<{ lat: number, lon: number, postcode: string|null, locationSource: string, notes: string[] }>}
+ *   postcode is null for 'region-centroid' — the sunshine is not that postcode's
  */
-export async function resolveLocation(location, { fetch: fetchImpl, region = null, signal } = {}) {
+export async function resolveLocation(location, { fetch: fetchImpl, region = null, signal, sleep } = {}) {
     const notes = [];
     const lat = Number(location?.lat), lon = Number(location?.lon);
     if (location?.lat != null && location?.lon != null && location.lat !== '' && location.lon !== ''
@@ -767,15 +817,16 @@ export async function resolveLocation(location, { fetch: fetchImpl, region = nul
     }
     const pc = String(location?.postcode ?? '').trim().toUpperCase().replace(/\s+/g, ' ');
     if (pc) {
+        const unreachable = () => new DataError('LOCATION',
+            `Couldn't reach postcodes.io to find where ${pc} is, so its sunshine can't be looked up. Retry in a moment, or pick your spot on the map.`,
+            { action: 'setPostcode', retryable: true });
         const get = async (path) => {
             try {
-                const res = await fetchImpl(`https://api.postcodes.io/${path}`, { signal, credentials: 'omit' });
-                if (!res.ok) return null;
-                const j = await res.json();
+                const j = await postcodesIo(fetchImpl, `https://api.postcodes.io/${path}`, { signal, sleep });
                 return Number.isFinite(j?.result?.latitude) && Number.isFinite(j?.result?.longitude) ? j.result : null;
             } catch (e) {
-                if (e?.name === 'AbortError') throw e;
-                return null;
+                if (e?.unreachable) throw unreachable();
+                throw e;
             }
         };
         const full = await get(`postcodes/${encodeURIComponent(pc.replace(/\s+/g, ''))}`);
@@ -790,8 +841,10 @@ export async function resolveLocation(location, { fetch: fetchImpl, region = nul
     }
     if (region && REGION_CENTROIDS[region]) {
         const c = REGION_CENTROIDS[region];
-        notes.push('Using the centre of your region — set your postcode for accurate sunshine.');
-        return { lat: c.lat, lon: c.lon, postcode: pc || null, locationSource: 'region-centroid', notes };
+        notes.push(pc
+            ? `Couldn't find ${pc} on postcodes.io, so the sunshine is for the centre of your region (${REGIONS[region]}) — pick your spot on the map for accurate sunshine.`
+            : 'Using the centre of your region — set your postcode for accurate sunshine.');
+        return { lat: c.lat, lon: c.lon, postcode: null, locationSource: 'region-centroid', notes };
     }
     throw new DataError('LOCATION', pc ? `Couldn't find the postcode ${pc}.` : 'Enter a postcode (or pick a spot on the map) to look up sunshine.', { action: 'setPostcode' });
 }
@@ -839,6 +892,97 @@ async function pricesFor(client, { basis, agreements, region, start, n, nowMs, f
     return { ...await fetchProductPrices(client, { product, region, start, n, nowMs }), priceBasis: 'agile' };
 }
 
+const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/** 'YYYY-MM-DD' → '1 May 2026' for notes. */
+function dayText(date) {
+    const [y, m, d] = date.split('-').map(Number);
+    return `${d} ${MONTH_ABBR[m - 1]} ${y}`;
+}
+
+/** Days from local date a to local date b. */
+const daysBetween = (a, b) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / DAY_MS);
+
+/**
+ * Signs that an Octopus account's import readings are net of its own generation (solar or a
+ * battery): an export meter point, or a year that had to end well before the latest reading
+ * because the newer days are runs of 0 kWh. Gives notes for the user and a hint the UI can
+ * use to pre-fill "Existing solar: installed on".
+ *
+ * @param {{ exportPoint: object|null, rows: Array<[number, number]>, window: { start, n, lastDate }, installed: boolean }} p
+ * @returns {{ notes: string[], hint: { exportMpan: string|null, exportSince: string|null, zeroTailFrom: string|null, suggestedInstallDate: string|null }|null }}
+ */
+export function existingGenerationHint({ exportPoint = null, rows = [], window, installed = false }) {
+    const notes = [];
+    let lastMs = -Infinity;
+    for (const r of rows) if (r[0] > lastMs) lastMs = r[0];
+    const lastReadingDate = Number.isFinite(lastMs) ? localParts(lastMs).date : null;
+    const tailDays = lastReadingDate ? daysBetween(window.lastDate, lastReadingDate) : 0;
+    const zeroTailFrom = tailDays > 7 ? addDays(window.lastDate, 1) : null;
+    const since = (exportPoint?.agreements ?? []).map(a => a.fromMs).filter(Number.isFinite);
+    const exportSince = since.length ? localParts(Math.min(...since)).date : null;
+    if (!exportPoint && !zeroTailFrom) return { notes, hint: null };
+
+    const winFirst = localParts(window.start).date;
+    const exportAfterWindow = !!exportSince && exportSince > window.lastDate;
+    if (zeroTailFrom) {
+        notes.push(`Your readings after ${dayText(window.lastDate)} are mostly runs of 0 kWh or gaps, so the year analysed ends there, ${tailDays} days before your latest reading.`
+            + (exportAfterWindow ? ` Your account has had an export meter since ${dayText(exportSince)}.` : '')
+            + (installed ? '' : ` If solar or a battery went in around then, set Existing solar on the Data tab to ${dayText(exportAfterWindow && exportSince < zeroTailFrom ? exportSince : zeroTailFrom)}.`));
+    }
+    if (exportPoint && !installed) {
+        if (!exportSince || exportSince <= winFirst) {
+            notes.push(`Your account has an export meter${exportSince ? ` (since ${dayText(exportSince)})` : ''}, so these readings may already be net of your own solar or battery: the savings shown come on top of what it saves today.`);
+        } else if (!exportAfterWindow) {
+            notes.push(`Your account has had an export meter since ${dayText(exportSince)}. If solar or a battery went in then, readings from that date are net of what it makes: set Existing solar on the Data tab to ${dayText(exportSince)} so only readings from before it are used.`);
+        }
+    }
+    // An export meter is often registered weeks after the install: offer the earlier sign.
+    const suggested = [exportSince && exportSince > winFirst ? exportSince : null, zeroTailFrom].filter(Boolean).sort()[0];
+    return {
+        notes,
+        hint: { exportMpan: exportPoint?.mpan ?? null, exportSince, zeroTailFrom, suggestedInstallDate: installed ? null : suggested ?? null },
+    };
+}
+
+/**
+ * The electricity region for a CSV or manual load: given, from the postcode, or from a map point
+ * via postcodes.io reverse geocoding. An Octopus outage or rate limit is reported as such (the
+ * user can only retry) — never as "pick your region", which sent people to fix a postcode that
+ * was fine.
+ *
+ * @returns {Promise<string>} GSP group letter
+ */
+async function regionFromLocation(client, location, { region = null, fetchImpl, signal, sleep } = {}) {
+    if (region && REGIONS[region]) return region;
+    let pc = String(location?.postcode ?? '').trim();
+    const lat = Number(location?.lat), lon = Number(location?.lon);
+    if (!pc && location?.lat != null && location?.lon != null && Number.isFinite(lat) && Number.isFinite(lon)) {
+        let j;
+        try {
+            j = await postcodesIo(fetchImpl, `https://api.postcodes.io/postcodes?${new URLSearchParams({ lon: String(lon), lat: String(lat), radius: '2000', limit: '1' })}`, { signal, sleep });
+        } catch (e) {
+            if (!e?.unreachable) throw e;
+            throw new DataError('LOCATION', "Couldn't reach postcodes.io to find the electricity region of your map point. Retry in a moment, or pick your region.",
+                { step: 'prices', action: 'setPostcode', retryable: true });
+        }
+        pc = j?.result?.[0]?.postcode ?? '';
+        if (!pc) {
+            throw new DataError('LOCATION', "There's no postcode within 2 km of your map point, so we can't tell which regional prices apply. Pick your region (or enter a postcode).",
+                { step: 'prices', action: 'setPostcode' });
+        }
+    }
+    if (!pc) {
+        throw new DataError('LOCATION', 'Pick your electricity region (or enter a postcode) so we can price your usage.', { step: 'prices', action: 'setPostcode' });
+    }
+    // Octopus's own NETWORK / RATE_LIMIT errors (retryable, action 'retry') propagate unchanged.
+    const gs = await client.gspForPostcode(pc);
+    if (!gs[0] || !REGIONS[gs[0]]) {
+        throw new DataError('LOCATION', `Octopus doesn't recognise the postcode ${pc.toUpperCase()}, so we can't tell which regional prices apply. Check it, or pick your region.`,
+            { step: 'prices', action: 'setPostcode' });
+    }
+    return gs[0];
+}
+
 /**
  * Load a Dataset from any source, reporting progress per step:
  * account → usage → prices → export → weather → climatology → build.
@@ -883,6 +1027,9 @@ export async function loadDataset(spec, ctx = {}) {
     let rows, window, region = normRegion(spec?.region), postcode = null, agreements = null, mpan = null;
     let source = spec?.kind;
     let installCapMs = Infinity;
+    // Octopus only: the reader for older readings, the earliest instant already requested, and
+    // the account's export meter (a hint of existing generation).
+    let readEarlier = null, fetchedFromMs = Infinity, exportPoint = null;
 
     if (spec?.kind === 'octopus') {
         const acct = await step(progress, 'account', async () => {
@@ -922,22 +1069,23 @@ export async function loadDataset(spec, ctx = {}) {
 
         if (spec.installedSolarDate) installCapMs = localMidnightUtc(spec.installedSolarDate);
         const endCap = Math.min(nowMs, installCapMs);
+        // One read per serial, merged on a temporary grid and never summed (meter exchanges).
+        const read = async (from, to) => {
+            const series = [];
+            for (const serial of acct.importPoint.serials) series.push(await client.consumption(mpan, serial, from, to));
+            const live = series.filter(s => s.length);
+            if (live.length <= 1) return live[0] ?? [];
+            const t0 = Math.min(...live.map(s => s[0][0]));
+            const t1 = Math.max(...live.map(s => s[s.length - 1][0])) + SLOT_MS;
+            const span = Math.round((t1 - t0) / SLOT_MS);
+            const m = mergeConsumption(live, t0, span);
+            const out = [];
+            for (let k = 0; k < span; k++) if (!Number.isNaN(m[k])) out.push([t0 + k * SLOT_MS, m[k]]);
+            return out;
+        };
         rows = await step(progress, 'usage', async () => {
-            // One read per serial, merged on a temporary grid and never summed (meter exchanges).
-            const read = async (from, to) => {
-                const series = [];
-                for (const serial of acct.importPoint.serials) series.push(await client.consumption(mpan, serial, from, to));
-                const live = series.filter(s => s.length);
-                if (live.length <= 1) return live[0] ?? [];
-                const t0 = Math.min(...live.map(s => s[0][0]));
-                const t1 = Math.max(...live.map(s => s[s.length - 1][0])) + SLOT_MS;
-                const span = Math.round((t1 - t0) / SLOT_MS);
-                const m = mergeConsumption(live, t0, span);
-                const out = [];
-                for (let k = 0; k < span; k++) if (!Number.isNaN(m[k])) out.push([t0 + k * SLOT_MS, m[k]]);
-                return out;
-            };
             const from = endCap - 372 * DAY_MS;
+            fetchedFromMs = from;
             let got = (await read(from, endCap)).filter(r => r[0] >= from && r[0] < endCap);
             if (!got.length) {
                 throw new DataError('NO_SMART_DATA', 'Octopus has no half-hourly readings for this meter. Is it a smart meter sending half-hourly data?', { action: 'useDemo' });
@@ -947,11 +1095,14 @@ export async function loadDataset(spec, ctx = {}) {
             // extrapolating months that Octopus actually has.
             const last = got[got.length - 1][0];
             if (last < endCap - 7 * DAY_MS) {
-                const earlier = (await read(last - 372 * DAY_MS, from)).filter(r => r[0] < from);
+                fetchedFromMs = last - 372 * DAY_MS;
+                const earlier = (await read(fetchedFromMs, from)).filter(r => r[0] < from);
                 got = earlier.concat(got);
             }
             return got;
         });
+        readEarlier = read;
+        exportPoint = acct.exportPoint ?? null;
         source = 'octopus';
     } else if (spec?.kind === 'csv') {
         const parsed = await step(progress, 'usage', async () => parseConsumptionCsv(spec.text));
@@ -978,31 +1129,23 @@ export async function loadDataset(spec, ctx = {}) {
         throw new DataError('CSV', `Unknown data source '${spec?.kind}'.`, { action: 'useDemo' });
     }
 
-    if (spec.kind !== 'octopus') {
-        // CSV and manual need a region for prices: given, from the postcode, or from a map
-        // point via postcodes.io reverse geocoding (CORS *, verified 2026-10-05).
-        let pc = String(spec.location?.postcode ?? '').trim();
-        const lat = Number(spec.location?.lat), lon = Number(spec.location?.lon);
-        if (!region && !pc && spec.location?.lat != null && Number.isFinite(lat) && Number.isFinite(lon)) {
-            try {
-                const res = await fetchImpl(`https://api.postcodes.io/postcodes?${new URLSearchParams({ lon: String(lon), lat: String(lat), radius: '2000', limit: '1' })}`, { signal, credentials: 'omit' });
-                if (res.ok) pc = (await res.json())?.result?.[0]?.postcode ?? '';
-            } catch (e) { if (e?.name === 'AbortError') throw e; }
-        }
-        if (!region && pc) {
-            try {
-                const gs = await client.gspForPostcode(pc);
-                region = gs[0] ?? null;
-            } catch (e) { if (e?.name === 'AbortError') throw e; }
-        }
-        if (!region || !REGIONS[region]) {
-            throw new DataError('LOCATION', 'Pick your electricity region (or enter a postcode) so we can price your usage.', { step: 'prices', action: 'setPostcode' });
-        }
-    }
-
     if (!window) {
         try {
             window = chooseWindow(rows, { endCapMs: installCapMs });
+            // The window ends on the last COMPLETE day, and runs of zero readings (existing
+            // solar or a battery, or a meter zero-filling) don't count, so it can end weeks
+            // before the last reading — and then start before the stretch that was read. Read
+            // that stretch too rather than extrapolating months Octopus has. Older rows can't
+            // move the window's end, so one more read is enough.
+            if (readEarlier && window.start < fetchedFromMs) {
+                const until = fetchedFromMs;
+                fetchedFromMs = window.start;
+                const earlier = (await readEarlier(window.start, until)).filter(r => r[0] >= window.start && r[0] < until);
+                if (earlier.length) {
+                    rows = earlier.concat(rows);
+                    window = chooseWindow(rows, { endCapMs: installCapMs });
+                }
+            }
             if (window.realDays < 14) {
                 throw new DataError('TOO_LITTLE_DATA', `Only ${window.realDays} days of readings were found; at least 14 are needed.`, { action: 'useDemo' });
             }
@@ -1020,6 +1163,20 @@ export async function loadDataset(spec, ctx = {}) {
         progress({ step: 'usage', status: 'done', count: window.n, pct: 100 });
     }
     const { start, n } = window;
+
+    // Readings that are net of the household's own generation look like less use. Say so when
+    // the account has an export meter, or when zero runs ended the year well before the
+    // latest reading, and hand the UI a date to offer as "Existing solar: installed on".
+    let existingGeneration = null;
+    if (spec.kind === 'octopus') {
+        existingGeneration = existingGenerationHint({ exportPoint, rows, window, installed: !!spec.installedSolarDate });
+        notes.push(...existingGeneration.notes);
+        existingGeneration = existingGeneration.hint;
+    } else {
+        // CSV and manual need a region for prices: given, from the postcode, or from a map
+        // point via postcodes.io reverse geocoding (CORS *, verified 2026-10-05).
+        region = await step(progress, 'prices', () => regionFromLocation(client, spec.location, { region, fetchImpl, signal, sleep: ctx.sleep }));
+    }
 
     const basis = spec.priceBasis ?? (spec.kind === 'octopus' ? 'mine' : 'agile');
     const prices = await step(progress, 'prices', () => pricesFor(client, {
@@ -1045,7 +1202,7 @@ export async function loadDataset(spec, ctx = {}) {
     // The store keeps { postcode, lat, lon } with empty fields; fall back to the account's postcode.
     const typedPc = String(spec.location?.postcode ?? '').trim();
     const where = { ...(spec.location ?? {}), postcode: typedPc || postcode || null };
-    const loc = await step(progress, 'weather', () => resolveLocation(where, { fetch: fetchImpl, region, signal }));
+    const loc = await step(progress, 'weather', () => resolveLocation(where, { fetch: fetchImpl, region, signal, sleep: ctx.sleep }));
     notes.push(...loc.notes);
     // The newest days can lack every weather source for a while (SARAH-3 lags ~3 days, and
     // an MSG outage leaves only the model archive, which lags too). Rather than fail the
@@ -1056,6 +1213,7 @@ export async function loadDataset(spec, ctx = {}) {
         try {
             weather = await getWeather({
                 lat: loc.lat, lon: loc.lon, start, n: nw, fetch: fetchImpl, cache, signal, nowMs,
+                ...(ctx.sleep ? { sleep: ctx.sleep } : {}),
                 onProgress: e => progress({ ...(e && typeof e === 'object' ? e : { detail: String(e) }), step: 'weather', status: 'start' }),
             });
             break;
@@ -1072,7 +1230,7 @@ export async function loadDataset(spec, ctx = {}) {
 
     let climatology = null;
     try {
-        climatology = await step(progress, 'climatology', () => getClimatology({ lat: loc.lat, lon: loc.lon, fetch: fetchImpl, cache, signal }));
+        climatology = await step(progress, 'climatology', () => getClimatology({ lat: loc.lat, lon: loc.lon, fetch: fetchImpl, cache, signal, ...(ctx.sleep ? { sleep: ctx.sleep } : {}) }));
         progress({ step: 'climatology', status: 'done' });
     } catch (e) {
         if (e?.name === 'AbortError') throw e;
@@ -1088,8 +1246,10 @@ export async function loadDataset(spec, ctx = {}) {
         const ds = buildDataset({
             source, start, n: nw,
             lat: loc.lat, lon: loc.lon,
-            region, postcode: loc.postcode ?? postcode, locationSource: loc.locationSource,
+            // Centroid sunshine is not the postcode's: leave it unnamed so nothing says "for <postcode>".
+            region, postcode: loc.locationSource === 'region-centroid' ? null : loc.postcode ?? postcode, locationSource: loc.locationSource,
             consumption: rows,
+            existingGeneration,
             importExc: onGrid(prices.exc), forward, priceBasis: prices.priceBasis,
             tariffs: prices.tariffs.filter(t => t.fromMs < end).map(t => ({ ...t, toMs: Math.min(t.toMs, end) })),
             exportAgile: onGrid(exp.agile), exportPrime: onGrid(exp.prime), exportFixed: onGrid(exp.fixed),

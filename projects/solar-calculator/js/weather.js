@@ -345,17 +345,56 @@ function fillNearest(arr, maxSlots, dflt) {
 
 /* ── fetching ── */
 
+/** Attempts per Open-Meteo request for passing trouble (network, 5xx, a 200 that isn't JSON). */
+export const FETCH_ATTEMPTS = 3;
+/** Waits before the 2nd and 3rd attempt (ms). A 429 is retried once after Retry-After or 5 s. */
+const BACKOFF_MS = [1_000, 3_000];
+const RATE_LIMIT_WAIT_MS = 5_000;
+
+const abortError = (signal) => signal?.reason ?? Object.assign(new Error('Aborted'), { name: 'AbortError' });
+
+/** setTimeout that rejects with the abort reason as soon as `signal` fires. */
+function defaultSleep(ms, signal) {
+    return new Promise((resolve, reject) => {
+        if (signal?.aborted) { reject(abortError(signal)); return; }
+        const onAbort = () => { clearTimeout(t); reject(abortError(signal)); };
+        const t = setTimeout(() => { signal?.removeEventListener?.('abort', onAbort); resolve(); }, ms);
+        signal?.addEventListener?.('abort', onAbort, { once: true });
+    });
+}
+
+/** What a URL asks Open-Meteo for, in words an error box can show. */
+function describeUrl(url) {
+    const u = String(url);
+    if (u.startsWith(ARCHIVE_API)) return 'Open-Meteo’s temperature archive (ECMWF IFS)';
+    if (u.includes('daily=')) return 'Open-Meteo’s 20-year sunshine record (SARAH-3)';
+    if (u.includes(`models=${MODELS.msg}`)) return 'Open-Meteo’s satellite sunshine (MSG)';
+    return 'Open-Meteo’s satellite sunshine (SARAH-3)';
+}
+
+function retryAfterMs(res) {
+    const v = res?.headers?.get?.('retry-after');
+    if (!v) return null;
+    const s = Number(v);
+    return Number.isFinite(s) && s >= 0 ? Math.min(30_000, s * 1000) : null;
+}
+
 /**
- * Fetch and parse one Open-Meteo URL. An HTTP 200 whose body is not JSON (e.g. "Unexpected error
- * while streaming data: …") is an error, as is any `{ error: true }` body.
+ * One attempt at one Open-Meteo URL. An HTTP 200 whose body is not JSON (e.g. "Unexpected error
+ * while streaming data: …") is an error, as is any `{ error: true }` body. Messages never carry
+ * the raw body (an HTML error page means nothing to a user), only Open-Meteo's own `reason`.
+ * `transient` marks a failure worth another attempt.
  */
-async function fetchJson(url, fetchFn, signal) {
+async function fetchJsonOnce(url, fetchFn, signal) {
+    const what = describeUrl(url);
+    const fail = (code, message, { retryable, transient = false, ...extra }) =>
+        Object.assign(new WeatherDataError(code, message, { retryable, action: 'retry' }), { transient, ...extra });
     let res;
     try {
         res = await fetchFn(url, signal ? { signal } : undefined);
     } catch (e) {
         if (e?.name === 'AbortError') throw e;
-        throw new WeatherDataError('NETWORK', `Could not reach Open-Meteo: ${e?.message ?? e}`, { retryable: true, action: 'retry' });
+        throw fail('NETWORK', `Couldn't reach ${what} (${e?.message ?? e}). Check your connection and retry.`, { retryable: true, transient: true, brief: 'no connection' });
     }
     let text;
     try {
@@ -363,24 +402,56 @@ async function fetchJson(url, fetchFn, signal) {
     } catch (e) {
         // the body can fail mid-stream (connection dropped); that is a network error, not a bug
         if (e?.name === 'AbortError') throw e;
-        throw new WeatherDataError('NETWORK', `Lost the connection to Open-Meteo: ${e?.message ?? e}`, { retryable: true, action: 'retry' });
+        throw fail('NETWORK', `Lost the connection to ${what} (${e?.message ?? e}). Retry in a moment.`, { retryable: true, transient: true, brief: 'connection dropped' });
     }
     if (res.status === 429) {
-        throw new WeatherDataError('RATE_LIMIT', `Open-Meteo rate limit reached: ${text.slice(0, 160)}`, { retryable: true, action: 'retry' });
+        throw fail('RATE_LIMIT', `${what} is limiting how often it can be asked. Wait a minute and retry.`, { retryable: true, rateLimited: true, waitMs: retryAfterMs(res), brief: 'rate limited' });
     }
     let j;
     try { j = JSON.parse(text); } catch {
-        // 200 + text ("Unexpected error while streaming data…") and 5xx pages are worth a retry;
-        // a 4xx HTML page is not
-        throw new WeatherDataError(res.status >= 500 ? 'NETWORK' : 'WEATHER',
-            `Open-Meteo returned an unreadable response (HTTP ${res.status}): ${text.slice(0, 160)}`,
-            { retryable: res.status < 400 || res.status >= 500, action: 'retry' });
+        // 200 + text ("Unexpected error while streaming data…") and 5xx pages are passing server
+        // trouble, worth a retry; a 4xx HTML page is not. Neither means "not published yet"
+        // (code WEATHER), which the dataset answers by ending the period earlier.
+        const transient = res.status < 400 || res.status >= 500;
+        throw transient
+            ? fail('NETWORK', `${what} is having problems (${res.status >= 500 ? `HTTP ${res.status}` : 'an unreadable reply'}). Retry in a few minutes.`, { retryable: true, transient: true, brief: res.status >= 500 ? `HTTP ${res.status}` : 'unreadable reply' })
+            : fail('WEATHER', `${what} returned an unreadable response (HTTP ${res.status}).`, { retryable: false, brief: `HTTP ${res.status}` });
     }
     if (!res.ok || j?.error) {
-        throw new WeatherDataError(res.status >= 500 ? 'NETWORK' : 'WEATHER',
-            `Open-Meteo error (HTTP ${res.status}): ${j?.reason ?? text.slice(0, 160)}`, { retryable: res.status >= 500, action: 'retry' });
+        const reason = typeof j?.reason === 'string' && j.reason.length <= 300 ? j.reason : null;
+        throw res.status >= 500
+            ? fail('NETWORK', `${what} is having problems (HTTP ${res.status}${reason ? `: ${reason}` : ''}). Retry in a few minutes.`, { retryable: true, transient: true, brief: `HTTP ${res.status}` })
+            : fail('WEATHER', `Open-Meteo error (HTTP ${res.status})${reason ? `: ${reason}` : ''}.`, { retryable: false, brief: `HTTP ${res.status}${reason ? `: ${reason}` : ''}` });
     }
     return j;
+}
+
+/**
+ * Fetch and parse one Open-Meteo URL, riding out passing trouble the way the Octopus client
+ * does: network errors, 5xx and a 200 that isn't JSON get FETCH_ATTEMPTS tries with backoff, and
+ * a 429 one more try after a pause. Without this one 502 failed the whole load, or — on the
+ * SARAH-3 request — silently swapped the year's sunshine to MSG/IFS. Aborts propagate at once.
+ */
+async function fetchJson(url, fetchFn, signal, sleep = defaultSleep) {
+    let rateRetried = false;
+    for (let attempt = 1; ; attempt++) {
+        if (signal?.aborted) throw abortError(signal);
+        try {
+            return await fetchJsonOnce(url, fetchFn, signal);
+        } catch (e) {
+            if (e?.name === 'AbortError') throw e;
+            if (e?.rateLimited && !rateRetried) {
+                rateRetried = true;
+                await sleep(e.waitMs ?? RATE_LIMIT_WAIT_MS, signal);
+                continue;
+            }
+            if (e?.transient && attempt < FETCH_ATTEMPTS) {
+                await sleep(BACKOFF_MS[Math.min(attempt - 1, BACKOFF_MS.length - 1)], signal);
+                continue;
+            }
+            throw e;
+        }
+    }
 }
 
 /**
@@ -390,7 +461,7 @@ async function fetchJson(url, fetchFn, signal) {
  * stale copy is still better than nothing: its missing tail is filled from MSG/IFS or reported
  * by alignToSlots like any other gap.
  */
-async function cachedJson(url, endDate, { fetchFn, cache, signal, nowMs }) {
+async function cachedJson(url, endDate, { fetchFn, cache, signal, nowMs, sleep }) {
     const recent = endDate >= utcDate(nowMs - 5 * DAY_MS);
     let stale = null;
     if (cache) {
@@ -404,7 +475,7 @@ async function cachedJson(url, endDate, { fetchFn, cache, signal, nowMs }) {
     }
     let json;
     try {
-        json = await fetchJson(url, fetchFn, signal);
+        json = await fetchJson(url, fetchFn, signal, sleep);
     } catch (e) {
         if (stale && (e?.code === 'NETWORK' || e?.code === 'RATE_LIMIT')) return stale;
         throw e;
@@ -446,14 +517,15 @@ function msgRanges(sarah3, lat, lon, start, n, endDate) {
  * Fetch SARAH-3 + IFS archive, then MSG only for the days SARAH-3 is missing, and align them.
  * @param {{ lat: number, lon: number, start: number, n: number, fetch?: Function,
  *   cache?: { get(key: string): Promise<any>, set(key: string, value: any): Promise<any> }|null,
- *   onProgress?: Function|null, signal?: AbortSignal|null, nowMs?: number }} p
+ *   onProgress?: Function|null, signal?: AbortSignal|null, nowMs?: number,
+ *   sleep?: (ms: number, signal?: AbortSignal) => Promise<void> }} p  sleep: the wait between retries (tests pass a no-op)
  * @returns {Promise<WeatherSeries>}
  */
-export async function fetchWeather({ lat, lon, start, n, fetch: fetchFn = globalThis.fetch, cache = null, onProgress = null, signal = null, nowMs = Date.now() }) {
+export async function fetchWeather({ lat, lon, start, n, fetch: fetchFn = globalThis.fetch, cache = null, onProgress = null, signal = null, nowMs = Date.now(), sleep = defaultSleep }) {
     const progress = (status, detail, pct) => { try { onProgress?.({ step: 'weather', status, detail, pct }); } catch { /* UI only */ } };
     const urls = buildUrls({ lat, lon, start, n, nowMs });
     if (urls.startDate > urls.endDate) throw new WeatherDataError('WEATHER', 'The requested period starts in the future.', { action: 'retry' });
-    const opts = { fetchFn, cache, signal, nowMs };
+    const opts = { fetchFn, cache, signal, nowMs, sleep };
     progress('start', 'Satellite sunshine (SARAH-3) and temperature (ECMWF IFS)', 0);
     const [s3, ar] = await Promise.allSettled([
         cachedJson(urls.sarah3, urls.endDate, opts),
@@ -465,7 +537,7 @@ export async function fetchWeather({ lat, lon, start, n, fetch: fetchFn = global
     if (s3.status === 'fulfilled') sarah3 = s3.value;
     else {
         if (s3.reason?.name === 'AbortError') throw s3.reason;
-        notes.push(`SARAH-3 unavailable (${s3.reason?.message ?? s3.reason}); using MSG/IFS instead.`);
+        notes.push(`SARAH-3 unavailable (${s3.reason?.brief ?? s3.reason?.message ?? s3.reason}); using MSG/IFS instead.`);
     }
     progress('start', 'Filling satellite gaps (MSG)', 60);
     const ranges = msgRanges(sarah3 && onSatelliteGrid(sarah3) ? sarah3 : null, lat, lon, start, n, urls.endDate);
@@ -475,7 +547,7 @@ export async function fetchWeather({ lat, lon, start, n, fetch: fetchFn = global
             msg.push(await cachedJson(satUrl(MODELS.msg, lat, lon, from, to), to, opts));
         } catch (e) {
             if (e?.name === 'AbortError') throw e;
-            notes.push(`MSG unavailable for ${from}..${to} (${e?.message ?? e}).`);
+            notes.push(`MSG unavailable for ${from}..${to} (${e?.brief ?? e?.message ?? e}).`);
         }
     }
     const series = alignToSlots({ sarah3, msg, archive: ar.value }, lat, lon, start, n);
@@ -568,12 +640,12 @@ export function climatologyUrl({ lat, lon, fromYear = 2006, toYear = 2025 }) {
 
 /**
  * Fetch and reduce the SARAH-3 daily climatology.
- * @param {{ lat: number, lon: number, fetch?: Function, cache?: Object|null, signal?: AbortSignal|null }} p
+ * @param {{ lat: number, lon: number, fetch?: Function, cache?: Object|null, signal?: AbortSignal|null, sleep?: Function }} p
  * @returns {Promise<Climatology>}
  */
-export async function fetchClimatology({ lat, lon, fetch: fetchFn = globalThis.fetch, cache = null, signal = null }) {
+export async function fetchClimatology({ lat, lon, fetch: fetchFn = globalThis.fetch, cache = null, signal = null, sleep = defaultSleep }) {
     const url = climatologyUrl({ lat, lon });
-    const json = await cachedJson(url, '2025-12-31', { fetchFn, cache, signal, nowMs: Date.now() });
+    const json = await cachedJson(url, '2025-12-31', { fetchFn, cache, signal, nowMs: Date.now(), sleep });
     if (!onSatelliteGrid(json)) {
         throw new WeatherDataError('WEATHER', `The climatology came back off the satellite grid (${json.latitude}, ${json.longitude}).`, { retryable: true, action: 'retry' });
     }

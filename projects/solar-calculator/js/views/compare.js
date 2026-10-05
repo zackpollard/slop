@@ -169,7 +169,7 @@ a.cv-pod-name:hover { color: var(--accent-strong); text-decoration: underline; }
 .cv-strip-band { position: absolute; top: 4px; height: 6px; min-width: 2px; border-radius: 3px; background: var(--rc); opacity: .38; }
 .cv-strip-dot { position: absolute; top: 3px; width: 8px; height: 8px; margin-left: -4px; border-radius: 50%; background: var(--rc); box-shadow: 0 0 0 2px var(--surface); }
 .cv-strip-dot.is-ring { background: var(--surface); box-shadow: inset 0 0 0 2px var(--rc), 0 0 0 2px var(--surface); }
-.cv-scale { display: flex; justify-content: space-between; gap: 6px; width: 96px; margin-left: auto; margin-top: 4px; font-size: 9.5px; letter-spacing: 0; color: var(--faint); text-transform: none; }
+.cv-scale { display: flex; justify-content: space-between; gap: 6px; width: 96px; margin-left: auto; margin-top: 4px; font-size: 9.5px; letter-spacing: 0; color: var(--muted); text-transform: none; }
 .cv-neg { color: var(--bad); }
 .cv-never { color: var(--muted); }
 .cv-conf { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; font-size: 12.5px; }
@@ -226,7 +226,7 @@ tr.cv-toggle > td { padding: 8px 10px; }
 .cv-sbs thead th { border-bottom: 1px solid var(--border); vertical-align: bottom; padding-bottom: 10px; text-align: left; font-weight: 500; }
 .cv-sbs thead th:first-child { width: 210px; }
 .cv-sbs tbody th { text-align: left; font-weight: 500; color: var(--text-2); }
-.cv-sbs tbody th .cv-sbs-help { display: block; font-size: 11.5px; font-weight: 400; color: var(--faint); margin-top: 2px; }
+.cv-sbs tbody th .cv-sbs-help { display: block; font-size: 11.5px; font-weight: 400; color: var(--muted); margin-top: 2px; }
 .cv-sbs td { text-align: right; font-family: var(--font-mono); font-size: 13px; color: var(--text); font-variant-numeric: tabular-nums; }
 .cv-sbs td.is-text { text-align: left; font-family: var(--font-body); font-size: 13px; color: var(--text-2); line-height: 1.45; }
 .cv-sbs td .cv-sub { display: block; font-size: 11.5px; color: var(--muted); margin-top: 2px; white-space: normal; }
@@ -326,6 +326,8 @@ tr.cv-toggle > td { padding: 8px 10px; }
     .cv-pin.cv-edit-m { display: inline-flex; min-width: 0; }
     .cv-board .c-npv20, .cv-board .c-conf, .cv-board .c-sale { display: none !important; }
     .cv-board tbody tr.cv-row { grid-template-columns: minmax(0, 1fr) auto; }
+    /* the desktop name column's 190 px floor would push the title under the range strip */
+    .cv-board th.c-name { min-width: 0; }
     .cv-board tbody .m-primary { align-self: start; }
     .cv-board .cv-sav { flex-direction: column; align-items: flex-end; gap: 4px; }
     .cv-board .cv-strip { width: 96px; }
@@ -434,6 +436,23 @@ export function mergeSystems(auto, saved) {
 }
 
 /**
+ * Pence saved per kWh of solar made — Design's definition (design.js solarPPerKwh), so the two tabs
+ * show one number. With a battery the headline saving also holds what it earns charging in cheap
+ * half-hours (and loses on standby), which isn't the solar's doing: count the panels alone
+ * (battery.baseGbp) plus the battery's storing-solar share instead. Without the battery split
+ * (no battery, or a proxy run) it is the headline saving ÷ kWh made.
+ * @param {object|null} res ScenarioResult
+ * @returns {number|null}
+ */
+export function solarPPerKwh(res) {
+    const hl = res?.headline;
+    if (!hl || !finite(hl.pvKwh) || !(hl.pvKwh > 1)) return null;
+    const b = res.battery;
+    const gbp = b && finite(b.baseGbp) ? b.baseGbp + Math.max(0, b.split?.fromSolarGbp ?? 0) : hl.savingsGbp;
+    return finite(gbp) ? (100 * gbp) / hl.pvKwh : null;
+}
+
+/**
  * One leaderboard row from a system and its ScenarioResult (res may be null while it runs).
  * @param {{ sys: object, kind: string }} entry
  * @param {object|null} res
@@ -477,7 +496,9 @@ export function rowModel(entry, res, env = {}) {
     const up = sys.upgrade;
     r.laterGbp = (up ? sumOf(up.costs || []) : 0) + sumOf(costsLater(sys.costs));
     r.laterYear = up?.atYear ?? (sys.costs || []).find(c => Number(c?.year) > 0)?.year ?? null;
-    r.pPerKwh = finite(r.sav) && finite(r.pvKwh) && r.pvKwh > 1 ? (r.sav * 100) / r.pvKwh : null;
+    // the solar's share of the saving per kWh made (not the battery's grid charging), as in Design
+    r.pPerKwh = solarPPerKwh(res);
+    r.pPerKwhSplit = !!res?.battery && finite(res.battery.baseGbp);
     r.paybackSort = r.legal === 'reference' ? -1 : finite(r.payback) ? r.payback : Infinity;
     return r;
 }
@@ -1875,7 +1896,9 @@ export default {
                 sub: r => (r.lost > 0.5 ? sub([r.clipped > 0.5 ? `${fmt.kwh(r.clipped)} to the 800 W limit` : null, r.curtailed > 0.5 ? `${fmt.kwh(r.curtailed)} switched off` : null,
                     r.upsWasted > 0.5 ? `${fmt.kwh(r.upsWasted)} with the station full` : null].filter(Boolean).join(' · ')) : null),
                 diff: (b, a) => kwhD(b, a, 'lost') },
-            { label: 'Value per kWh made', help: 'first-year £ ÷ kWh', value: r => r.pPerKwh, better: 'high', tie: 0.05, render: r => (finite(r.pPerKwh) ? fmt.p(r.pPerKwh) : '—'),
+            { label: 'Value per kWh made', help: 'the solar’s first-year £ ÷ kWh', value: r => r.pPerKwh, better: 'high', tie: 0.05, render: r => (finite(r.pPerKwh) ? fmt.p(r.pPerKwh) : '—'),
+                // with a battery it is the solar's share (Design's figure), not the cheap-slot charging
+                sub: r => (r.pPerKwhSplit && finite(r.pPerKwh) ? sub('leaves out its grid charging') : null),
                 diff: (b, a) => (finite(b.pPerKwh) && finite(a.pPerKwh) ? sgn(b.pPerKwh - a.pPerKwh, x => fmt.p(x)) : '—') },
             { label: 'Made between 4 and 7pm', help: 'when Agile is dearest', value: r => (r.pvKwh > 0.5 ? r.peakShare : null), better: 'high', tie: 0.2,
                 render: r => (r.pvKwh > 0.5 && finite(r.peakShare) ? fmt.pct(r.peakShare) : '—'),

@@ -25,7 +25,7 @@
  *      beside the "Try a direction" panel and the named-directions table. Below 480 px the rose is
  *      replaced by a Top-10 list with the rose behind "Show rose" (CSS-driven).
  *   4. Energy vs value scatter (kWh × p/kWh, iso-£ curves) · hour-of-day generation lines
- *   5. monthly 4–7pm share bars (no sun after 4pm Nov–Feb)
+ *   5. monthly 4–7pm share bars (the months with almost no sun after 4pm come from the west-wall run)
  *
  * Click to apply: a cell (rose), a dot (energy chart) or a row (tables) becomes the pick: quick
  * proxy figures at once, a full simulation a moment later, then "Save as a scenario" (writes a
@@ -51,6 +51,7 @@ const HH = Array.from({ length: 48 }, (_, i) => `${String(i >> 1).padStart(2, '0
 const DAY = [8, 44];                     // hour-of-day chart window: 04:00–22:00 local (end exclusive)
 const PEAK = [32, 38];                   // 16:00–19:00 local
 const SWEEP_CACHE = 8;
+const DARK_PCT = 5;                      // a month is 'dark after 4pm' when a west wall makes under this % then
 
 /** The named directions the engine stars, in the order the UI lists them, with their series colour. */
 const NAMED = [
@@ -195,7 +196,7 @@ const STYLES = `
 .ov-top-btn:hover { border-color: var(--border-strong); }
 .ov-top-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .ov-top-btn[aria-pressed='true'] { border-color: var(--accent-line); background: var(--accent-dim); }
-.ov-top-rank { font-family: var(--font-mono); font-size: 11px; color: var(--faint); }
+.ov-top-rank { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
 .ov-top-dir { font-family: var(--font-mono); font-size: 13.5px; font-weight: 600; min-width: 0; }
 .ov-top-dir small { display: block; font-family: var(--font-body); font-size: 12px; font-weight: 400; color: var(--muted); }
 .ov-top-val { font-family: var(--font-mono); font-size: 14px; font-weight: 600; white-space: nowrap; }
@@ -208,7 +209,7 @@ const STYLES = `
 .ov-pick-sub b { color: var(--text-2); font-weight: 600; }
 .ov-pick-rows { margin: 12px 0 0; }
 .ov-pick-rows .ov-row dd.is-quick { color: var(--text-2); font-weight: 500; }
-.ov-pick-tag { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); }
+.ov-pick-tag { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
 .ov-pick-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .ov-pick-saved { margin-top: 12px; }
 .ov-pick-saved .icon { color: var(--good); }
@@ -351,6 +352,18 @@ export function darkMonths(share, below = 5) {
     for (const i of [10, 9]) { if (dark(i)) run.unshift(i); else break; }
     for (const i of [0, 1, 2]) { if (dark(i)) run.push(i); else break; }
     return run;
+}
+
+/**
+ * The darkMonths run as words for a sentence: 'from November to January', 'in December', or ''
+ * when no month is dark (then there's nothing to say).
+ * @param {number[]} dark month indices from darkMonths()
+ * @returns {string}
+ */
+export function darkMonthsPhrase(dark) {
+    if (!dark?.length) return '';
+    if (dark.length === 1) return `in ${MONTH_NAMES[dark[0]]}`;
+    return `from ${MONTH_NAMES[dark[0]]} to ${MONTH_NAMES[dark[dark.length - 1]]}`;
 }
 
 /** The system with the targeted panels pointed at (az, tilt) — mirrors SolarEngine._repoint. */
@@ -1295,6 +1308,17 @@ export default {
             sel.battery ? h('span', null, ' · ', h('b', null, `with ${sel.batteryNoun}`), ' in the named directions') : '');
     },
 
+    /**
+     * Months with almost no sun after 4pm, from the west-wall run's monthly 4–7pm share (the
+     * season card's rule). Empty until that full run is in: loadFlips redraws the answer after it.
+     * @returns {number[]}
+     */
+    westDarkMonths() {
+        const run = this.runs?.get('W90');
+        if (!run?.typical?.monthly) return [];
+        return darkMonths(monthlyPeakShare(run.typical.monthly, { station: !!this.sel?.station }), DARK_PCT);
+    },
+
     fillAnswer() {
         const { ui, fmt } = this.ctx;
         const h = ui.h;
@@ -1331,7 +1355,10 @@ export default {
                 } else body.push('Each of those kWh is worth about the same (', B(fmt.p(w90.pPerKwh)), ' vs ', B(fmt.p(best.pPerKwh)), '), so the lost energy is lost money: ');
                 body.push(B(fmt.gbp(w90.gbp)), ' vs ', B(fmt.gbp(best.gbp)), ' a year. ');
             }
-            body.push('There’s little or no sun after 4pm from November to February.');
+            // the dark months come from the west-wall run (as on the season card below), not a
+            // fixed Nov–Feb: on the demo year February's west wall already makes 13% then
+            const dark = this.westDarkMonths();
+            if (dark.length) body.push(`There’s little or no sun after 4pm ${darkMonthsPhrase(dark)}.`);
         } else {
             question = 'Should they face west for the 4–7pm peak?';
             title = ['Yes — for you, west pays: face them ', dir(best.az, best.tilt), best.tilt > 0 ? ` at ${best.tilt}°.` : '.'];
@@ -1794,7 +1821,7 @@ export default {
             side.push(h('p', null, 'In ', h('b', null, MONTH_NAMES[mi]), ' a west wall makes ', h('b', null, fmt.pct(west[mi], { dp: 0 })), ' of its output between 4 and 7pm; the best direction makes ', h('b', null, fmt.pct(best[mi], { dp: 0 })), '.'));
             // The dark months come from these runs (a west wall under 5% at 4–7pm), not a fixed
             // Nov–Feb: on the demo year February's west wall already makes 13% then.
-            const dark = darkMonths(west, 5);
+            const dark = darkMonths(west, DARK_PCT);
             if (dark.length) {
                 const span = dark.length === 1 ? ['In ', h('b', null, MONTH_NAMES[dark[0]])] : ['From ', h('b', null, `${MONTH_NAMES[dark[0]]} to ${MONTH_NAMES[dark[dark.length - 1]]}`)];
                 const wMax = Math.max(0, ...dark.map(i => west[i]).filter(finite));
@@ -1804,7 +1831,7 @@ export default {
                     after != null && finite(west[after]) ? ` By ${MONTH_NAMES[after]} it’s back to ${fmt.pct(west[after], { dp: 0 })}.` : ''));
             }
         } else {
-            side.push(h('p', null, 'From November to February there’s little or no sun after 4pm, whichever way the panels face.'));
+            side.push(h('p', null, 'Around midwinter there’s little or no sun after 4pm, whichever way the panels face.'));
         }
         P.monthlySide.replaceChildren(...side);
     },

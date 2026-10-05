@@ -84,6 +84,8 @@ export function stableKey(v) {
 
 const noDataset = () => Object.assign(new Error('Load your data first.'), { name: 'EngineError', code: 'NO_DATASET', action: 'useDemo' });
 const SCENARIO_MEMO_MAX = 80;
+/* After a load whose engine couldn't start (a download failed), try again after these waits. */
+export const ENGINE_RECOVERY_DELAYS_MS = [2000, 6000, 15000, 30000, 60000];
 
 /**
  * The price overrides Compare saved, as the verdict takes them: { [scenarioId]: { priceGbp, costs } }.
@@ -164,14 +166,23 @@ function connectionFor(spec) {
 
 /**
  * The shared data layer for views.
- * @param {{ engine: object, store: object, onNavigate?: (tab: string) => void }} deps
+ *
+ * A dataset can arrive without its engine (summary.engineUnavailable, with summary.engineError
+ * saying why) when part of the calculator or the product list failed to download. The hub then
+ * keeps trying in the background (ENGINE_RECOVERY_DELAYS_MS, and retryEngine() for a Retry button
+ * or the browser coming back online); when the engine starts, the summary is replaced and
+ * 'dataset' fires, so every view re-renders with the engine.
+ * @param {{ engine: object, store: object, onNavigate?: (tab: string) => void,
+ *   recoveryDelaysMs?: number[] }} deps
  * @returns {object} DataHub
  */
-export function createDataHub({ engine, store: st, onNavigate }) {
+export function createDataHub({ engine, store: st, onNavigate, recoveryDelaysMs = ENGINE_RECOVERY_DELAYS_MS }) {
     const listeners = new Map();
     const inflight = new Set();
     let status = 'empty';                // 'empty' | 'loading' | 'ready' | 'error'
     let loadJob = null;
+    let recovery = null;                 // { ds, attempt, timer } while an engine-less dataset waits for its engine
+    let retryJob = null;
     let memoInsights = null;
     let memoAuto = null;
     let memoVerdict = null;
@@ -244,6 +255,27 @@ export function createDataHub({ engine, store: st, onNavigate }) {
         memoAuto = null;
         memoVerdict = null;
         memoScenarios.clear();
+    }
+
+    function stopRecovery() {
+        if (recovery?.timer) clearTimeout(recovery.timer);
+        recovery = null;
+    }
+    /* Queue the next automatic attempt to start the engine for the dataset on hand, if it has none. */
+    function scheduleRecovery() {
+        const d = st.get().dataset;
+        if (!d?.engineUnavailable) { stopRecovery(); return; }
+        if (recovery?.ds !== d.id) { stopRecovery(); recovery = { ds: d.id, attempt: 0, timer: null }; }
+        if (recovery.timer) return;
+        const wait = recoveryDelaysMs[recovery.attempt];
+        if (!(wait >= 0)) return;   // automatic tries used up: retryEngine() (a Retry button, 'online') still works
+        const r = recovery;
+        r.timer = setTimeout(() => {
+            r.timer = null;
+            r.attempt++;
+            if (recovery !== r) return;
+            hub.retryEngine().catch(() => { if (recovery === r) scheduleRecovery(); });
+        }, wait);
     }
 
     const hub = {
@@ -372,6 +404,36 @@ export function createDataHub({ engine, store: st, onNavigate }) {
             if (['dataset', 'settings', 'scenarios'].includes(reason)) emit(reason, st.get().dataset);
         },
 
+        /**
+         * Start the engine for a dataset that arrived without it (summary.engineUnavailable). On
+         * success the summary is replaced (no engineUnavailable) and 'dataset' fires. Rejects with
+         * the engine's error (retryable) while it still can't start; resolves to the summary as is
+         * when there is nothing to recover.
+         * @returns {Promise<object>} DatasetSummary
+         */
+        async retryEngine() {
+            const d = st.get().dataset;
+            if (!d) throw noDataset();
+            if (!d.engineUnavailable) return d;
+            if (!retryJob) {
+                retryJob = (async () => {
+                    try {
+                        const summary = await engine.call('ensureEngine');
+                        // A newer load replaced the data meanwhile: it owns the store now.
+                        if (st.get().dataset !== d) return st.get().dataset;
+                        stopRecovery();
+                        st.set({ dataset: summary });
+                        setStatus('ready');
+                        hub.invalidate('dataset');
+                        return summary;
+                    } finally {
+                        retryJob = null;
+                    }
+                })();
+            }
+            return share(retryJob);
+        },
+
         /** Subscribe to 'dataset' | 'settings' | 'scenarios' | 'overrides' | 'verdict' | 'status'. Returns off(). */
         on(evt, fn) {
             if (!listeners.has(evt)) listeners.set(evt, new Set());
@@ -400,13 +462,15 @@ export function createDataHub({ engine, store: st, onNavigate }) {
                 clearMemos();
                 const pb = st.get().settings.projectBaseW;
                 lastProjectBaseW = pb;
-                if (Number.isFinite(pb) && !summary.engineUnavailable) await engine.call('setProjectBaseW', pb).catch(() => {});
+                // The worker keeps it even without an engine, and applies it when the engine starts.
+                if (Number.isFinite(pb)) await engine.call('setProjectBaseW', pb).catch(() => {});
                 // A newer load() started while we waited: it owns the store and the status now.
                 if (loadJob !== job) throw Object.assign(new Error('Cancelled'), { name: 'AbortError', code: 'CANCELLED' });
                 st.set({ dataset: summary, connection: connectionFor(spec) });
                 // Status first: views re-rendering on 'dataset' must not still see 'loading'.
                 setStatus('ready');
                 hub.invalidate('dataset');
+                scheduleRecovery();
                 if (navigate) onNavigate?.('verdict');
                 return summary;
             } catch (err) {
@@ -425,7 +489,7 @@ export function createDataHub({ engine, store: st, onNavigate }) {
         if (sig === lastSettingsKey) return;
         lastSettingsKey = sig;
         const pb = state.settings.projectBaseW;
-        if (pb !== lastProjectBaseW && state.dataset && !state.dataset.engineUnavailable) {
+        if (pb !== lastProjectBaseW && state.dataset) {
             lastProjectBaseW = pb;
             engine.call('setProjectBaseW', Number.isFinite(pb) ? pb : null).catch(() => {});
         }
@@ -457,11 +521,21 @@ export function createDataHub({ engine, store: st, onNavigate }) {
 
 /* ── shell ──────────────────────────────────────────────────────────────────── */
 
-function placeholderView(id, title, err) {
-    const missing = /fetch|import|find module|404|load/i.test(String(err?.message || err || ''));
+/**
+ * What a tab shows when its module couldn't be used.
+ *  - download: the import failed (a network problem — every view exists). Offers Try again (a fresh
+ *    import under a new URL: a failed import stays failed in the module map) and, once that has
+ *    failed too, a page reload.
+ *  - otherwise the module loaded but broke while mounting: say so, with the error.
+ * @param {string} id @param {string} title
+ * @param {any} err
+ * @param {{ download?: boolean, attempts?: number, onRetry?: () => void, reload?: () => void }} [opts]
+ */
+export function placeholderView(id, title, err, { download = false, attempts = 1, onRetry, reload = () => location.reload() } = {}) {
     let off = null;
+    const what = id === 'data' ? 'the data page' : `the ${title} tab`;
     return {
-        id, title,
+        id, title, failed: download,
         mount(el, ctx) {
             const render = () => {
                 // A connect card on screen reports its own progress and errors: never swap it out mid-load.
@@ -469,15 +543,26 @@ function placeholderView(id, title, err) {
                 if (!ctx.data.summary() && showingCard) return;
                 if (ctx.data.status() === 'loading') { el.replaceChildren(ui.card({ body: ui.skeleton({ lines: 5 }) })); return; }
                 if (!ctx.data.summary() && id !== 'method' && id !== 'data') { el.replaceChildren(ui.connectCard(ctx)); return; }
-                el.replaceChildren(ui.card({
-                    className: 'placeholder-card',
-                    body: ui.emptyState({
-                        title: missing ? `${title} is on its way` : `${title} couldn’t load`,
-                        body: missing ? 'This part of the calculator hasn’t been built yet. The other tabs work with your data.'
-                            : `Something broke while loading this view: ${err?.message || err}`,
+                let state;
+                if (download) {
+                    const again = attempts > 1;
+                    state = {
+                        title: `Couldn’t download ${what}`,
+                        body: again
+                            ? 'It failed again. Reloading the page fetches the calculator afresh — your data and settings are kept.'
+                            : 'Check your connection, then try again. The other tabs still work with your data.',
+                        action: ui.h('div', { class: 'empty-actions' },
+                            ui.button({ label: 'Try again', icon: 'refresh', kind: again ? 'default' : 'primary', onClick: () => onRetry?.() }),
+                            again ? ui.button({ label: 'Reload the page', kind: 'primary', onClick: () => reload() }) : null),
+                    };
+                } else {
+                    state = {
+                        title: `${title} couldn’t load`,
+                        body: `Something broke while showing ${what}: ${err?.message || err}`,
                         action: id === 'verdict' ? { label: 'See your data', href: '#data' } : { label: 'Back to the verdict', href: '#verdict' },
-                    }),
-                }));
+                    };
+                }
+                el.replaceChildren(ui.card({ className: 'placeholder-card', body: ui.emptyState(state) }));
             };
             render();
             off = [ctx.data.on('dataset', render), ctx.data.on('status', render)];
@@ -567,7 +652,7 @@ function boot() {
             if (location.hash === hash) route(); else location.hash = hash;
         },
         /** Replace the current history entry (for param changes that shouldn't add Back steps). */
-        replace(tab, params) { history.replaceState(null, '', buildHash(tab, params)); route(); },
+        replace(tab, params) { history.replaceState(history.state, '', buildHash(tab, params)); route(); },
         params: () => parseHash(location.hash).params,
         current: () => currentId,
     };
@@ -583,26 +668,104 @@ function boot() {
 
     const ctx = { store, engine, ui, charts, fmt: ui.fmt, router, data: hub, shell };
 
+    const importFailures = new Map();   // view id → failed imports so far (the next retry's cache-buster)
+
     async function loadView(id) {
         const meta = ROUTES.find(r => r.id === id) || { id, title: id };
+        const n = importFailures.get(id) || 0;
+        let mod;
         try {
-            const mod = await import(`./views/${id}.js`);
-            const def = mod.default;
-            if (!def || typeof def.mount !== 'function') throw new Error(`views/${id}.js has no default export with mount()`);
-            return def;
+            // A failed dynamic import stays failed in the module map for the life of the page, so a
+            // retry has to ask for a URL the map hasn't seen.
+            mod = await import(n ? `./views/${id}.js?retry=${n}` : `./views/${id}.js`);
         } catch (err) {
-            console.warn(`view ${id} unavailable:`, err?.message || err);
-            return placeholderView(id, meta.title, err);
+            console.warn(`view ${id} didn't download:`, err?.message || err);
+            importFailures.set(id, n + 1);
+            return placeholderView(id, meta.title, err, { download: true, attempts: n + 1, onRetry: () => router.go(id, router.params()) });
         }
+        const def = mod?.default;
+        if (!def || typeof def.mount !== 'function') return placeholderView(id, meta.title, new Error(`views/${id}.js has no default export with mount()`));
+        return def;
     }
 
-    async function show(id, params) {
+    /* Keep the active tab in view in the (scrollable, on phones) tab strip. Scrolls the strip itself:
+       element.scrollIntoView moved the page's sequential-focus starting point to the tab, so the
+       first Tab after a load skipped the skip link, the brand and the data chip. */
+    function revealTab(a) {
+        if (!(tabsEl.scrollWidth > tabsEl.clientWidth)) return;
+        const strip = tabsEl.getBoundingClientRect();
+        const r = a.getBoundingClientRect();
+        const left = r.left - strip.left + tabsEl.scrollLeft;
+        const right = left + r.width;
+        let to = null;
+        if (left < tabsEl.scrollLeft + 16) to = left - 16;
+        else if (right > tabsEl.scrollLeft + tabsEl.clientWidth - 16) to = right - tabsEl.clientWidth + 16;
+        if (to != null) tabsEl.scrollTo({ left: Math.max(0, to), behavior: ui.scrollBehavior() });
+    }
+
+    const focusLost = () => {
+        const a = document.activeElement;
+        return !a || a === document.body || a === document.documentElement || !!a.closest?.('[hidden]');
+    };
+    /*
+     * A view that is still filling in (Design builds its option after the first paint) can replace
+     * what the router just focused or scrolled to. For a few seconds after a navigation the router
+     * follows it: a replaced heading is focused again while focus has nowhere else to be, and a
+     * restored position is re-applied as the page grows — until the user scrolls, types or leaves.
+     */
+    let settleStop = null;
+    const SETTLE_MS = 4000;
+    function settle(el, { focus, scrollY }) {
+        settleStop?.();
+        const headingIn = () => el.querySelector('.view-title') || el.querySelector('h1, h2, .empty-title') || el;
+        const focusHeading = () => {
+            const t = headingIn();
+            if (!t.hasAttribute('tabindex')) t.setAttribute('tabindex', '-1');
+            try { t.focus({ preventScroll: true }); } catch { t.focus?.(); }
+            return t;
+        };
+        let target = focus ? focusHeading() : null;
+        let wantY = scrollY;
+        const reachY = () => { if (wantY == null) return; window.scrollTo(0, wantY); if (Math.abs(window.scrollY - wantY) <= 1) wantY = null; };
+        reachY();
+        if (!target && wantY == null) return;
+        const watchers = [];
+        const stop = () => { for (const off of watchers) off(); watchers.length = 0; if (settleStop === stop) settleStop = null; };
+        settleStop = stop;
+        const userMoved = () => { wantY = null; };
+        for (const evt of ['wheel', 'touchmove', 'keydown', 'pointerdown']) {
+            window.addEventListener(evt, userMoved, { passive: true, once: true });
+            watchers.push(() => window.removeEventListener(evt, userMoved));
+        }
+        const onChange = () => {
+            if (el.hidden) { stop(); return; }
+            if (target && !target.isConnected) {
+                if (focusLost()) target = focusHeading(); else target = null;
+            }
+            reachY();
+            if (!target && wantY == null) stop();
+        };
+        if (typeof MutationObserver !== 'undefined') {
+            const mo = new MutationObserver(onChange);
+            mo.observe(el, { childList: true, subtree: true });
+            watchers.push(() => mo.disconnect());
+        }
+        const timer = setTimeout(stop, SETTLE_MS);
+        watchers.push(() => clearTimeout(timer));
+    }
+
+    /**
+     * Show a view. opts.scrollY: where to put the page (undefined = leave it); opts.focus: move focus
+     * to the view's heading when the navigation left it nowhere (on <body>, or inside the view just
+     * hidden) — a tab-bar link keeps its focus.
+     */
+    async function show(id, params, { scrollY, focus = false } = {}) {
         const meta = ROUTES.find(r => r.id === id);
         currentId = id;
         for (const a of tabsEl.querySelectorAll('.tab')) {
             const on = a.dataset.tab === id;
             if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
-            if (on && a.scrollIntoView) a.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+            if (on) revealTab(a);
         }
         // #data has no tab: the header chip is its way in, so it carries the "you are here".
         if (id === 'data') chip?.setAttribute('aria-current', 'page'); else chip?.removeAttribute('aria-current');
@@ -615,6 +778,13 @@ function boot() {
             try { v.def?.hide?.(); } catch (err) { console.error(err); }
         }
         let v = views.get(id);
+        // A tab whose module didn't download tries again on every visit (and from its Try again button).
+        if (v?.def?.failed) {
+            try { v.def.unmount?.(); } catch (err) { console.error(err); }
+            v.el.remove();
+            views.delete(id);
+            v = null;
+        }
         if (!v) {
             const el = ui.h('section', { class: 'view', dataset: { view: id }, 'aria-label': meta?.title || id });
             el.appendChild(ui.card({ body: ui.skeleton({ lines: 5 }) }));
@@ -633,18 +803,64 @@ function boot() {
             });
         }
         v.el.hidden = false;
+        // A view kept mounted still has its height, so the saved position can be restored at once.
+        if (scrollY != null) window.scrollTo(0, scrollY);
         await v.ready;
         if (currentId !== id) return;
         try { v.def?.show?.(params); } catch (err) { console.error(`view ${id} show() failed`, err); }
+        // show() may re-render or grow the page (a first visit): settle focus and position on it.
+        settle(v.el, { focus: focus && focusLost(), scrollY });
     }
 
+    /*
+     * Scroll positions belong to history entries. Every entry the router sees gets a key in
+     * history.state; the position is recorded against the entry being left. Coming back to an
+     * entry (Back/Forward — popstate can't tell those from a link click, a key can) restores where
+     * the user was; a new entry for another tab starts at the top. The browser's own restoration is
+     * off: it ran before the router swapped views, so it was capped by the old view's height and
+     * then overwritten.
+     */
+    try { if ('scrollRestoration' in history) history.scrollRestoration = 'manual'; } catch { /* read-only in odd embeds */ }
+    const positions = new Map();   // entry key → scrollY when the user left that entry
+    let currentKey = null;
+    let entrySeq = 0;
+    let lastRouted = null;         // the hash route() last handled
+    let booting = true;
+    const entryKey = () => {
+        let k = history.state?.scKey;
+        if (!k) {
+            k = `e${Date.now().toString(36)}${++entrySeq}`;
+            try { history.replaceState({ ...(history.state || {}), scKey: k }, ''); } catch { /* state not writable: no restoring */ }
+        }
+        return k;
+    };
+
+    /**
+     * Route the current hash. An anchor that isn't a route (the skip link's #main, when its click
+     * handler didn't run) only moves focus — the view, its params and the URL stay as they were.
+     */
     function route() {
+        settleStop?.();
+        const raw = String(location.hash || '').replace(/^#\/?/, '');
         const { tab, params, known } = parseHash(location.hash);
-        if (!known && location.hash && location.hash !== '#') history.replaceState(null, '', buildHash(tab, params));
+        if (!known && raw) {
+            const anchor = document.getElementById(raw.split('?')[0]);
+            if (anchor && lastRouted != null) {
+                history.replaceState(history.state, '', lastRouted);
+                try { anchor.focus(); } catch { /* not focusable */ }
+                return;
+            }
+        }
+        if (!known && location.hash && location.hash !== '#') history.replaceState(history.state, '', buildHash(tab, params));
+        lastRouted = location.hash;
+        if (currentKey) positions.set(currentKey, window.scrollY);
+        const key = entryKey();
+        const returning = key !== currentKey && positions.has(key);
+        currentKey = key;
         const tabChanged = tab !== lastTab;
         lastTab = tab;
-        show(tab, params);
-        if (tabChanged) window.scrollTo({ top: 0 });
+        const scrollY = returning ? positions.get(key) : tabChanged ? 0 : undefined;
+        show(tab, params, { scrollY, focus: !booting });
     }
 
     const paintChip = () => chipContent(chip, store.get().dataset, hub.status());
@@ -675,6 +891,22 @@ function boot() {
     try { window.matchMedia?.('print').addEventListener?.('change', e => (e.matches ? enterPrint() : leavePrint())); } catch { /* old Safari: before/afterprint only */ }
 
     window.addEventListener('hashchange', route);
+    // A navigation to the URL already showing can replace its history entry without a hashchange,
+    // and may clear its state: keep the entry's scroll key so Back to it still restores.
+    window.addEventListener('popstate', () => {
+        if (history.state?.scKey || !currentKey || location.hash !== lastRouted) return;
+        try { history.replaceState({ ...(history.state || {}), scKey: currentKey }, ''); } catch { /* not writable */ }
+    });
+    // The skip link is an in-page jump, not a route: it must not change the view, its params or
+    // the URL (a #main hash used to fall back to the Verdict from every other tab).
+    document.querySelector('.skip-link')?.addEventListener('click', e => {
+        const main = document.getElementById('main');
+        if (!main) return;
+        e.preventDefault();
+        main.focus();
+    });
+    // A dataset whose engine couldn't start (a download failed) recovers as soon as the network is back.
+    window.addEventListener('online', () => { if (store.get().dataset?.engineUnavailable) hub.retryEngine().catch(() => {}); });
     if (!location.hash) history.replaceState(null, '', buildHash(store.get().ui.tab || 'verdict'));
     route();
 
@@ -693,6 +925,9 @@ function boot() {
         // again — the Data view's CSV form says why ("Last time you used a CSV file…").
         router.replace('data', { mode: 'csv' });
     }
+    // From here on, a navigation that leaves focus nowhere moves it to the new view's heading
+    // (the first route leaves it alone, so the first Tab still reaches the skip link).
+    booting = false;
 
     store.set({ ui: { tab: store.get().ui.tab } });
     if (!store.persistOk()) ui.toast('This browser won’t let the calculator save settings — they’ll reset when you close the tab.', { tone: 'warn', timeoutMs: 7000 });

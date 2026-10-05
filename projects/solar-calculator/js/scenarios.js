@@ -13,7 +13,7 @@
 
 import { normalizeSystem } from './system.js';
 import { findProduct, pluginKits, kitToSystem, stationToSystem, bundleToSystem, mountingForSpot } from './kits.js';
-import { orientationGrid, bestBy } from './sweep.js';
+import { orientationGrid, bestBy, runSteps } from './sweep.js';
 
 /**
  * @typedef {{ id: string, name: string, kind: 'ground'|'flatroof'|'wall'|'railing'|'pitched', azimuth: number|null,
@@ -98,10 +98,21 @@ function pointed(spot, az, tilt) {
 }
 
 /**
- * Rank the spots for a system template: free spots swept, fixed spots evaluated once.
- * @returns {Array<{ spot: MountSpot, az: number, tilt: number, gbp: number }>} best first
+ * engine.placementCells as steps (the engine's step form when it has one, so a cooperative run
+ * can pause inside a placement sweep).
  */
-function rankSpots(engine, template, spots, memo, { plugin = true } = {}) {
+function* placementCells(engine, sys, grid) {
+    if (typeof engine._placementSteps === 'function') return yield* engine._placementSteps(sys, grid);
+    const cells = engine.placementCells(sys, grid);
+    yield;
+    return cells;
+}
+
+/**
+ * Rank the spots for a system template: free spots swept, fixed spots evaluated once (steps).
+ * @returns {Generator<undefined, Array<{ spot: MountSpot, az: number, tilt: number, gbp: number }>>} best first
+ */
+function* rankSpots(engine, template, spots, memo, { plugin = true } = {}) {
     // plug-in kits may not use a pitched roof, so they rank a different set of spots
     const key = `${bucketOf(template)}|${plugin}`;
     if (memo.has(key)) return memo.get(key);
@@ -116,7 +127,7 @@ function rankSpots(engine, template, spots, memo, { plugin = true } = {}) {
         else grid = orientationGrid({ azMin: 90, azMax: 270, azStep: 10, tiltMin: Math.max(5, spot.tiltRange[0]), tiltMax: spot.tiltRange[1], tiltStep: 5, includeFlat: spot.tiltRange[0] <= 0 });
         if (spot.tilt !== null && spot.azimuth === null) grid = grid.filter((c) => c.tilt === spot.tilt);
         if (!grid.length) grid = [{ az: spot.azimuth ?? 180, tilt: spot.tilt ?? spot.tiltRange[0] }];
-        const best = bestBy(engine.placementCells(t, grid), 'gbp');
+        const best = bestBy(yield* placementCells(engine, t, grid), 'gbp');
         ranked.push({ spot, az: best.az, tilt: best.tilt, gbp: best.gbp });
     }
     ranked.sort((a, b) => b.gbp - a.gbp);
@@ -136,7 +147,16 @@ function bestFit(ranked, panels, skip = null) {
  * @param {{ spots?: Array<Partial<MountSpot>> }} [opts]
  * @returns {Object[]} System[] — featured first (S, H, U, C, W, R), then the leaderboard rows
  */
-export function autoScenarios(engine, catalog, { spots = DEFAULT_SPOTS } = {}) {
+export function autoScenarios(engine, catalog, opts = {}) {
+    return runSteps(autoScenariosSteps(engine, catalog, opts));
+}
+
+/**
+ * autoScenarios as a step generator: it yields inside every placement sweep (sweep.runStepsAsync
+ * pauses it there) and returns the System[].
+ * @returns {Generator<undefined, Object[]>}
+ */
+export function* autoScenariosSteps(engine, catalog, { spots = DEFAULT_SPOTS } = {}) {
     const sp = (Array.isArray(spots) && spots.length ? spots : DEFAULT_SPOTS).map(normalizeSpot);
     const source = engine.ds0?.meta?.source ?? 'octopus';
     const out = [];
@@ -160,14 +180,14 @@ export function autoScenarios(engine, catalog, { spots = DEFAULT_SPOTS } = {}) {
     const size = (k) => k.includedPanels.count * k.includedPanels.wp;
     const nearestKit = (wp, list = kits) => list.slice().sort((a, b) => Math.abs(size(a) - wp) - Math.abs(size(b) - wp))[0] ?? null;
 
-    /** A kit placed on its best spot. */
-    const placeKit = (kit, opts = {}) => {
+    /** A kit placed on its best spot (steps). */
+    function* placeKit(kit, opts = {}) {
         const template = kitToSystem(kit, { catalog, dsSource: source, exportKind: opts.exportKind });
-        const ranked = rankSpots(engine, template, sp, memo, { plugin: template.route === 'plugin' });
+        const ranked = yield* rankSpots(engine, template, sp, memo, { plugin: template.route === 'plugin' });
         const at = opts.spotRank ?? bestFit(ranked, panelsOf(template));
         const spot = at ? pointed(at.spot, at.az, at.tilt) : null;
         return { sys: kitToSystem(kit, { catalog, dsSource: source, spot, ...opts }), at, ranked };
-    };
+    }
     const withNote = (sys, note) => (note ? { ...sys, notes: [...sys.notes, note] } : sys);
 
     // ── S01–S06: plug-in kits
@@ -175,7 +195,7 @@ export function autoScenarios(engine, catalog, { spots = DEFAULT_SPOTS } = {}) {
     let s01 = null;
     let s01At = null;
     if (o2.product) {
-        const r = placeKit(o2.product, { id: 'S01', name: o2.product.name });
+        const r = yield* placeKit(o2.product, { id: 'S01', name: o2.product.name });
         s01 = add(withNote(r.sys, o2.note), { featured: true });
         s01At = r;
         if ((o2.product.mppts ?? 1) >= 2 && s01.arrays.length >= 2) {
@@ -189,17 +209,17 @@ export function autoScenarios(engine, catalog, { spots = DEFAULT_SPOTS } = {}) {
             { featured: true });
     }
     const o1 = pick(IDS.oct1, () => nearestKit(460, kits.filter((k) => k.octopus)) ?? nearestKit(460));
-    if (o1.product) add(withNote(placeKit(o1.product, { id: 'S04', name: o1.product.name }).sys, o1.note), { featured: true });
+    if (o1.product) add(withNote((yield* placeKit(o1.product, { id: 'S04', name: o1.product.name })).sys, o1.note), { featured: true });
     const c2 = pick(IDS.cp2, () => nearestKit(1030, kits.filter((k) => k.singleInput)));
-    if (c2.product) add(withNote(placeKit(c2.product, { id: 'S05', name: c2.product.name }).sys, c2.note), { featured: true });
+    if (c2.product) add(withNote((yield* placeKit(c2.product, { id: 'S05', name: c2.product.name })).sys, c2.note), { featured: true });
     const c1 = pick(IDS.cp1, () => nearestKit(465, kits.filter((k) => k.singleInput)));
-    if (c1.product) add(withNote(placeKit(c1.product, { id: 'S06', name: c1.product.name }).sys, c1.note), { featured: true });
+    if (c1.product) add(withNote((yield* placeKit(c1.product, { id: 'S06', name: c1.product.name })).sys, c1.note), { featured: true });
 
     // ── H1–H4: electrician-installed batteries
     const h1 = pick(IDS.h1, () => (catalog.bundles ?? [])[0] ?? null);
     if (h1.product) {
         const template = bundleToSystem(h1.product, { catalog, id: 'H1' });
-        const at = bestFit(rankSpots(engine, template, sp, memo, { plugin: false }), panelsOf(template));
+        const at = bestFit(yield* rankSpots(engine, template, sp, memo, { plugin: false }), panelsOf(template));
         add(withNote(bundleToSystem(h1.product, { catalog, id: 'H1', name: `${h1.product.name} (electrician)`, spot: at ? pointed(at.spot, at.az, at.tilt) : null }), h1.note),
             { featured: true });
     }
@@ -209,7 +229,7 @@ export function autoScenarios(engine, catalog, { spots = DEFAULT_SPOTS } = {}) {
         const p = pick(id, () => (catalog.kits ?? []).find((k) => k.kind === 'battery-inverter' && k.onSale && k.inputs.length >= 2) ?? null);
         if (!p.product) continue;
         const template = kitToSystem(p.product, { catalog, panels: loose, id: sid });
-        const at = bestFit(rankSpots(engine, template, sp, memo, { plugin: false }), 4);
+        const at = bestFit(yield* rankSpots(engine, template, sp, memo, { plugin: false }), 4);
         const sys = kitToSystem(p.product, { catalog, panels: loose, id: sid, name: `${p.product.name} + 4×${loose.wp} W`, spot: at ? pointed(at.spot, at.az, at.tilt) : null });
         add(withNote({ ...sys, notes: [...sys.notes, extraNote] }, p.note), { featured: true });
     }
@@ -233,9 +253,9 @@ export function autoScenarios(engine, catalog, { spots = DEFAULT_SPOTS } = {}) {
     let bestKit = null;
     let bestKitScore = -Infinity;
     for (const k of kits) {
-        const r = placeKit(k);
+        const r = yield* placeKit(k);
         // the bucket's sweep chose the direction; value THIS kit there (one proxy cell)
-        const gbp = r.at ? engine.placementCells(r.sys, [{ az: r.at.az, tilt: r.at.tilt }])[0].gbp : 0;
+        const gbp = r.at ? (yield* placementCells(engine, r.sys, [{ az: r.at.az, tilt: r.at.tilt }]))[0].gbp : 0;
         const score = 10 * gbp - (k.priceGbp ?? 0);
         if (score > bestKitScore) { bestKitScore = score; bestKit = r; }
     }
@@ -289,13 +309,13 @@ export function autoScenarios(engine, catalog, { spots = DEFAULT_SPOTS } = {}) {
     for (const id of IDS.leaderKits) {
         const k = findProduct(catalog, id);
         if (!k || !k.includedPanels) continue;
-        add(placeKit(k, { id: `L-${id}`, name: k.name }).sys, { featured: false });
+        add((yield* placeKit(k, { id: `L-${id}`, name: k.name })).sys, { featured: false });
     }
     for (const id of IDS.leaderBundles) {
         const b = findProduct(catalog, id);
         if (!b) continue;
         const template = bundleToSystem(b, { catalog, id: `L-${id}` });
-        const at = bestFit(rankSpots(engine, template, sp, memo, { plugin: false }), panelsOf(template));
+        const at = bestFit(yield* rankSpots(engine, template, sp, memo, { plugin: false }), panelsOf(template));
         add(bundleToSystem(b, { catalog, id: `L-${id}`, name: `${b.name} (electrician)`, spot: at ? pointed(at.spot, at.az, at.tilt) : null }), { featured: false });
     }
     for (const st of catalog.stations ?? []) {

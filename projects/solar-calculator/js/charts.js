@@ -26,6 +26,7 @@ const ROUTE_KEYS = new Set(['plugin', 'hardwired', 'ups', 'whatif', 'reference']
 const ROUTE_LABELS = { plugin: 'Plug-in', hardwired: 'Electrician-installed', ups: 'Power station', whatif: 'Future rules', reference: 'Reference' };
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+const LABEL_ROW_H = 18;   // a horizontal bar's name on its own line above the bar (narrow screens)
 const MONO = (size, weight = 500) => `${weight} ${size}px "JetBrains Mono", ui-monospace, monospace`;
 const SANS = (size, weight = 500) => `${weight} ${size}px Inter, system-ui, sans-serif`;
 const finite = v => typeof v === 'number' && Number.isFinite(v);
@@ -242,35 +243,46 @@ function barPath(ctx, x0, y0, x1, y1, r, end /* 'top'|'bottom'|'right'|'left'|nu
 
 /**
  * Lay out labels that sit in the strip above a plot (band names, marker names). Each label is
- * centred on its x, kept inside [2, w−2], and put in row 0 (nearest the plot) or, if that would
- * overlap a label already there, row 1. Markers are placed before bands (a band's name is also in
- * the legend; a marker's isn't); a label that fits in neither row is dropped rather than overprinted.
+ * centred on its x, kept inside the chart, and put in row 0 (nearest the plot) or, if that would
+ * overlap a label already there, row 1. Row 0 sits level with the top y-tick label, so it starts no
+ * further left than the plot (`plotLeft`): on a phone "pays back · 2.7 yrs" used to print over
+ * "£4,000". Markers are placed before bands (a band's name is also in the legend; a marker's isn't);
+ * a label that fits in neither row is dropped rather than overprinted, and returned in `dropped` so
+ * the chart can still name it.
  * @param {Array<{ text: string, x: number, kind: 'marker'|'band' }>} labels
  * @param {(text: string) => number} widthOf text width in px
  * @param {number} w chart width
  * @param {number} [yLabelW] width of the y-axis title at the top-left, which shares row 1's height
- * @returns {{ rows: number, placed: Array<{ text: string, kind: string, row: number, x0: number, x1: number }> }}
+ * @param {number} [plotLeft] the plot's left edge (the y-tick labels sit left of it, level with row 0)
+ * @returns {{ rows: number, placed: Array<{ text: string, kind: string, row: number, x0: number, x1: number }>,
+ *   dropped: Array<{ text: string, x: number, kind: string }> }}
  */
-export function layoutTopLabels(labels, widthOf, w, yLabelW = 0) {
+export function layoutTopLabels(labels, widthOf, w, yLabelW = 0, plotLeft = 0) {
     const GAP = 8;
     const taken = [[], yLabelW > 0 ? [[0, yLabelW]] : []];
+    const minX = [Math.max(2, plotLeft), 2];
     const placed = [];
+    const dropped = [];
     const order = [...labels].sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'marker' ? -1 : 1));
     for (const l of order) {
         const tw = widthOf(l.text);
-        const x0 = clamp(l.x - tw / 2, 2, Math.max(2, w - 2 - tw));
-        const x1 = x0 + tw;
-        const row = [0, 1].find(r => !taken[r].some(([a, b]) => x0 < b + GAP && x1 > a - GAP));
-        if (row === undefined) continue;
-        taken[row].push([x0, x1]);
-        placed.push({ text: l.text, kind: l.kind, row, x0, x1 });
+        let spot = null;
+        for (const row of [0, 1]) {
+            if (row === 0 && tw > w - 2 - minX[0]) continue;   // no room right of the ticks: try the row above
+            const x0 = clamp(l.x - tw / 2, minX[row], Math.max(minX[row], w - 2 - tw));
+            const x1 = x0 + tw;
+            if (!taken[row].some(([a, b]) => x0 < b + GAP && x1 > a - GAP)) { spot = { row, x0, x1 }; break; }
+        }
+        if (!spot) { dropped.push(l); continue; }
+        taken[spot.row].push([spot.x0, spot.x1]);
+        placed.push({ text: l.text, kind: l.kind, ...spot });
     }
-    return { rows: placed.length ? 1 + Math.max(...placed.map(p => p.row)) : 0, placed };
+    return { rows: placed.length ? 1 + Math.max(...placed.map(p => p.row)) : 0, placed, dropped };
 }
 
-function placeTopLabels(ctx, labels, w, yLabelW) {
+function placeTopLabels(ctx, labels, w, yLabelW, plotLeft) {
     ctx.font = MONO(10, 500);
-    return layoutTopLabels(labels, text => ctx.measureText(text).width, w, yLabelW);
+    return layoutTopLabels(labels, text => ctx.measureText(text).width, w, yLabelW, plotLeft);
 }
 
 function haloText(ctx, text, x, y, fill, halo) {
@@ -318,12 +330,37 @@ class Chart {
             const p = this.local(e);
             this.setHover(this.hitTest(p.x, p.y), false);
         };
+        this.lastPointer = 'mouse';
+        this.armed = null;   // touch: the point a first tap opened; a second tap on it picks
+        this.onDown = e => { this.lastPointer = e.pointerType || 'mouse'; this.onMove(e); };
         this.onLeave = e => { if (e.pointerType !== 'touch') this.setHover(null, false); };
-        this.onClick = e => { const p = this.local(e); const hit = this.hitTest(p.x, p.y); if (hit != null) this.pick(hit); };
+        /*
+         * A phone has no hover, so a tap is how a tooltip is read: the first tap on a point only
+         * shows it (and says a second tap picks it); a second tap on the same point picks. A mouse
+         * click and the keyboard's Enter pick at once. (One tap on the Verdict's scatter used to
+         * flash the tooltip and leave for Design in the same gesture.)
+         */
+        this.onClick = e => {
+            const p = this.local(e);
+            const hit = this.hitTest(p.x, p.y);
+            const touch = (e.pointerType || this.lastPointer) === 'touch';
+            if (hit == null) { if (touch) { this.armed = null; this.setHover(null, false); } return; }
+            if (touch && this.spec.onPick) {
+                const k = JSON.stringify(hit);
+                if (this.armed !== k) {
+                    this.armed = k;
+                    this.setHover(hit, false);
+                    this.placeTip();
+                    return;
+                }
+            }
+            this.armed = null;
+            this.pick(hit);
+        };
         this.onKey = e => this.key(e);
-        this.onBlur = () => this.setHover(null, false);
+        this.onBlur = () => { this.armed = null; this.setHover(null, false); };
         this.canvas.addEventListener('pointermove', this.onMove);
-        this.canvas.addEventListener('pointerdown', this.onMove);
+        this.canvas.addEventListener('pointerdown', this.onDown);
         this.canvas.addEventListener('pointerleave', this.onLeave);
         this.canvas.addEventListener('click', this.onClick);
         this.canvas.addEventListener('keydown', this.onKey);
@@ -332,7 +369,9 @@ class Chart {
         this.ro?.observe(this.plot);
         document.fonts?.ready?.then(() => this.schedule());
         live.add(this);
-        this.printing = printingNow && (this.spec.printTable ?? this.printTableDefault());
+        this.printing = printingNow && this.printsTable();
+        this.footExtra = null;
+        this.footNext = null;
         this.chrome();
         this.render();
         if (this.showTable) this.setTable(true);
@@ -373,12 +412,24 @@ class Chart {
      * a 37-column sweep) are opted out by default — they would run to pages.
      */
     setPrint(on) {
-        this.printing = !!on && (this.spec.printTable ?? this.printTableDefault());
+        this.printing = !!on && this.printsTable();
         if (this.printing && !this.showTable) this.buildTable();
         else if (!this.printing && !this.showTable) this.tableHost.replaceChildren();
         this.render();
     }
     printTableDefault() { return true; }
+    /* Whether the table twin goes on paper. One opted out stays off paper even when opened on screen
+       (the figure's no-print-table class): a 309-row sweep left open added 15 pages to a print. */
+    printsTable() { return this.spec.printTable ?? this.printTableDefault(); }
+
+    /* Text the chart adds under itself (e.g. markers whose names found no room); set while drawing. */
+    setFootExtra(text) { this.footNext = text || null; }
+    renderFoot() {
+        const s = this.spec;
+        const extra = this.footExtra ? h('span', { class: 'chart-foot-extra' }, this.footExtra) : null;
+        this.foot.replaceChildren(...[s.note || null, s.note && extra ? ' ' : null, extra].filter(x => x != null && x !== ''));
+        this.foot.hidden = !s.note && !extra;
+    }
 
     /* plumbing */
     schedule() {
@@ -448,11 +499,13 @@ class Chart {
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, w, H);
         ctx.textBaseline = 'alphabetic';
+        this.footNext = null;
         try {
             this.draw(ctx, w, H);
         } catch (err) {
             console.error(`${this.kind} chart failed to draw`, err);
         }
+        if (this.footNext !== this.footExtra) { this.footExtra = this.footNext; this.renderFoot(); }
         this.placeTip();
     }
 
@@ -474,8 +527,8 @@ class Chart {
         const title = s.title ? h('div', { class: 'chart-title' }, s.title) : null;
         // Tools float right so the title and legend flow around them instead of being squeezed into a column.
         this.head.replaceChildren(...[h('div', { class: 'chart-tools' }, this.toggleBtn), title, legend].filter(Boolean));
-        this.foot.replaceChildren(s.note ? s.note : '');
-        this.foot.hidden = !s.note;
+        this.renderFoot();
+        this.fig.classList.toggle('no-print-table', !this.printsTable());
         const label = s.ariaLabel || s.title || `${this.kind} chart`;
         this.canvas.setAttribute('aria-label', `${label}. Use the arrow keys to read values; press T for a table.`);
     }
@@ -526,10 +579,12 @@ class Chart {
             r.color ? keyEl(r.kind || 'line', r.color) : h('span'),
             h('span', { class: 'tip-val' }, r.value),
             h('span', { class: 'tip-lab' }, r.label ?? '')));
+        const armed = this.armed != null && this.armed === JSON.stringify(hv);
         this.tip.replaceChildren(
             data.title ? h('div', { class: 'tip-title' }, data.title) : '',
             ...rows,
-            data.note ? h('div', { class: 'tip-note' }, data.note) : '');
+            data.note ? h('div', { class: 'tip-note' }, data.note) : '',
+            armed ? h('div', { class: 'tip-note tip-tap' }, this.spec.touchPickHint || 'Tap again to choose it') : '');
         this.tip.classList.add('show');
         const tw = this.tip.offsetWidth, th = this.tip.offsetHeight;
         const ax = data.x ?? 0, ay = data.y ?? 0;
@@ -684,7 +739,11 @@ class XYChart extends Chart {
         const topLabels = placeTopLabels(ctx, [
             ...markerXs.filter(o => o.m.label).map(o => ({ text: o.m.label, x: o.px, kind: 'marker' })),
             ...bandSpans.filter(o => o.b.label).map(o => ({ text: o.b.label, x: (o.x0 + o.x1) / 2, kind: 'band' })),
-        ], w, s.y?.label ? (ctx.font = MONO(10.5), ctx.measureText(s.y.label).width + 10) : 0);
+        ], w, s.y?.label ? (ctx.font = MONO(10.5), ctx.measureText(s.y.label).width + 10) : 0, left);
+        // A marker whose name found no room above the plot is still named, under the chart
+        // (four pinned paybacks on a phone left two dashed lines nobody could tell apart).
+        const unlabelled = topLabels.dropped.filter(l => l.kind === 'marker').sort((a, b) => a.x - b.x).map(l => l.text);
+        this.setFootExtra(unlabelled.length ? `Also marked: ${unlabelled.join('; ')}.` : null);
         const top = 8 + Math.max(yLabelH, topLabels.rows * 14);
         const y = v => bottom - ((v - yScale.min) / (yScale.max - yScale.min || 1)) * (bottom - top);
         this.geo = { left, right, top, bottom, xpos, n, X, bw };
@@ -1083,8 +1142,30 @@ class BarChart extends Chart {
     }
     defaultHeight(w) {
         const s = this.spec;
-        if (s.horizontal) return Math.max(120, (s.categories?.length || 0) * (s.stacked || (s.series || []).length < 2 ? 30 : 16 * (s.series || []).length + 14) + 40);
+        if (s.horizontal) {
+            const per = s.stacked || (s.series || []).length < 2 ? 30 : 16 * (s.series || []).length + 14;
+            return Math.max(120, (s.categories?.length || 0) * (per + (this.labelsAbove(w) ? LABEL_ROW_H : 0)) + 40);
+        }
         return w < 600 ? 220 : 250;
+    }
+    catLabels() {
+        const s = this.spec;
+        return (s.categories || []).map((c, i) => (s.x?.format ? s.x.format(c, i) : String(c)));
+    }
+    /*
+     * Horizontal bars on a narrow canvas: when a category name wouldn't fit the label column (40% of
+     * the width), each name gets its own line above its bar instead of being cut to "Agile-aware (re…"
+     * — on the Verdict those names are the answer. spec.labelsAbove: true/false forces it.
+     */
+    labelsAbove(w) {
+        const s = this.spec;
+        if (!s.horizontal) return false;
+        if (typeof s.labelsAbove === 'boolean') return s.labelsAbove;
+        if (!(w < 480)) return false;
+        const ctx = this.canvas.getContext?.('2d');
+        if (!ctx) return false;
+        ctx.font = SANS(12.5);
+        return this.catLabels().some(l => ctx.measureText(l).width + 12 > w * 0.4);
     }
     val(se, i) { return valueLookup(se.values)(i); }
     clampHover(hv) {
@@ -1209,10 +1290,13 @@ class BarChart extends Chart {
     }
     drawH(ctx, w, H, cats, series, cols, sc0, userFmt, catLabel) {
         const s = this.spec, t = this.t;
-        ctx.font = SANS(12.5);
         const labels = cats.map(catLabel);
-        const labW = Math.min(w * 0.4, Math.max(...labels.map(l => ctx.measureText(l).width)) + 12);
-        const left = labW + 8;
+        // names above the bars only when each row still has room for its bar under the name
+        const above = this.labelsAbove(w) && (H - 26) / Math.max(1, cats.length) - LABEL_ROW_H >= 12;
+        const labH = above ? LABEL_ROW_H : 0;
+        ctx.font = SANS(12.5);
+        const labW = above ? 0 : Math.min(w * 0.4, Math.max(...labels.map(l => ctx.measureText(l).width)) + 12);
+        const left = above ? 8 : labW + 8;
         const showVals = s.labels !== false && (s.stacked || series.length === 1);
         ctx.font = MONO(11);
         const fv = userFmt || autoFormat(sc0.step);
@@ -1235,7 +1319,7 @@ class BarChart extends Chart {
         const x = v => left + ((v - sc.min) / (sc.max - sc.min || 1)) * (right - left);
         const k = s.stacked ? 1 : series.length;
         const gap = 2;
-        const barH = Math.max(2, Math.min(24, (bh * 0.7 - (k - 1) * gap) / k));
+        const barH = Math.max(2, Math.min(24, ((bh - labH) * 0.7 - (k - 1) * gap) / k));
         const groupH = k * barH + (k - 1) * gap;
         this.geo = { left, right, top, bottom, bh, n, horizontal: true };
 
@@ -1251,11 +1335,21 @@ class BarChart extends Chart {
             ctx.fillStyle = t.text; ctx.fillText(f(v), clamp(px, half + 2, w - half - 2), H - 6);
         });
         for (let i = 0; i < n; i++) {
-            const cy = top + (i + 0.5) * bh;
-            ctx.font = SANS(12.5); ctx.fillStyle = t.strong; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+            const rowTop = top + i * bh;
+            const cy = rowTop + labH + (bh - labH) / 2;
+            ctx.font = SANS(12.5);
             let lab = labels[i];
-            while (lab.length > 4 && ctx.measureText(lab).width > labW - 6) lab = `${lab.slice(0, -2)}…`;
-            ctx.fillText(lab, labW, cy);
+            if (above) {
+                // the name on its own line, full width, haloed over the gridlines
+                while (lab.length > 4 && ctx.measureText(lab).width > w - 16) lab = `${lab.slice(0, -2)}…`;
+                ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+                haloText(ctx, lab, left, rowTop + 13, t.strong, t.surface);
+                ctx.textBaseline = 'middle';
+            } else {
+                ctx.fillStyle = t.strong; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+                while (lab.length > 4 && ctx.measureText(lab).width > labW - 6) lab = `${lab.slice(0, -2)}…`;
+                ctx.fillText(lab, labW, cy);
+            }
             const segs = this.segments(series, i);
             const lastPos = [...segs].reverse().find(sg => sg.v > 0);
             const lastNeg = [...segs].reverse().find(sg => sg.v < 0);
@@ -1278,7 +1372,7 @@ class BarChart extends Chart {
             }
             ctx.textBaseline = 'alphabetic';
         }
-        this.tipAnchor = this.hover != null ? { x: Math.min(right, left + 40), y: top + (this.hover + 0.5) * bh } : null;
+        this.tipAnchor = this.hover != null ? { x: Math.min(right, left + 40), y: top + this.hover * bh + labH + (bh - labH) / 2 } : null;
     }
     hitTest(x, y) {
         const g = this.geo;
@@ -1977,17 +2071,27 @@ class ScatterChart extends Chart {
         // selective labels: emphasised points (and any with label + showLabel). They avoid each other
         // and the payback-line labels already drawn (a long name used to cover "pays back in 3 yrs").
         const placed = isoPlaced.map(([bx, ly, bx1]) => [bx - 2, ly - 11, bx1 + 2, ly + 3]);
+        // The named points themselves (an emphasised one with its ring) are obstacles too, so a label
+        // never sits on another named point ("S 35°" used to cover the "Best £" ring); each label
+        // only ignores its own point.
+        const named = order.filter(({ p }) => (p.emphasis || p.showLabel) && p.label);
+        const dots = new Map(named.map(({ p }) => {
+            const r = (p.emphasis ? 6 + 3.5 : p.route === 'reference' ? 3.5 : 4.5) + 1;
+            const px = X(p.x), py = Y(p.y);
+            return [p, [px - r, py - r, px + r, py + r]];
+        }));
         ctx.font = SANS(11.5, 600);
         for (const { p } of [...order].reverse()) {
             if (!(p.emphasis || p.showLabel) || !p.label) continue;
             const px = X(p.x), py = Y(p.y);
             const tw = ctx.measureText(p.label).width;
+            const others = [...dots].filter(([q]) => q !== p).map(([, b]) => b);
             const cands = [[px + 11, py + 4, 'left'], [px - 11, py + 4, 'right'], [px, py - 12, 'center'], [px, py + 19, 'center']];
             for (const [lx, ly, al] of cands) {
                 const bx = al === 'left' ? lx : al === 'right' ? lx - tw : lx - tw / 2;
                 const box = [bx - 2, ly - 11, bx + tw + 2, ly + 3];
                 if (box[0] < left || box[2] > right || box[1] < top || box[3] > bottom) continue;
-                if (placed.some(b => !(box[2] < b[0] || box[0] > b[2] || box[3] < b[1] || box[1] > b[3]))) continue;
+                if ([...placed, ...others].some(b => !(box[2] < b[0] || box[0] > b[2] || box[3] < b[1] || box[1] > b[3]))) continue;
                 placed.push(box);
                 ctx.textAlign = al;
                 haloText(ctx, p.label, lx, ly, t.strong, t.surface);
