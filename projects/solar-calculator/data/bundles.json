@@ -1,0 +1,32 @@
+{
+ "version": 1,
+ "note": "Fixed-price bundles of a catalog unit plus panels. Prices are entered here by hand from the verified catalog (research/plugin-kits-verified.json, checked live 2026-10-05) so the app never parses prices out of free-text notes. 'base' must exist in kits.json; 'panels.catalogId' names the matching loose-panel entry.",
+ "bundles": [
+  {
+   "id": "ecoflow-stream-ultra+4x500",
+   "name": "EcoFlow STREAM Ultra + 4 × 500 W panels",
+   "base": "ecoflow-stream-ultra",
+   "panels": { "count": 4, "wp": 500, "catalogId": "ecoflow-panel-500w-rigid-x2", "bifacial": true },
+   "priceGbp": 1499,
+   "priceDate": "2026-10-05",
+   "priceSource": "https://uk.ecoflow.com/products/stream-ultra-pro (bundle variant 'Kits: + 4 x 500 W panels GBP 1,499')",
+   "installRoute": "hardwired-electrician",
+   "availableNow": true,
+   "confidence": "high",
+   "notes": "Bought separately the same parts cost £1,777 (unit £899 + 2 × £439 panel pairs). Needs a registered electrician (dedicated circuit + G98 notification); mounting not included."
+  },
+  {
+   "id": "ecoflow-stream-ultra-x+4x500",
+   "name": "EcoFlow STREAM Ultra X + 4 × 500 W panels",
+   "base": "ecoflow-stream-ultra-x",
+   "panels": { "count": 4, "wp": 500, "catalogId": "ecoflow-panel-500w-rigid-x2", "bifacial": true },
+   "priceGbp": 1649,
+   "priceDate": "2026-10-05",
+   "priceSource": "https://uk.ecoflow.com/products/stream-ultra-x (bundle variant 'Bundles: + 4 x 500 W panels GBP 1,649')",
+   "installRoute": "hardwired-electrician",
+   "availableNow": true,
+   "confidence": "high",
+   "notes": "Bought separately the same parts cost £2,177 (unit £1,299 + 2 × £439 panel pairs). Needs a registered electrician (dedicated circuit + G98 notification); mounting not included."
+  }
+ ]
+}
