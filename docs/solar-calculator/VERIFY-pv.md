@@ -59,7 +59,7 @@ The **half-hour split** helps on vertical planes. Its accuracy was overstated be
 
 ## Files I wrote
 
-All under `/home/zack/.claude/jobs/52762e7f/tmp/research/`. Corrected versions sit next to the originals with a `-verified` suffix.
+All under `research/`. Corrected versions sit next to the originals with a `-verified` suffix.
 
 | File | What it is |
 |---|---|

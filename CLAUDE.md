@@ -32,7 +32,8 @@ lib/                   # Shared code, copied into projects at deploy time
 ├── sloplobby/         # Lobby layer on SlopNet: clientId, rooms, player tracking, rejoin
 └── slop-theme.css     # Shared theme
 docs/                  # Cross-project documentation
-└── multiplayer-bug-audit.md   # Confirmed bug backlog for the four P2P games
+├── multiplayer-bug-audit.md   # Confirmed bug backlog for the four P2P games
+└── solar-calculator/          # Verified research behind the solar calculator (APIs, physics, GB rules, prices)
 tofu/                  # OpenTofu infrastructure (Cloudflare Pages + DNS)
 .github/workflows/
 ├── deploy.yml         # Infrastructure (tofu plan/apply) + production deployment

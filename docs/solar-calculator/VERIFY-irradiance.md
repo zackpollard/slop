@@ -37,7 +37,7 @@ ADDITIONAL
 
 **Overall:** the report holds up well. Every load-bearing endpoint, parameter, CORS result, unit and convention I re-tested live was right, with one exception: the `satellite_radiation_seamless` claim is misattributed, and the real gotcha behind it (omitting `models=`) is more dangerous than the report says. The SARAH-3 forward-cloud correction is real. I replicated it independently on other KNMI stations and another period, at half-hour level against MSG/DWD, and at a UK BSRN site. I also traced its cause to the data: CM SAF `time_difference_SEVIRI` is **+11.0 min** over London, and Open-Meteo's SARAH-3 downloader, unlike its LSA SAF and DWD downloaders, does not shift the label forward.
 
-### New evidence (scripts and results in `/home/zack/.claude/jobs/52762e7f/tmp/research/verify-irradiance/`)
+### New evidence (scripts and results in `research/verify-irradiance/`)
 
 | Test | A (as documented) | B (report fix) | C (centred blend) |
 |---|---|---|---|

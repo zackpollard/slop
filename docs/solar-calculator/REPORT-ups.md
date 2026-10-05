@@ -2,7 +2,7 @@ The power-station route is legal in GB, but battery-only Agile arbitrage barely 
 
 **Legality.** A power station that charges from a 13 A socket and runs the servers from its own outlets is not a "plug-in microgenerator". SI 2026/848 defines that term as a device "designed to operate in parallel with a distributor's network". It also excludes devices "designed to import electrical energy ... for the purpose of storing energy for later supply". So such a unit falls outside G98, ESQCR reg 22 and the plug-in battery prohibition. To the grid it is just an appliance; ESQCR reg 21 (switched alternative supply, never in parallel) is met by its internal transfer relay. Solar panels wired only into the unit's own DC input form an isolated system, outside G98, the IPS and SEG.
 
-**Catalog.** 17 real UK units, priced live on 2026-10-05, are in /home/zack/.claude/jobs/52762e7f/tmp/research/ups/power-stations.json:
+**Catalog.** 17 real UK units, priced live on 2026-10-05, are in research/ups/power-stations.json:
 - EcoFlow: RIVER 3 Plus, DELTA 3 Classic, DELTA 3 Plus, DELTA 3 Max Plus, DELTA Pro 3
 - Anker SOLIX: C1000 Gen 2, C2000 Gen 2, F3000
 - BLUETTI: Elite 100 V2, Elite 200 V2, Elite 300, Elite 400, Apex 300
@@ -239,7 +239,7 @@ Savings are in £/yr against grid-only supply of the same constant load. Script:
 - {"claim": "App scheduling on the UK units:\n- Anker C1000 Gen 2: Standard and TOU modes.\n- Anker C2000 Gen 2: Standard, TOU, Storm Guard, Fast Charging Plan.\n- Anker F3000: TOU (UK FAQ).\n- Jackery 3000 v2: Charging Plan and Self-powered Mode.\n- Bluetti Apex 300: Backup, Self-consumption, Time of Use, Custom.\n- Bluetti Elite 100 V2, 200 V2 and 300 and Jackery 1000 v2 and 2000 v2: no off-peak scheduling, so use a smart plug.", "source": "ankersolix.com/uk product FAQs; uk.jackery.com explorer-3000-v2 page; bluetti search results; notebookcheck Elite 300", "verified_live": true, "confidence": "medium"}
 - {"claim": "UK electrician rates (2026): \u00a340-60/h and \u00a3220-400/day outside London; \u00a355-75/h and \u00a3300-450/day in London. Consumer unit replacement costs \u00a3450-750 (\u00a3700-1,200 in London). A new dedicated circuit costs about \u00a3200-450. Installed home batteries cost \u00a32,500-10,500 in total, with labour about 20%.", "source": "https://www.fantasticservices.com/cost-guides/electrical/electrician/ ; trade2base.com/blog/solar-battery-storage-costs-uk ; bookabuilderuk.com", "verified_live": true, "confidence": "medium"}
 
-ARTIFACTS: "/home/zack/.claude/jobs/52762e7f/tmp/research/ups/power-stations.json"
+ARTIFACTS: "research/ups/power-stations.json"
 OPEN: [
  "Bypass overhead is not measured anywhere: how many watts does each unit draw on top of the load while it sits in bypass at 100% SoC 24/7? The simulation assumes 8 W, and each 10 W costs about \u00a317.5/yr. The user could measure this with a metering smart plug.",
  "When EcoFlow switches to battery under TOU, a scheduled task or 'disable bypass', is the change seamless or a relay transfer of about 10 ms? This decides whether app scheduling is safer for servers than a smart-plug cut.",

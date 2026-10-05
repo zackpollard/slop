@@ -58,8 +58,8 @@ I re-checked every hard-coded number against a fresh live pull of the Octopus AP
    - The Ofgem cap figures are at 0% VAT, not "ex VAT".
 
 ### Files written (verification)
-- `/home/zack/.claude/jobs/52762e7f/tmp/research/agile-analysis-verified.json`: the original analysis plus a `verification` block holding all corrections, the per-region fits, alignment sensitivity and the weather-year bias.
-- `/home/zack/.claude/jobs/52762e7f/tmp/research/verify-agile-econ/`:
+- `research/agile-analysis-verified.json`: the original analysis plus a `verification` block holding all corrections, the per-region fits, alignment sensitivity and the weather-year bias.
+- `research/verify-agile-econ/`:
   - `live-fetch.json`: fresh import, export, Flexible, standing-charge and fixed-Outgoing pulls.
   - `stats.py`, `fit.py`, `arb.py`: independent recomputation scripts.
   - `regions.py` → `regions-fit-2026-09.json`: all-region fit.

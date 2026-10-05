@@ -52,11 +52,11 @@ ADDITIONAL
 ## Verification summary (2026-10-05)
 
 **Files written**
-- `/home/zack/.claude/jobs/52762e7f/tmp/research/ups/power-stations-verified.json` — the full corrected array, 18 entries (17 original plus the AC300+B300K).
+- `research/ups/power-stations-verified.json` — the full corrected array, 18 entries (17 original plus the AC300+B300K).
   - Every entry has a `verification` block with status, what was checked, and field-level changes with evidence.
   - Four new fields on every entry: `controlPaths`, `feasibleStrategies`, `pvWireableTypical`, `acInputLimitW`.
-- `/home/zack/.claude/jobs/52762e7f/tmp/research/ups/power-stations-verified.meta.json` — conventions for the new fields, the corrected round-trip formula, the corrected `notListedBecause` (AC300 in stock; F2000/F3800 listed but sold out), and the UK smart-plug guidance.
-- `/home/zack/.claude/jobs/52762e7f/tmp/research/ups/verify/` — raw live fetches, plus `resim.py` and `resim-{online,p0,pvcap,ac300}.json` (re-runs using the original `sim_ups.py` functions with corrected inputs) and `build_verified.py`.
+- `research/ups/power-stations-verified.meta.json` — conventions for the new fields, the corrected round-trip formula, the corrected `notListedBecause` (AC300 in stock; F2000/F3800 listed but sold out), and the UK smart-plug guidance.
+- `research/ups/verify/` — raw live fetches, plus `resim.py` and `resim-{online,p0,pvcap,ac300}.json` (re-runs using the original `sim_ups.py` functions with corrected inputs) and `build_verified.py`.
 
 **Corrected simulation numbers (real Agile C, 500 W unless stated)**
 
