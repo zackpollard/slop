@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self'; img-src 'self' data: blob: https://*.tile.openstreetmap.org https://server.arcgisonline.com; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'self'">
+<meta name="robots" content="noindex">
+<title>Component gallery · Solar calculator (dev)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<style>
+  /* gallery-only layout */
+  .g-section { margin-top: 36px; }
+  .g-label { font-family: var(--font-mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); margin-bottom: 12px; display: flex; gap: 10px; align-items: center; }
+  .g-label::after { content: ''; flex: 1; height: 1px; background: var(--hairline); }
+  .g-swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .g-swatch { display: flex; gap: 10px; align-items: center; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); font-size: 12.5px; }
+  .g-swatch i { width: 22px; height: 22px; border-radius: 5px; flex: none; }
+  .g-swatch code { font-family: var(--font-mono); font-size: 11px; color: var(--muted); display: block; }
+  .g-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .g-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 18px 22px; align-items: start; }
+  .g-note { color: var(--muted); font-size: 13px; margin-top: 4px; }
+</style>
+</head>
+<body>
+<header class="masthead">
+  <div class="shell">
+    <a class="brand" href="index.html">
+      <svg class="glyph" width="44" height="26" viewBox="0 0 56 34" fill="none" aria-hidden="true">
+        <path d="M4 28h48" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity=".5"/>
+        <path d="M8 28C12 10 44 10 48 28" stroke="currentColor" stroke-width="1.2" stroke-dasharray="2 3" opacity=".55"/>
+        <circle cx="41.5" cy="17.5" r="4.2" fill="#c4a24e"/>
+      </svg>
+      <span class="brand-name"><b>Solar</b> calculator</span>
+      <span class="brand-tag">component gallery · dev only</span>
+    </a>
+    <button class="btn btn-ghost btn-sm" id="print-toggle" type="button">Print tokens</button>
+  </div>
+</header>
+<main class="app-main"><div class="shell" id="g"></div></main>
+
+<script type="module">
+import * as ui from './js/ui.js';
+import * as charts from './js/charts.js';
+import { createRerunBar } from './js/app.js';
+const { h, fmt } = ui;
+const root = document.getElementById('g');
+
+/* ── seeded fake data ─────────────────────────────────────────── */
+function mulberry32(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const rnd = mulberry32(20261005);
+const gauss = () => { let u = 0, v = 0; while (!u) u = rnd(); while (!v) v = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+const HH = Array.from({ length: 48 }, (_, i) => `${String(i >> 1).padStart(2, '0')}:${i % 2 ? '30' : '00'}`);
+// Mean Agile price by local half-hour, region C, Oct 2025 – Sep 2026 (p/kWh inc VAT).
+const PRICE = [17.1,17.37,16.77,16.39,16.36,15.79,15.88,15.48,16.09,15.82,17.22,17.35,18.57,20.16,19.61,21.01,19.48,19.55,18.58,17.73,16.93,16.17,15.58,15.11,15.03,14.8,14.86,14.55,14.87,14.94,15.52,16.65,30.6,32.85,34.57,36.13,37.26,37.58,24.73,24.12,23.57,22.61,22.57,20.91,20.26,18.32,18.67,17.56];
+const shape = hr => 0.06 * Math.exp(-(((hr - 7.5) / 1.1) ** 2)) + 0.2 * Math.exp(-(((hr - 18.6) / 1.9) ** 2)) + 0.04 * (hr > 9 && hr < 16 ? 1 : 0);
+const LOAD = HH.map((_, i) => 0.241 + shape(i / 2));
+const MONTHS = ['2025-10','2025-11','2025-12','2026-01','2026-02','2026-03','2026-04','2026-05','2026-06','2026-07','2026-08','2026-09'];
+
+const section = (label, ...kids) => h('section', { class: 'g-section' }, h('div', { class: 'g-label' }, label), ...kids);
+const chartCard = (title, sub, mount, extra = {}) => { const host = h('div'); const c = ui.card({ title, subtitle: sub, body: host, ...extra }); queueMicrotask(() => mount(host)); return c; };
+
+/* ── tokens ───────────────────────────────────────────────────── */
+const tokenNames = ['--series-pv','--series-load','--series-import','--series-export','--series-battery','--series-price','--series-clipped','--series-muted','--route-plugin','--route-hardwired','--route-ups','--route-whatif','--route-reference','--accent'];
+const cs = getComputedStyle(document.documentElement);
+root.append(
+  h('div', { class: 'view-head' }, h('div', null,
+    h('div', { class: 'view-kicker' }, 'Dev page · not linked from the app'),
+    h('h1', { class: 'view-title' }, 'Component gallery'),
+    h('p', { class: 'view-lede' }, 'Every ui.js component and charts.js chart type, rendered with realistic fake data. Resize to 375 px to check the mobile rules.'))),
+  section('Series & route tokens', h('div', { class: 'g-swatches' }, tokenNames.map(n => h('div', { class: 'g-swatch' }, h('i', { style: { background: `var(${n})` } }), h('div', null, n.replace(/^--(series|route)-/, ''), h('code', null, cs.getPropertyValue(n).trim() || n)))))),
+);
+
+/* ── stat tiles, badges, buttons ──────────────────────────────── */
+root.append(section('Stat tiles',
+  h('div', { class: 'tiles' },
+    ui.statTile({ label: 'Always-on load', value: '482', unit: 'W', sub: '4,222 kWh/yr · 71% of your use', help: 'Median over days of the mean of each day’s four lowest half-hours.' }),
+    ui.statTile({ label: 'It costs', value: fmt.gbp(842), unit: '/yr', sub: '£214 of it 4–7pm · £175 per 100 W', tone: 'accent' }),
+    ui.statTile({ label: 'Your electricity', value: fmt.gbp(1412), sub: '+ £213 standing charges' }),
+    ui.statTile({ label: 'Payback', value: fmt.years(3.8), sub: '£150–£186 a year, weather range', tone: 'good' }),
+    ui.statTile({ label: 'Lost to 800 W limit', value: fmt.kwh(31.4), sub: '2.8% of what it makes', tone: 'warn' }),
+    ui.statTile({ label: 'Simulating', loading: true, sub: 'Plug-in kits…' }))));
+
+root.append(section('Figure pair · coverage chip (promoted from Usage)',
+  h('div', { class: 'grid-2' },
+    ui.card({ title: 'The 4–7pm peak', body: h('div', { class: 'stack-sm' },
+      ui.figurePair([{ label: 'You paid per kWh at 4–7pm', value: fmt.p(35.4), strong: true }, { label: 'and the rest of the day', value: fmt.p(18.3) }]),
+      ui.figurePair([{ label: 'Average price you paid', value: '21.2', unit: 'p/kWh' }, { label: 'A flat load would pay', value: '20.0', unit: 'p/kWh', strong: true }])) }),
+    ui.card({ title: 'Coverage chip', body: h('div', { class: 'g-row' },
+      ui.coverageChip({ realPct: 100, extrapolatedSlots: 0 }),
+      ui.coverageChip({ realPct: 53.7, extrapolatedSlots: 166 * 48 }),
+      ui.coverageChip({ realPct: 98.2, extrapolatedSlots: 0 }, { href: '#data?edit=prices' }),
+      ui.coverageChip({ realPct: 100, extrapolatedSlots: 0, synthetic: 'demo' }),
+      ui.coverageChip({ realPct: 100, extrapolatedSlots: 0, synthetic: 'manual' })) }))));
+
+root.append(section('Badges, buttons, tooltip',
+  h('div', { class: 'stack-sm' },
+    h('div', { class: 'g-row' },
+      ['default','accent','good','warn','bad','info'].map(t => ui.badge({ text: t === 'accent' ? 'Best value' : t, tone: t })),
+      ui.badge({ text: 'Plug-in', tone: 'plugin' }), ui.badge({ text: 'Electrician', tone: 'hardwired' }), ui.badge({ text: 'Power station', tone: 'ups' }),
+      ui.badge({ text: 'Future rules', tone: 'whatif' }), ui.badge({ text: 'Reference', tone: 'reference' })),
+    h('div', { class: 'g-row' },
+      ui.button({ label: 'Analyse my home', kind: 'primary', icon: 'arrowRight' }),
+      ui.button({ label: 'Compare', icon: 'chart' }),
+      ui.button({ label: 'See the details', kind: 'ghost' }),
+      ui.button({ label: 'Save as PDF', kind: 'ghost', icon: 'print', size: 'sm' }),
+      ui.button({ label: 'Download CSV', kind: 'ghost', icon: 'download', size: 'sm' }),
+      ui.button({ label: 'Reset everything', kind: 'danger', size: 'sm' }),
+      ui.button({ label: 'Disabled', disabled: true }),
+      (() => { const b = h('button', { class: 'help-dot', type: 'button', 'aria-label': 'What is typical year?' }, '?'); ui.tooltip(b, 'Your usage and prices from the last 12 months, with each month’s sunshine scaled to its 2006–2025 average at your home.'); return b; })()))));
+
+/* ── form controls ────────────────────────────────────────────── */
+const compassOut = h('span', { class: 'mono muted' });
+root.append(section('Form controls',
+  ui.card({ body: h('div', { class: 'g-form' },
+    ui.field({ label: 'Always-on load', hint: 'Your data says 482 W', input: ui.numberInput({ value: 482, min: 0, max: 5000, step: 10, unit: 'W', onChange: v => ui.toast(`Base load ${fmt.w(v)}`) }) }),
+    ui.field({ label: 'Kit price', input: ui.numberInput({ value: 650, min: 0, step: 1, unit: '£' }) }),
+    ui.field({ label: 'Postcode', input: ui.textInput({ value: 'SW1A 1AA', mono: true }) }),
+    ui.field({ label: 'Start from', input: ui.select({ value: 'octopus-2x460', options: [
+      { value: 'octopus-2x460', label: 'Octopus 2×460 W (£650)', group: 'Plug into a socket (DIY)' },
+      { value: 'cp-2x515', label: 'City Plumbing 2×515 W (£468)', group: 'Plug into a socket (DIY)' },
+      { value: 'h1', label: 'EcoFlow STREAM Ultra + 4×500 W', group: 'Wired in by an electrician' },
+      { value: 'u1', label: 'DELTA 3 Plus for the servers', group: 'Power station for the servers' } ] }) }),
+    ui.field({ label: 'Automation', input: ui.segmented({ value: 'threshold', ariaLabel: 'Battery automation', options: [{ value: 'threshold', label: 'Realistic' }, { value: 'optimal', label: 'Best case' }] }) }),
+    ui.field({ label: 'Metric', input: ui.segmented({ size: 'sm', value: 'gbp', options: [{ value: 'gbp', label: '£ saved' }, { value: 'kwh', label: 'kWh' }, { value: 'p', label: 'p per kWh' }, { value: 'peak', label: '4–7pm share' }] }) }),
+    ui.field({ label: 'Shading', hint: 'Balcony and garden installs are rarely unshaded', input: ui.slider({ value: 3, min: 0, max: 30, step: 1, format: v => `${v}%` }) }),
+    h('div', { class: 'stack-sm' },
+      ui.toggle({ label: 'Assume VAT returns to 5% in April 2027', checked: true }),
+      ui.toggle({ label: 'Replace the battery at end of life', hint: 'Off: battery savings stop at end of life' }),
+      ui.checkbox({ label: 'Remember on this device' })),
+    ui.field({ label: 'Panels face', input: ui.compassInput({ azimuth: 200, onChange: az => { compassOut.textContent = `onChange(${az})`; } }), hint: compassOut }),
+  ) })));
+
+/* ── table ────────────────────────────────────────────────────── */
+const OPTIONS = [
+  { id: 'S01', name: 'Octopus 2×460 W', route: 'plugin', cost: 650, sav: 172, lo: 150, hi: 186, payback: 3.8, ahead: 1032, conf: 'High' },
+  { id: 'S05', name: 'City Plumbing 2×515 W', route: 'plugin', cost: 468, sav: 151, lo: 132, hi: 164, payback: 3.1, ahead: 1042, conf: 'High' },
+  { id: 'S03', name: 'Octopus 2×460 W on a west wall', route: 'plugin', cost: 650, sav: 118, lo: 104, hi: 127, payback: 5.5, ahead: 530, conf: 'High' },
+  { id: 'H1', name: 'EcoFlow STREAM Ultra + 4×500 W', route: 'hardwired', cost: 1849, sav: 395, lo: 352, hi: 421, payback: 4.7, ahead: 2101, conf: 'Medium' },
+  { id: 'U1', name: 'DELTA 3 Plus for the servers', route: 'ups', cost: 599, sav: 43, lo: 41, hi: 45, payback: 13.9, ahead: -169, conf: 'Medium' },
+  { id: 'W1', name: 'Octopus 2×460 + plug-in battery', route: 'whatif', cost: 1700, sav: 380, lo: 340, hi: 405, payback: 4.5, ahead: 2100, conf: 'Low' },
+  { id: 'R1', name: 'Cut 100 W of always-on load', route: 'reference', cost: 0, sav: 175, lo: 175, hi: 175, payback: 0, ahead: 1750, conf: 'High' },
+];
+const routeLabel = { plugin: 'Plug-in', hardwired: 'Electrician', ups: 'Power station', whatif: 'Future rules', reference: 'Reference' };
+root.append(section('Table (sortable · card list under 600 px)',
+  ui.card({ title: 'Your options, ranked', subtitle: 'Typical-year sunshine · 2% price rise/yr · 4% discount rate', body: ui.table({
+    sortKey: '-ahead', onRowClick: r => ui.toast(`Open ${r.name} in Design`),
+    rowClass: r => (r.route === 'whatif' ? 'is-muted' : r.id === 'S01' ? 'is-highlight' : ''),
+    columns: [
+      { key: 'name', label: 'Option', mobile: 'title' },
+      { key: 'route', label: 'Route', format: v => ui.badge({ text: routeLabel[v], tone: v }), sortable: false },
+      { key: 'cost', label: 'Cost', align: 'right', format: v => fmt.gbp(v) },
+      { key: 'sav', label: 'Saves/yr', align: 'right', format: (v, r) => `${fmt.gbp(v)} (${fmt.range(r.lo, r.hi, fmt.gbp)})`, mobile: 'primary' },
+      { key: 'payback', label: 'Payback', align: 'right', format: v => (v === 0 ? 'now' : fmt.years(v)) },
+      { key: 'ahead', label: 'Ahead after 10 yrs', align: 'right', format: v => fmt.gbp(v) },
+      { key: 'conf', label: 'Confidence', mobile: 'hide' },
+    ], rows: OPTIONS }) })));
+
+const BEATEN = [
+  { id: 'S06', name: 'City Plumbing 1×465 W', route: 'plugin', cost: 336, sav: 77, lo: 70, hi: 82, payback: 4.2, ahead: 434, conf: 'High' },
+  { id: 'U2', name: 'BLUETTI Elite 300 for the servers', route: 'ups', cost: 1299, sav: 61, lo: 58, hi: 64, payback: 21.3, ahead: -690, conf: 'Medium' },
+  { id: 'S04', name: 'Octopus 1×460 W', route: 'plugin', cost: 450, sav: 98, lo: 86, hi: 106, payback: 4.6, ahead: 480, conf: 'High' },
+];
+const tableCols = [
+  { key: 'name', label: 'Option', mobile: 'title' },
+  { key: 'route', label: 'Route', format: v => ui.badge({ text: routeLabel[v], tone: v }), sortable: false, mobile: 'hide' },
+  { key: 'cost', label: 'Cost', align: 'right', format: v => fmt.gbp(v), help: 'Upfront: the kit, panels, frames and an electrician where needed.' },
+  { key: 'sav', label: 'Saves/yr', align: 'right', format: (v, r) => `${fmt.gbp(v)} (${fmt.range(r.lo, r.hi, fmt.gbp)})`, mobile: 'primary', help: 'Typical-year sunshine; the range is 8 years in 10 (2006–2025 weather).' },
+  { key: 'payback', label: 'Payback', align: 'right', format: v => (v === 0 ? 'now' : fmt.years(v)) },
+  { key: 'ahead', label: '10-yr value', align: 'right', format: v => fmt.gbp(v), help: 'Net present value after 10 years, in today’s money.' },
+  { key: 'conf', label: 'Confidence', sortable: false, mobile: 'hide', help: 'How sure: data coverage, weather spread and how well the model knows this kit.' },
+];
+root.append(section('Table groups · dividers · header tooltips · note · followSort',
+  ui.card({ title: 'Ranked, with the beaten and future-rules options grouped', subtitle: 'Sorting applies within each group. Hover a dotted header for its meaning. On a phone the sorted column becomes the card’s figure.', body: ui.table({
+    sortKey: '-ahead', followSort: true, onToggle: (k, open) => ui.toast(`${k}: ${open ? 'shown' : 'hidden'}`, { timeoutMs: 1500 }),
+    columns: tableCols,
+    groups: [
+      { key: 'ranked', rows: OPTIONS.filter(o => !['whatif', 'reference'].includes(o.route)) },
+      { key: 'beaten', title: 'Beaten on both price and savings', note: 'Something else costs less and saves more', rows: BEATEN, collapsible: true, collapsed: true },
+      { key: 'future', title: 'Future rules', note: 'Not legal as a plug-in today', rows: OPTIONS.filter(o => o.route === 'whatif'), className: 'is-muted' },
+      { key: 'refs', divider: true, rows: OPTIONS.filter(o => o.route === 'reference') },
+    ],
+    note: [h('span', null, '10-yr value is in today’s money. '), ui.button({ label: 'Is the extra worth it?', kind: 'link', size: 'sm', href: '#compare' })],
+  }) })));
+
+/* ── disclosure, progress, skeleton, empty, overlays ──────────── */
+const pl = ui.progressList(ui.LOAD_STEPS);
+const runProgress = () => {
+  const steps = [['account', 'done', 'A-1234ABCD · London · AGILE-24-10-01'], ['usage', 'done', '17,402 half-hours (99%)'], ['prices', 'done', '17,520'], ['export', 'done', ''], ['weather', 'active', '212 days'], ['weather', 'done', '365 days'], ['climatology', 'error', 'Open-Meteo timed out'], ['build', 'skip', '']];
+  ui.LOAD_STEPS.forEach(s => pl.set(s.key, 'pending', ''));
+  steps.forEach(([k, s, d], i) => setTimeout(() => pl.set(k, s, d), 250 * (i + 1)));
+};
+runProgress();
+// settle(): a run that stops mid-way — the failed step is marked, every spinner goes back to waiting
+const pl2 = ui.progressList(ui.loadStepsFor('csv'));
+const runFailing = () => {
+  ui.loadStepsFor('csv').forEach(s => pl2.set(s.key, 'pending', ''));
+  pl2.set('usage', 'active', 'reading the file…');
+  pl2.set('prices', 'active');
+  setTimeout(() => pl2.settle('usage'), 900);
+};
+runFailing();
+root.append(section('Disclosure · progress · skeleton · empty · overlays',
+  h('div', { class: 'grid-2' },
+    ui.card({ title: 'Your questions', body: h('div', null,
+      ui.details({ summary: h('span', null, h('b', null, 'Should the panels face west for the 4–7pm peak? '), h('span', { class: 'muted' }, 'No — face them SSW.')), body: h('p', null, 'On a west-facing wall they’d make 512 kWh/yr instead of 742 (31% less). Each of those kWh is worth more (22.9p vs 21.4p) because 34% lands in the 4–7pm peak, but that doesn’t make up for the lost energy.'), open: true }),
+      ui.details({ summary: 'What does a battery add?', body: h('p', null, 'A battery adds £223/yr for £1,199 more — the extra pays back in 5.4 years.') }),
+      ui.details({ summary: 'How sure is this?', body: h('p', null, 'How sure: high. Weather alone moves it between £150 and £186 a year.') })) }),
+    h('div', { class: 'stack' },
+      ui.card({ title: 'Progress list', actions: ui.button({ label: 'Replay', size: 'sm', kind: 'ghost', icon: 'refresh', onClick: runProgress }), body: pl.el }),
+      ui.card({ title: 'Progress list · settle()', subtitle: 'A CSV run that fails at “Your usage”: no row keeps spinning, and the error text stays in the panel below the list.', actions: ui.button({ label: 'Replay', size: 'sm', kind: 'ghost', icon: 'refresh', onClick: runFailing }), body: pl2.el }),
+      ui.card({ title: 'Skeleton', body: h('div', { class: 'stack-sm' }, ui.skeleton({ lines: 3 }), ui.skeleton({ height: 64 })) }),
+      ui.card({ body: h('div', { class: 'g-row' },
+        ui.button({ label: 'Toast', onClick: () => ui.toast('Saved “Octopus 2×460 on the flat roof”', { tone: 'good', action: { label: 'Undo', onClick: () => ui.toast('Undone') } }) }),
+        ui.button({ label: 'Error toast', onClick: () => ui.toast('Octopus didn’t accept that key.', { tone: 'bad' }) }),
+        ui.button({ label: 'Modal', onClick: () => ui.modal({ title: 'Reset everything?', body: h('p', null, 'This forgets your settings, saved scenarios and API key on this device.'), actions: [{ label: 'Cancel' }, { label: 'Reset', danger: true, onClick: () => ui.toast('Reset (not really — gallery)') }] }) })) })),
+  ),
+  h('div', { style: { marginTop: '20px' } }, ui.card({ body: ui.emptyState({ title: 'Nothing pays back within 10 years', body: 'Closest: City Plumbing 2×515 W, 11.2 years. Cutting 100 W of always-on load would save £175/yr for nothing.', action: { label: 'See all options', onClick: () => ui.toast('→ #compare') } }) }))));
+
+/* ── connect card ─────────────────────────────────────────────── */
+const fakeCtx = {
+  store: { get: () => ({ connection: { demoServerW: 500, rememberKey: false, location: {} } }), set() {} },
+  data: {
+    load(spec, { onProgress } = {}) {
+      const steps = spec.kind === 'demo' ? ['usage', 'prices', 'weather', 'build'] : ['account', 'usage', 'prices', 'export', 'weather', 'climatology', 'build'];
+      return new Promise((resolve, reject) => {
+        steps.forEach((s, i) => {
+          setTimeout(() => onProgress?.({ step: s, status: 'start' }), 300 * i);
+          setTimeout(() => {
+            if (spec.apiKey === 'sk_live_fail' && s === 'account') { onProgress?.({ step: s, status: 'error' }); reject(Object.assign(new Error('This key can see more than one account — pick one.'), { name: 'DataError', code: 'ACCOUNT', action: 'pickAccount', choices: ['A-1234ABCD', 'A-9876ZYXW'] })); return; }
+            onProgress?.({ step: s, status: 'done', count: s === 'usage' ? 17402 : undefined, pct: s === 'usage' ? 99.3 : undefined });
+            if (i === steps.length - 1) { ui.toast('Loaded (gallery stub)', { tone: 'good' }); resolve({}); }
+          }, 300 * i + 240);
+        });
+      });
+    },
+  },
+};
+root.append(section('Connect card (stub data hub — key “sk_live_fail” shows the error path)', ui.connectCard(fakeCtx)));
+
+/* ── charts ───────────────────────────────────────────────────── */
+const gridCharts = h('div', { class: 'grid-2' });
+const wide = h('div', { class: 'stack' });
+root.append(section('Charts', wide), h('div', { style: { height: '20px' } }), gridCharts);
+
+// 1. Load profile above price profile (two charts sharing x, never a dual axis)
+wide.append(ui.card({ eyebrow: 'Usage', title: 'An average day: your load, then the price', subtitle: '48 half-hours, local time. Shaded: the 4–7pm Agile peak.', body: h('div', { class: 'stack-sm' },
+  (() => { const e = h('div'); queueMicrotask(() => charts.createLine(e, { ariaLabel: 'Average load by half-hour', height: 190, x: { values: HH }, y: { label: 'kWh per half-hour', format: v => fmt.num(v, 2) }, series: [{ key: 'load', label: 'Your load', color: 'load', values: LOAD, area: true }], bands: [{ from: 32, to: 38, label: '4–7pm' }], legendMin: 2 })); return e; })(),
+  (() => { const e = h('div'); queueMicrotask(() => charts.createLine(e, { ariaLabel: 'Average Agile price by half-hour', height: 190, x: { values: HH }, y: { label: 'p/kWh', format: v => fmt.num(v, 0) }, series: [{ key: 'price', label: 'Agile price', color: 'price', values: PRICE, format: v => fmt.p(v) }], bands: [{ from: 32, to: 38 }] })); return e; })()) }));
+
+// 2. Typical day stacked area
+const day = HH.map((_, i) => {
+  const hr = i / 2 + 0.25;
+  const sun = Math.max(0, Math.sin(Math.PI * (hr - 4.9) / 16.2));
+  const dc = 0.47 * sun ** 1.25;
+  const pv = Math.min(0.4, dc);
+  const load = 0.25 + shape(hr) * 0.9;
+  const used = Math.min(pv, load);
+  const batt = i >= 32 && i < 38 ? Math.min(load - used, 0.21) : 0;
+  return { used, batt, imp: Math.max(0, load - used - batt), exp: Math.max(0, pv - used), clip: Math.max(0, dc - 0.4), load };
+});
+wide.append(ui.card({ eyebrow: 'Design', title: 'Typical summer day', subtitle: 'How your load is met, plus what goes out and what is lost — 21 Jun', body: (() => { const e = h('div'); queueMicrotask(() => charts.createStackedArea(e, {
+  ariaLabel: 'Typical summer day energy flows', x: { values: HH }, y: { label: 'kWh per half-hour', format: v => fmt.num(v, 2) }, totalLabel: 'Total shown',
+  series: [
+    { key: 'used', label: 'Solar used at home', color: 'pv', values: day.map(d => d.used) },
+    { key: 'batt', label: 'From the battery', color: 'battery', values: day.map(d => d.batt) },
+    { key: 'imp', label: 'From the grid', color: 'import', values: day.map(d => d.imp) },
+    { key: 'exp', label: 'Sent to the grid', color: 'export', values: day.map(d => d.exp) },
+    { key: 'clip', label: 'Lost to the 800 W limit', color: 'clipped', values: day.map(d => d.clip) },
+    { key: 'load', label: 'Your load', color: 'load', values: day.map(d => d.load), line: true },
+  ], bands: [{ from: 32, to: 38, label: '4–7pm', legend: false }] })); return e; })() }));
+
+// 3. Monthly savings: typical solid, last 12 months outline
+const typ = [9, 5, 3, 4, 8, 13, 17, 20, 21, 21, 19, 14];
+const act = [8, 4, 2, 5, 9, 15, 19, 24, 26, 28, 24, 13];
+gridCharts.append(chartCard('Monthly savings', 'Typical year (solid) vs the last 12 months as they happened (outline)', e => charts.createBars(e, {
+  categories: MONTHS, x: { format: k => fmt.month(k).slice(0, 3), tipFormat: k => fmt.month(k) }, y: { format: v => fmt.gbp(v) },
+  series: [{ key: 'typ', label: 'Typical year', color: 'pv', values: typ }, { key: 'act', label: 'Last 12 months', color: 'pv', values: act, outline: true }] })));
+
+// 4. Monthly bills stacked
+gridCharts.append(chartCard('Monthly bills', 'Energy plus standing charges', e => charts.createBars(e, {
+  categories: MONTHS, stacked: true, x: { format: k => fmt.month(k).slice(0, 3), tipFormat: k => fmt.month(k) }, y: { format: v => fmt.gbp(v) },
+  series: [{ key: 'energy', label: 'Energy', color: 'import', values: [104, 128, 141, 146, 122, 109, 96, 88, 82, 84, 86, 92] }, { key: 'standing', label: 'Standing charge', color: 'muted', values: [17, 16, 17, 17, 15, 17, 16, 17, 16, 17, 17, 16] }] })));
+
+// 5. Horizontal bars
+gridCharts.append(chartCard('Saves per year by kit', 'Typical year, each on its best spot', e => charts.createBars(e, {
+  horizontal: true, categories: OPTIONS.filter(o => o.route !== 'reference').map(o => o.name), y: { format: v => fmt.gbp(v) },
+  series: [{ key: 's', label: 'Saves/yr', color: 'cat1', values: OPTIONS.filter(o => o.route !== 'reference').map(o => o.sav) }] })));
+
+// 6. Tornado
+gridCharts.append(chartCard('What moves the payback', 'Payback in years at each driver’s low and high setting', e => charts.createTornado(e, {
+  center: 3.8, centerLabel: 'Payback 3.8 yrs', format: v => fmt.num(v, 1),
+  rows: [
+    { label: 'Agile price level', low: 4.8, high: 3.2, lowLabel: '×0.8', highLabel: '×1.2' },
+    { label: 'Always-on load', low: 4.6, high: 3.6, lowLabel: '−30%', highLabel: '+30%' },
+    { label: 'Shading', low: 3.6, high: 4.5, lowLabel: '0%', highLabel: '15%' },
+    { label: 'Weather year', low: 4.4, high: 3.4, lowLabel: 'p10', highLabel: 'p90' },
+    { label: 'Price trend', low: 4.1, high: 3.6, lowLabel: '0%/yr', highLabel: '4%/yr' },
+  ] })));
+
+// 7. Heatmaps 365 × 48
+const DAYS = 365;
+const dates = Array.from({ length: DAYS }, (_, d) => new Date(Date.UTC(2025, 9, 1 + d)).toISOString().slice(0, 10));
+const loadHm = new Float32Array(DAYS * 48), priceHm = new Float32Array(DAYS * 48);
+for (let d = 0; d < DAYS; d++) {
+  const season = Math.cos(2 * Math.PI * (d - 100) / 365);   // +1 mid-winter
+  const weekend = new Date(Date.UTC(2025, 9, 1 + d)).getUTCDay() % 6 === 0;
+  for (let k = 0; k < 48; k++) {
+    loadHm[d * 48 + k] = Math.max(0.15, 0.24 + shape(k / 2) * (1 + 0.35 * season + (weekend ? 0.25 : 0)) + 0.025 * gauss());
+    const solarDip = Math.max(0, Math.sin(Math.PI * (k / 2 - 6) / 12)) * (1 - season) * 6;
+    priceHm[d * 48 + k] = PRICE[k] * (1 + 0.18 * season) - solarDip + 2.4 * gauss();
+  }
+  if (d === 40) for (let k = 0; k < 48; k++) loadHm[d * 48 + k] = NaN;   // a missing day
+}
+// estimated (gap-filled) readings: a fortnight in February and a few scattered half-hours
+const estMask = new Uint8Array(DAYS * 48);
+for (let d = 125; d < 139; d++) for (let k = 0; k < 48; k++) estMask[d * 48 + k] = 1;
+for (let d = 200; d < 203; d++) for (let k = 14; k < 30; k++) estMask[d * 48 + k] = 1;
+wide.append(chartCard('Your load, every half-hour of the year', 'Days run left to right, time of day top to bottom. Grey = no data; hatched = estimated (mask option). Month labels thin out on narrow screens.', e => charts.createHeatmap(e, {
+  rows: DAYS, cols: 48, values: loadHm, rowLabels: dates, colLabels: HH, transpose: true, height: 240, valueLabel: 'kWh', format: v => `${fmt.num(v, 2)} kWh`, scale: { ramp: 'sequential' },
+  mask: estMask, maskLabel: 'Estimated' })));
+wide.append(chartCard('Agile price, every half-hour', 'Blue: cheaper than the 20p average · orange: dearer', e => charts.createHeatmap(e, {
+  rows: DAYS, cols: 48, values: priceHm, rowLabels: dates, colLabels: HH, transpose: true, height: 240, valueLabel: 'p/kWh', format: v => fmt.p(v), scale: { ramp: 'diverging', mid: 20 } })));
+
+// 8. Solar rose
+const AZ = Array.from({ length: 19 }, (_, i) => 90 + i * 10), TI = Array.from({ length: 19 }, (_, i) => i * 5);
+const yieldModel = (az, tilt) => {
+  const dAz = (az - 180) * Math.PI / 180, t = tilt * Math.PI / 180;
+  const dir = 1 - 0.4 * Math.sin(t) * (1 - Math.cos(dAz - 0.26));
+  const tf = 0.86 + 0.14 * Math.cos((tilt - 38) * Math.PI / 100);
+  const kwh = 860 * dir * tf;
+  const pPer = 21.2 + 3.4 * Math.max(0, Math.sin(dAz)) * Math.sin(t);    // west-facing kWh are worth more
+  return { kwh, gbp: kwh * pPer / 100, pPer };
+};
+const roseVals = new Float64Array(AZ.length * TI.length);
+let best = { gbp: -1 };
+AZ.forEach((a, i) => TI.forEach((t, j) => { const m = yieldModel(a, t); roseVals[i * TI.length + j] = m.gbp; if (m.gbp > best.gbp) best = { ...m, az: a, tilt: t }; }));
+// Enter (or a click) picks a cell: the 'pick' marker moves there and, because the chart keeps a
+// keyboard user's cursor across update(), the arrows carry on from the picked cell.
+let rosePick = { az: 240, tilt: 50 };
+const roseSpec = () => ({
+  azimuths: AZ, tilts: TI, values: roseVals, metricLabel: '£ a year', tipLabel: 'a year', format: v => fmt.gbp(v),
+  markers: [{ az: best.az, tilt: best.tilt, label: `Best £${Math.round(best.gbp)}`, kind: 'best' }, { az: 180, tilt: 35, label: 'Current', kind: 'current' },
+    { az: rosePick.az, tilt: rosePick.tilt, label: 'Picked', kind: 'pick' }, { az: 270, tilt: 90, label: 'W90', kind: 'reference' }],
+  onPick: (az, tilt) => { rosePick = { az, tilt }; roseChart.update(roseSpec()); ui.toast(`Picked ${fmt.compass(az)} ${az}° at ${tilt}°`, { timeoutMs: 1500 }); },
+});
+let roseChart = null;
+gridCharts.append(chartCard('The solar rose', '£ saved a year by direction (around) and tilt (flat centre → vertical rim). Gold ring: your pick.', e => { roseChart = charts.createPolar(e, roseSpec()); }));
+const AZF = Array.from({ length: 24 }, (_, i) => i * 15), TIF = Array.from({ length: 10 }, (_, i) => i * 10);
+const fullVals = new Float64Array(AZF.length * TIF.length);
+AZF.forEach((a, i) => TIF.forEach((t, j) => { fullVals[i * TIF.length + j] = yieldModel(a, t).kwh * (1 - 0.35 * Math.max(0, Math.cos(a * Math.PI / 180)) * Math.sin(t * Math.PI / 180)); }));
+gridCharts.append(chartCard('Full-circle rose', 'kWh/yr in every direction (N up, E right)', e => charts.createPolar(e, {
+  azimuths: AZF, tilts: TIF, values: fullVals, metricLabel: 'kWh/yr', format: v => fmt.kwh(v), scale: { ramp: 'sequential' },
+  markers: [{ az: 195, tilt: 40, label: 'Best kWh', kind: 'best' }, { az: 90, tilt: 90, label: 'E90', kind: 'reference' }] })));
+
+// 9. Cost vs saving scatter with payback isolines
+const SC = [
+  ...OPTIONS.map(o => ({ x: o.cost, y: o.sav, label: o.name, route: o.route, whisker: o.route === 'reference' ? null : [o.lo, o.hi], emphasis: o.id === 'S01' || o.id === 'H1' })),
+  { x: 450, y: 98, label: 'Octopus 1×460 W', route: 'plugin', whisker: [86, 106] }, { x: 336, y: 92, label: 'City Plumbing 1×465 W', route: 'plugin', whisker: [81, 99] },
+  { x: 1934, y: 420, label: 'Zendure 2400 Pro + 4×460', route: 'hardwired', whisker: [372, 448] }, { x: 2534, y: 470, label: 'Anker Solarbank 4 Pro', route: 'hardwired', whisker: [420, 500] },
+  { x: 1299, y: 61, label: 'BLUETTI Elite 300', route: 'ups', whisker: [58, 64] }, { x: 841, y: 118, label: 'DELTA 3 Plus + 2×460 W', route: 'ups', whisker: [104, 128] },
+];
+const isos = [2, 3, 5, 10].map(n => ({ label: `pays back in ${n} yrs`, points: [[0, 0], [3000, 3000 / n]] }));
+const front = SC.filter(p => p.route !== 'whatif' && p.route !== 'reference').filter((p, _, all) => !all.some(q => q !== p && q.x <= p.x && q.y >= p.y && (q.x < p.x || q.y > p.y))).map(p => [p.x, p.y]);
+wide.append(chartCard('Cost vs yearly saving', 'Typical year · whiskers: 2006–2025 weather · dashed: payback lines · joined: the best value at each price', e => charts.createScatter(e, {
+  points: SC, isolines: isos, front, x: { label: 'Upfront cost', format: v => fmt.gbp(v, { compact: true }) }, y: { label: '£ saved a year', format: v => fmt.gbp(v) }, whiskerLabel: 'weather range',
+  onPick: p => ui.toast(`Open ${p.label}`) })));
+
+// 10. Energy vs value scatter
+const cells = [];
+AZ.forEach((a, i) => TI.forEach((t, j) => { if (i % 2 === 0 && j % 2 === 1) { const m = yieldModel(a, t); cells.push({ x: m.kwh, y: m.pPer, label: `${fmt.compass(a)} ${a}° · ${t}°`, color: 'muted' }); } }));
+const named = [['Best £', best.az, best.tilt, true], ['S35', 180, 35], ['SSW45', 200, 45], ['W45', 270, 45], ['W90', 270, 90, true]].map(([lab, a, t, em]) => { const m = yieldModel(a, t); return { x: m.kwh, y: m.pPer, label: lab, color: 'pv', emphasis: !!em, showLabel: true }; });
+gridCharts.append(chartCard('Energy vs value', 'kWh made against what each kWh is worth; dashed curves are equal £/yr', e => charts.createScatter(e, {
+  points: [...cells, ...named], x: { label: 'kWh a year', format: v => fmt.num(v), zero: false }, y: { label: 'p per kWh made', format: v => fmt.num(v, 1), zero: false },
+  isolines: [100, 125, 150, 175].map(G => ({ label: `£${G}/yr`, points: Array.from({ length: 40 }, (_, k) => { const x = 300 + k * 25; return [x, 100 * G / x]; }) })),
+  legend: [{ label: 'Every direction tried', color: 'muted' }, { label: 'Named directions', color: 'pv' }] })));
+
+// 11. Cumulative cash flow
+const years = Array.from({ length: 21 }, (_, y) => y);
+const cf = (sav, cap) => years.map(y => -cap + Array.from({ length: y }, (_, k) => sav * 1.02 ** k * (1 - 0.004 * k)).reduce((a, b) => a + b, 0));
+gridCharts.append(chartCard('Money back over 20 years', 'Cumulative, nominal £ · dashed: wettest and sunniest weather years', e => charts.createLine(e, {
+  x: { values: years, type: 'linear', label: 'Years after install', format: v => `${v}` , tipFormat: v => `Year ${v}` }, y: { format: v => fmt.gbp(v, { compact: true }) },
+  series: [{ key: 'p50', label: 'Typical', color: 'pv', values: cf(172, 650), area: true }, { key: 'p10', label: 'Dull years', color: 'muted', values: cf(150, 650), dash: true }, { key: 'p90', label: 'Sunny years', color: 'muted', values: cf(186, 650), dash: [2, 3] }],
+  markers: [{ x: 3.8, label: 'pays back · 3.8 yrs' }, { x: 12, label: 'new micro-inverter' }] })));
+
+// 11b. Range band series + null gaps: the always-on load by month, p10–p90 of days as a band
+const blMonths = MONTHS;
+const blMid = [548, 556, 571, 590, 583, 566, 551, 542, null, 539, 547, 560];       // Jun: no real days → a gap, not a zero
+const blLo = blMid.map((v, i) => (v == null ? null : v - 14 - (i % 3) * 4));
+const blHi = blMid.map((v, i) => (v == null ? null : v + 19 + (i % 4) * 5));
+gridCharts.append(chartCard('Always-on load by month', 'Band: most days (p10–p90) · line: the month’s typical always-on load · June has no real readings (a gap)', e => charts.createLine(e, {
+  ariaLabel: 'Always-on load by month', x: { values: blMonths, format: k => fmt.month(k).slice(0, 3), tipFormat: k => fmt.month(k) }, y: { format: v => fmt.w(v), zero: false },
+  series: [
+    { key: 'band', label: 'Most days (p10–p90)', color: 'load', lo: blLo, hi: blHi, format: v => fmt.w(v) },
+    { key: 'w', label: 'Always-on load', color: 'load', values: blMid, format: v => fmt.w(v) },
+  ] })));
+
+// 12. Base-load curve
+const xs = [0, 100, 200, 300, 400, 500, 600, 800, 1000, 1200, 1500];
+const sat = (x, cap, k) => cap * (1 - Math.exp(-x / k));
+gridCharts.append(chartCard('How much your always-on load matters', '£ saved a year at different always-on loads', e => charts.createLine(e, {
+  x: { values: xs, type: 'linear', label: 'Always-on load (W)', format: v => fmt.num(v) , tipFormat: v => `${fmt.w(v)} always-on` }, y: { format: v => fmt.gbp(v) },
+  series: [{ key: 'S01', label: 'Octopus 2×460', color: 'cat1', values: xs.map(x => sat(x, 185, 260) + 6) }, { key: 'H1', label: 'STREAM Ultra + 4×500', color: 'cat2', values: xs.map(x => sat(x, 430, 420) + 30) }, { key: 'U1', label: 'DELTA 3 Plus', color: 'cat3', values: xs.map(x => Math.max(0, sat(x, 70, 500) - 12)) }],
+  markers: [{ x: 482, label: 'you now' }], bands: [{ from: 800, to: 1500, label: 'all of an 800 W kit used at home' }] })));
+
+/* ── shell pieces: keepFocus, re-run bar ──────────────────────── */
+const kfHost = h('div', { class: 'stack-sm' });
+let kfCount = 2;
+const fk = (el, key) => { el.dataset.fk = key; return el; };
+const kfBuild = () => ui.put(kfHost,
+  h('p', { class: 'g-note', tabindex: '-1' }, `${kfCount} panels — each press rebuilds this whole block.`),
+  h('div', { class: 'g-row' },
+    fk(ui.button({ label: 'Fewer', size: 'sm', disabled: kfCount <= 1, onClick: () => { kfCount--; ui.keepFocus(kfHost, kfBuild, null, { fallback: 'p' }); } }), 'fewer'),
+    fk(ui.button({ label: 'More', size: 'sm', onClick: () => { kfCount++; ui.keepFocus(kfHost, kfBuild); } }), 'more')));
+kfBuild();
+const rerunHost = h('div', { class: 'rerun-bar', role: 'region', 'aria-label': 'Re-run', hidden: true });
+document.body.appendChild(rerunHost);
+const rerun = createRerunBar(rerunHost);
+root.append(section('Shell pieces: keepFocus · re-run bar',
+  h('div', { class: 'grid-2' },
+    ui.card({ title: 'ui.keepFocus', subtitle: 'Keyboard focus stays on the rebuilt button (data-fk); “Fewer” at 1 is disabled, so focus falls back to the text.', body: kfHost }),
+    ui.card({ title: 'Re-run bar', subtitle: 'dismissLabel names what the second button does. While it shows, scroll-padding-bottom keeps focused controls above it.', body: h('div', { class: 'g-row' },
+      ui.button({ label: 'Show (Not now)', size: 'sm', onClick: () => rerun.show({ text: 'Your settings changed', actionLabel: 'Re-run', onRun: () => ui.toast('Re-running'), onDismiss: () => ui.toast('Kept for later') }) }),
+      ui.button({ label: 'Show (Discard)', size: 'sm', onClick: () => rerun.show({ text: '3 unsaved changes', actionLabel: 'Apply & re-run', dismissLabel: 'Discard', onRun: () => ui.toast('Applied'), onDismiss: () => ui.toast('Discarded') }) })) }))));
+
+/* ── map ──────────────────────────────────────────────────────── */
+const mapBox = h('div', { style: { height: '280px' } });
+const azBox = h('div', { style: { height: '280px' } });
+root.append(section('Map (Leaflet loads from cdnjs only when asked)', h('div', { class: 'grid-2' },
+  ui.card({ title: 'Location', actions: ui.button({ label: 'Load map', size: 'sm', onClick: async () => { const m = await import('./js/map.js'); m.createLocationMap(mapBox, { lat: 51.5072, lon: -0.1276, onChange: p => ui.toast(`${p.lat}, ${p.lon}`) }).catch(err => ui.toast(err.message, { tone: 'bad' })); } }), body: mapBox }),
+  ui.card({ title: 'Azimuth handle', actions: ui.button({ label: 'Load map', size: 'sm', onClick: async () => { const m = await import('./js/map.js'); m.createAzimuthPicker(azBox, { lat: 51.5072, lon: -0.1276, azimuth: 200, onChange: az => ui.toast(`Facing ${fmt.compass(az)} ${az}°`) }).catch(err => ui.toast(err.message, { tone: 'bad' })); } }), body: azBox }))));
+
+/* ── print-token preview ──────────────────────────────────────── */
+document.getElementById('print-toggle').addEventListener('click', () => {
+  const html = document.documentElement;
+  if ('print' in html.dataset) delete html.dataset.print; else html.dataset.print = '';
+  charts.rerenderAll();
+});
+// Real printing, as app.js does it: paper tokens + every chart's table twin.
+window.addEventListener('beforeprint', () => { document.documentElement.dataset.print = ''; charts.setPrintMode(true); });
+window.addEventListener('afterprint', () => { delete document.documentElement.dataset.print; charts.setPrintMode(false); });
+</script>
+</body>
+</html>

@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://api.octopus.energy https://*.open-meteo.com https://api.postcodes.io; img-src 'self' data: blob: https://*.tile.openstreetmap.org https://server.arcgisonline.com; script-src 'self' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; font-src https://fonts.gstatic.com; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'">
+<title>Solar calculator — will plug-in solar pay on Agile?</title>
+<meta name="description" content="Simulate plug-in solar, batteries and power stations against your real Octopus half-hourly usage, your Agile prices and satellite sunshine for your home — then see what pays back.">
+<meta name="theme-color" content="#0f0f0c">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f0f0c'/%3E%3Cpath d='M5 23h22' stroke='%239a9686' stroke-width='1.6' stroke-linecap='round'/%3E%3Cpath d='M7 23C9 11 23 11 25 23' stroke='%239a9686' stroke-width='1.3' fill='none' stroke-dasharray='1.6 2.2'/%3E%3Ccircle cx='21.5' cy='15' r='3.6' fill='%23c4a24e'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<script type="module" src="js/app.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="masthead">
+    <div class="shell">
+        <a class="brand" href="#verdict" aria-label="Solar calculator, go to the verdict">
+            <svg class="glyph" width="44" height="26" viewBox="0 0 56 34" fill="none" aria-hidden="true">
+                <path d="M4 28h48" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity=".5"/>
+                <path d="M8 28C12 10 44 10 48 28" stroke="currentColor" stroke-width="1.2" stroke-dasharray="2 3" opacity=".55"/>
+                <circle cx="41.5" cy="17.5" r="4.2" fill="#c4a24e"/>
+            </svg>
+            <span class="brand-name"><b>Solar</b> calculator</span>
+            <span class="brand-tag">your half-hours · your sunshine</span>
+        </a>
+        <a class="ds-chip is-empty" id="ds-chip" href="#data">
+            <span class="ds-dot" aria-hidden="true"></span>
+            <span class="ds-text ds-long">No data yet · connect</span>
+            <span class="ds-text ds-short">Connect</span>
+        </a>
+    </div>
+</header>
+
+<nav class="tabbar" aria-label="Sections">
+    <div class="shell tabs" id="tabs">
+        <a class="tab" href="#verdict" data-tab="verdict"><span class="tab-idx" aria-hidden="true">01</span>Verdict</a>
+        <a class="tab" href="#usage" data-tab="usage"><span class="tab-idx" aria-hidden="true">02</span>Usage</a>
+        <a class="tab" href="#compare" data-tab="compare"><span class="tab-idx" aria-hidden="true">03</span>Compare</a>
+        <a class="tab" href="#design" data-tab="design"><span class="tab-idx" aria-hidden="true">04</span>Design</a>
+        <a class="tab" href="#orientation" data-tab="orientation"><span class="tab-idx" aria-hidden="true">05</span>Orientation</a>
+        <a class="tab" href="#method" data-tab="method"><span class="tab-idx" aria-hidden="true">06</span>Method</a>
+    </div>
+</nav>
+
+<main id="main" class="app-main" tabindex="-1">
+    <div class="shell" id="view-root">
+        <noscript>
+            <section class="card card-accent">
+                <h2 class="card-title">This calculator needs JavaScript</h2>
+                <p class="card-sub">Everything runs in your browser — your usage, prices and API key never touch a server of ours.</p>
+            </section>
+        </noscript>
+    </div>
+</main>
+
+<footer class="footer">
+    <div class="shell">
+        <div>
+            <div class="footer-title">Data &amp; attribution</div>
+            <p>Weather data by <a href="https://open-meteo.com/" rel="noopener noreferrer" target="_blank">Open-Meteo.com</a> (<a href="https://creativecommons.org/licenses/by/4.0/" rel="noopener noreferrer" target="_blank">CC BY 4.0</a>). Solar radiation © EUMETSAT, CM SAF SARAH-3 (<a href="https://doi.org/10.5676/EUM_SAF_CM/SARAH/V003" rel="noopener noreferrer" target="_blank">doi:10.5676/EUM_SAF_CM/SARAH/V003</a>) and LSA SAF; temperature and wind ECMWF IFS.</p>
+            <p>Usage, tariffs and Agile prices come from the Octopus Energy API. Your API key stays in this browser and is only ever sent to api.octopus.energy. Not affiliated with or endorsed by Octopus Energy. Map imagery © Esri and © OpenStreetMap contributors.</p>
+        </div>
+        <div>
+            <div class="footer-title">About</div>
+            <div class="footer-links">
+                <a href="https://github.com/zackpollard/slop/tree/main/projects/solar-calculator" rel="noopener noreferrer" target="_blank">Source on GitHub</a>
+                <a href="#method">Method &amp; assumptions</a>
+                <a href="#data">Your data</a>
+                <a href="https://slop.zackpollard.pro/">More from slop.zackpollard.pro</a>
+            </div>
+            <p style="margin-top:10px">Prices and regulations checked 5 Oct 2026. Estimates, not advice.</p>
+        </div>
+    </div>
+</footer>
+
+<div class="rerun-bar" id="rerun-bar" role="region" aria-label="Re-run" hidden></div>
+</body>
+</html>

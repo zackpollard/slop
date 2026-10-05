@@ -69,5 +69,8 @@ variable "projects" {
     pub-quiz = {
       subdomain = "pub-quiz.slop"
     }
+    solar-calculator = {
+      subdomain = "solar-calculator.slop"
+    }
   }
 }

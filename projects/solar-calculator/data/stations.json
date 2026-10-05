@@ -1,0 +1,1097 @@
+{
+ "version": 1,
+ "source": "power-stations-verified.json snapshot, verified live 2026-10-05 with the corrections in docs/solar-calculator/VERIFY-ups.md",
+ "priceDate": "2026-10-05",
+ "conventions": {
+  "usableKwh": "Nominal LFP pack energy (DC). Notebookcheck two-load fits imply 97-101% of nominal is reachable before BMS cut-off, so treat nominal as usable DC and apply a reserve SoC (default 10%) in the simulator. AC energy delivered is lower - see the loss model.",
+  "fixedLossW": "P0 in P_dc = P_ac/0.94 + P0, fitted to Notebookcheck drain tests at ~200 W and 1800 W (scripts/fit_losses.py, loss-fits.json). Default when null: 20 W for 1-2 kWh units, 30 W for 3-4 kWh units, sensitivity 10-45 W.",
+  "bypassOverheadW": "Not measured anywhere I could find. Model a constant 8 W (sensitivity 3-20 W) of controller/fan/charger standby whenever the unit sits in bypass 24/7; every 10 W costs about £17.5/yr at 20 p.",
+  "roundTripFormula": "AC->AC round trip at load L = eta_ch * eta_inv * L / (L + P0 * eta_inv). The report table omitted eta_inv (0.88*500/(500+19)=0.85 is wrong; correct value at P0=20 W is 0.80 at 500 W and 0.76 at 200 W). sim_ups.py already uses the correct form.",
+  "pvInputs": "Per-input limits transcribed from pvVoltageRange; pvWireablePanels = typical 400–450 W panels that can actually be connected (VERIFY-ups).",
+  "availableNow": "true when availability says 'in stock' (derived)"
+ },
+ "defaults": {
+  "etaInv": 0.94,
+  "chargeEff": 0.88,
+  "bypassW": 8,
+  "fixedLossWSmall": 20,
+  "fixedLossWLarge": 30,
+  "fixedLossSmallMaxKwh": 2.5,
+  "reservePct": 10
+ },
+ "stations": [
+  {
+   "id": "ecoflow-river-3-plus",
+   "brand": "EcoFlow",
+   "model": "RIVER 3 Plus (286 Wh; +EB300/EB600 = RIVER 3 Max / Max Plus)",
+   "kind": "power-station",
+   "usableKwh": 0.286,
+   "acOutputW": 600,
+   "acChargeW": 360,
+   "acChargeAdjustable": null,
+   "acInputLimitW": null,
+   "pvInputMaxW": 220,
+   "pvVoltageRange": "11-55 V, 13 A",
+   "pvWireableTypical": "1 small panel (<=220 W, 11-55 V / 13 A)",
+   "upsSwitchMs": 10,
+   "passThrough": "bypass",
+   "bypassDisableable": null,
+   "idleW": null,
+   "acAcEff": null,
+   "fixedLossW": null,
+   "cycles": 3000,
+   "warrantyYears": null,
+   "touMode": null,
+   "scheduling": "EcoFlow app (charge/discharge limits, AC timeout). TOU mode not advertised for RIVER 3 [INF]. Fallback that works on every unit: put the AC INPUT lead on a 13 A smart plug (a UK 13 A smart plug such as TP-Link Tapo P110 (UK, 13 A / 2990 W); NOT the Shelly Plug S Gen3, which is an EU Schuko 12 A / 2500 W model; keep servers + charge power <= ~2.9 kW through it) and switch it off in expensive Agile slots -> unit transfers loads to its inverter (UPS transfer) and back when the plug turns on. Home Assistant: tolwi/hassio-ecoflow-cloud (private app API or official EcoFlow developer public API; sensors + AC charge power, charge/discharge limits, AC on/off) [2ND]",
+   "controlPaths": {
+    "appSchedule": false,
+    "haControl": "tolwi/hassio-ecoflow-cloud lists RIVER_3 (private API): Max Charge Level, AC charging controls [2ND - README device list]",
+    "bypassDisable": null,
+    "smartPlugFallback": true
+   },
+   "feasibleStrategies": [
+    "peakcut19",
+    "peakcutNight (via HA charge-level cap)"
+   ],
+   "expansion": [
+    {
+     "model": "RIVER 3 Plus Smart Extra Battery EB300",
+     "kwh": 0.286,
+     "priceGbp": 99
+    },
+    {
+     "model": "RIVER 3 Plus Smart Extra Battery EB600 (sold out)",
+     "kwh": 0.572,
+     "priceGbp": 259
+    }
+   ],
+   "priceGbp": 199,
+   "rrpGbp": 279,
+   "priceDate": "2026-10-05",
+   "priceSource": "https://uk.ecoflow.com/products.json (Shopify, fetched 2026-10-05) + product page https://uk.ecoflow.com/products/river-3-plus-portable-power-station",
+   "availability": "base SKU sold out; Tool Pegboard bundle £218 in stock; RIVER 3 Max £269 / Max Plus £319 sold out",
+   "installRoute": "plug-in appliance (13 A socket input, own outlets; not grid-tied)",
+   "confidence": "high (price/spec), low (losses)",
+   "notes": "Too small for a 300-800 W server rack (600 W inverter, 286-858 Wh). Useful only for a router/NAS. Spec: 600 W (1200 W surge/X-Boost), AC in 360 W, <10 ms UPS, LiFePO4 3000 cycles to 80%. Warranty not confirmed on the UK page (null). Idle draw unpublished; EcoFlow markets \"double runtime for 3 W loads\" (low idle) but no measurement found.",
+   "availableNow": false,
+   "preorder": false,
+   "pvInputs": [
+    {
+     "maxDcW": 220,
+     "vMinV": 11,
+     "vocMaxV": 55,
+     "iMaxA": 13
+    }
+   ],
+   "pvWireablePanels": 0,
+   "pvNote": "one small (≤220 W) panel only"
+  },
+  {
+   "id": "ecoflow-delta-3-classic",
+   "brand": "EcoFlow",
+   "model": "DELTA 3 Classic (1024 Wh)",
+   "kind": "power-station",
+   "usableKwh": 1.024,
+   "acOutputW": 1800,
+   "acChargeW": 1400,
+   "acChargeAdjustable": true,
+   "acInputLimitW": null,
+   "pvInputMaxW": 500,
+   "pvVoltageRange": "11-60 V (single input)",
+   "pvWireableTypical": "1 x 400-450 W panel (single 500 W input, Voc <= 60 V)",
+   "upsSwitchMs": 10,
+   "passThrough": "bypass",
+   "bypassDisableable": null,
+   "idleW": null,
+   "acAcEff": null,
+   "fixedLossW": null,
+   "cycles": null,
+   "warrantyYears": 5,
+   "touMode": true,
+   "scheduling": "EcoFlow app; Storm Guard mode listed in EcoFlow comparison table; Scheduled Tasks (timed charge/discharge missions), Self-Powered Mode and Storm Guard confirmed on the UK page. Fallback that works on every unit: put the AC INPUT lead on a 13 A smart plug (a UK 13 A smart plug such as TP-Link Tapo P110 (UK, 13 A / 2990 W); NOT the Shelly Plug S Gen3, which is an EU Schuko 12 A / 2500 W model; keep servers + charge power <= ~2.9 kW through it) and switch it off in expensive Agile slots -> unit transfers loads to its inverter (UPS transfer) and back when the plug turns on. Home Assistant: tolwi/hassio-ecoflow-cloud (private app API or official EcoFlow developer public API; sensors + AC charge power, charge/discharge limits, AC on/off) [2ND]",
+   "controlPaths": {
+    "appSchedule": true,
+    "haControl": "probably the tolwi DELTA_3 device class (not listed by name) [INF]",
+    "bypassDisable": null,
+    "smartPlugFallback": true
+   },
+   "feasibleStrategies": [
+    "peakcut19",
+    "peakcutNight"
+   ],
+   "expansion": [],
+   "priceGbp": 399,
+   "rrpGbp": 499,
+   "priceDate": "2026-10-05",
+   "priceSource": "https://uk.ecoflow.com/products.json (Shopify, fetched 2026-10-05) + product page https://uk.ecoflow.com/products/delta-3-classic-portable-power-station",
+   "availability": "PRE-ORDER: shipments start 12 Oct 2026 (UK product page 2026-10-05)",
+   "installRoute": "plug-in appliance (13 A socket input, own outlets; not grid-tied)",
+   "confidence": "high (price/spec), low (losses)",
+   "notes": "Cheapest 1 kWh LFP unit found. Only 2 AC outlets, no extra-battery port, no 12 V DC. 1800 W (3600 W surge, X-Boost 2400 W). Warranty: \"Up to 5-Year\" = 3 y standard + 2 y on app registration (UK page). Cycle life not stated on the UK page (DELTA 3 siblings: 4000 cycles to 80%).",
+   "availableNow": false,
+   "preorder": true,
+   "pvInputs": [
+    {
+     "maxDcW": 500,
+     "vMinV": 11,
+     "vocMaxV": 60,
+     "iMaxA": null
+    }
+   ],
+   "pvWireablePanels": 1
+  },
+  {
+   "id": "ecoflow-delta-3-plus",
+   "brand": "EcoFlow",
+   "model": "DELTA 3 Plus (1024 Wh)",
+   "kind": "power-station",
+   "usableKwh": 1.024,
+   "acOutputW": 1800,
+   "acChargeW": 1500,
+   "acChargeAdjustable": true,
+   "acInputLimitW": null,
+   "pvInputMaxW": 1000,
+   "pvVoltageRange": "2 x (11-60 V, 500 W)",
+   "pvWireableTypical": "2 x 400-450 W panels (one per 500 W input) ~0.8-0.9 kWp",
+   "upsSwitchMs": 10,
+   "passThrough": "bypass",
+   "bypassDisableable": true,
+   "idleW": 17,
+   "acAcEff": 0.81,
+   "fixedLossW": null,
+   "cycles": 4000,
+   "warrantyYears": 5,
+   "touMode": true,
+   "scheduling": "EcoFlow app: AC charge rate 100-1500 W in 100 W steps (nextpit); TOU mode, Scheduled Tasks, Backup Reserve level, \"Disable grid bypass\", Storm Guard (DELTA 3 Plus user manual icons list). USB-C HID + EcoFlow PowerManager/NUT for clean server shutdown. Home Assistant: tolwi/hassio-ecoflow-cloud (private app API or official EcoFlow developer public API; sensors + AC charge power, charge/discharge limits, AC on/off) [2ND]",
+   "controlPaths": {
+    "appSchedule": true,
+    "haControl": "tolwi DELTA_3 class: Grid Bypass switch, Max Charge Level, AC Charging Power, Backup Reserve [2ND - README]",
+    "bypassDisable": true,
+    "smartPlugFallback": true
+   },
+   "feasibleStrategies": [
+    "peakcut19",
+    "peakcutNight",
+    "dynamicAgile (HA)",
+    "online (bypass disabled)"
+   ],
+   "expansion": [
+    {
+     "model": "DELTA 3 Smart Extra Battery (1024 Wh)",
+     "kwh": 1.024,
+     "priceGbp": 459
+    },
+    {
+     "model": "DELTA Pro 3 Smart Extra Battery (4096 Wh, compatible, max system 5 kWh)",
+     "kwh": 4.096,
+     "priceGbp": 1679
+    }
+   ],
+   "priceGbp": 599,
+   "rrpGbp": 699,
+   "priceDate": "2026-10-05",
+   "priceSource": "https://uk.ecoflow.com/products.json (Shopify, fetched 2026-10-05) + product page https://uk.ecoflow.com/products/delta-3-series-portable-power-station",
+   "availability": "in stock (DELTA 3 non-Plus is £649, i.e. dearer than the Plus today)",
+   "installRoute": "plug-in appliance (13 A socket input, own outlets; not grid-tied)",
+   "confidence": "high (price/spec/modes), low (idle/eff)",
+   "notes": "Best-documented small option for this use: standby UPS <10 ms, HID/NUT server-shutdown support, app TOU + scheduled tasks + bypass-disable. idleW 17 is a secondary, unsourced figure (poweranytimeanywhere.com); acAcEff 0.81 = nextpit full cycle 1175 Wh in / 950 Wh out at an unstated load (expect ~0.72-0.78 at 300-500 W). Expandable to 5 kWh. VERIFIED: 1 kWh cannot cover 16:00-19:00 at 500 W (needs ~1.8 kWh DC incl. losses) - pair with the 1 kWh extra battery (bundle £1,028) or choose a 2 kWh unit for a 500 W load.",
+   "availableNow": true,
+   "preorder": false,
+   "pvInputs": [
+    {
+     "maxDcW": 500,
+     "vMinV": 11,
+     "vocMaxV": 60,
+     "iMaxA": null
+    },
+    {
+     "maxDcW": 500,
+     "vMinV": 11,
+     "vocMaxV": 60,
+     "iMaxA": null
+    }
+   ],
+   "pvWireablePanels": 2
+  },
+  {
+   "id": "ecoflow-delta-3-max-plus",
+   "brand": "EcoFlow",
+   "model": "DELTA 3 Max Plus (2048 Wh)",
+   "kind": "power-station",
+   "usableKwh": 2.048,
+   "acOutputW": 3000,
+   "acChargeW": 2300,
+   "acChargeAdjustable": true,
+   "acInputLimitW": 2300,
+   "pvInputMaxW": 1000,
+   "pvVoltageRange": "11-60 V, 18 A max per input (2 inputs, 1000 W total)",
+   "pvWireableTypical": "2 x 400-450 W panels, one per input (~0.8-0.9 kWp). 1.6 kWp is NOT wireable: 2 typical panels in series exceed 60 V Voc, in parallel exceed the 18 A Isc limit.",
+   "upsSwitchMs": 10,
+   "passThrough": "bypass",
+   "bypassDisableable": true,
+   "idleW": null,
+   "acAcEff": null,
+   "fixedLossW": null,
+   "cycles": null,
+   "warrantyYears": 5,
+   "touMode": true,
+   "scheduling": "EcoFlow app: Self-powered mode (with EcoFlow smart meter), TOU mode, Scheduled task mode, Storm Guard, \"Bypass mode disabled\" toggle, charge/discharge limits, Output Priority / Smart Power Reserve (load shedding by outlet). USB-C HID for UPS signalling. Home Assistant: tolwi/hassio-ecoflow-cloud (private app API or official EcoFlow developer public API; sensors + AC charge power, charge/discharge limits, AC on/off) [2ND]",
+   "controlPaths": {
+    "appSchedule": true,
+    "haControl": "tolwi DELTA_3_MAX_PLUS (private API): Grid Bypass, Max Charge Level, AC Charging Power, Backup Reserve; official API: Bypass Output Disabled, Max/Min level [2ND - README]",
+    "bypassDisable": true,
+    "smartPlugFallback": true
+   },
+   "feasibleStrategies": [
+    "peakcut19",
+    "peakcutNight",
+    "dynamicAgile (HA)",
+    "online (bypass disabled)"
+   ],
+   "expansion": [
+    {
+     "model": "DELTA 3 Max Plus Smart Extra Battery (2048 Wh; up to 2 -> 10 kWh with other EBs)",
+     "kwh": 2.048,
+     "priceGbp": 799
+    },
+    {
+     "model": "DELTA 3 Smart Extra Battery (1024 Wh, compatible)",
+     "kwh": 1.024,
+     "priceGbp": 459
+    },
+    {
+     "model": "DELTA Pro 3 Smart Extra Battery (4096 Wh, compatible)",
+     "kwh": 4.096,
+     "priceGbp": 1679
+    }
+   ],
+   "priceGbp": 1099,
+   "rrpGbp": 1399,
+   "priceDate": "2026-10-05",
+   "priceSource": "https://uk.ecoflow.com/products.json (Shopify, fetched 2026-10-05) + product page https://uk.ecoflow.com/products/delta-3-max-series-portable-power-station",
+   "availability": "PRE-ORDER: ships from 30 Oct 2026; extra battery ships from 12 Oct 2026 (currently sold out)",
+   "installRoute": "plug-in appliance (13 A socket input, own outlets; not grid-tied)",
+   "confidence": "high (price/spec/modes), unknown (losses)",
+   "notes": "User manual (EN, 2026-02-02) documents bypass mode (AC out = grid via bypass circuit when charging; UK AC in 10 A), \"Bypass mode disabled\", TOU and Scheduled Task modes. Non-Plus DELTA 3 Max (2400 W, 500 W PV, no EB port) is £1,199, i.e. dearer. Warranty 3 y + 2 y on app registration. Cycle count not stated on UK page (EcoFlow claims ~10-year life). VERIFIED: \"Self-powered mode\" works by feeding the house via EcoFlow grid-feeding hardware (smart meter + STREAM/PowerStream or Smart Home Panel) - a plug-in battery export path that is prohibited in GB; with own-outlet-only use treat TOU/Scheduled task/bypass-disable as the usable modes. AC input 10 A UK: servers + charge power share ~2.3 kW. fixedLossW unmeasured: sim used 20 W; the same-size measured unit (C2000 Gen 2) is 38 W, which only lowers battery-only savings by ~4 GBP/yr.",
+   "availableNow": false,
+   "preorder": true,
+   "pvInputs": [
+    {
+     "maxDcW": 500,
+     "vMinV": 11,
+     "vocMaxV": 60,
+     "iMaxA": 18
+    },
+    {
+     "maxDcW": 500,
+     "vMinV": 11,
+     "vocMaxV": 60,
+     "iMaxA": 18
+    }
+   ],
+   "pvWireablePanels": 2
+  },
+  {
+   "id": "ecoflow-delta-pro-3",
+   "brand": "EcoFlow",
+   "model": "DELTA Pro 3 (4096 Wh)",
+   "kind": "power-station",
+   "usableKwh": 4.096,
+   "acOutputW": 4000,
+   "acChargeW": 2900,
+   "acChargeAdjustable": true,
+   "acInputLimitW": 2900,
+   "pvInputMaxW": 2600,
+   "pvVoltageRange": "HPV 30-150 V/15 A (1600 W) + LPV 11-60 V/20 A (1000 W)",
+   "pvWireableTypical": "3 x 400-450 W in series on HPV (check cold Voc < 150 V) + 1 on LPV (~1.6-1.8 kWp)",
+   "upsSwitchMs": 10,
+   "passThrough": "bypass",
+   "bypassDisableable": null,
+   "idleW": null,
+   "acAcEff": null,
+   "fixedLossW": null,
+   "cycles": 4000,
+   "warrantyYears": 5,
+   "touMode": true,
+   "scheduling": "EcoFlow app: Backup Reserve, TOU / self-powered modes [2ND: manual search snippets], AC charge limit; pairs with EcoFlow Smart Home Panel 3 / Manual Transfer Switch (electrician-installed changeover). Home Assistant: tolwi/hassio-ecoflow-cloud (private app API or official EcoFlow developer public API; sensors + AC charge power, charge/discharge limits, AC on/off) [2ND]",
+   "controlPaths": {
+    "appSchedule": true,
+    "haControl": "tolwi DELTA_PRO_3 (private + official API) [2ND - README]",
+    "bypassDisable": null,
+    "smartPlugFallback": true
+   },
+   "feasibleStrategies": [
+    "peakcut19",
+    "peakcutNight",
+    "dynamicAgile (HA)"
+   ],
+   "expansion": [
+    {
+     "model": "DELTA Pro 3 Smart Extra Battery (4096 Wh, up to 2 -> 12 kWh)",
+     "kwh": 4.096,
+     "priceGbp": 1679
+    }
+   ],
+   "priceGbp": 2599,
+   "rrpGbp": 2799,
+   "priceDate": "2026-10-05",
+   "priceSource": "https://uk.ecoflow.com/products.json (Shopify, fetched 2026-10-05) + product page https://uk.ecoflow.com/products/delta-pro-3-portable-power-station",
+   "availability": "in stock; refurbished £2,199",
+   "installRoute": "plug-in appliance (13 A socket input, own outlets; not grid-tied)",
+   "confidence": "high (price/spec), low (losses)",
+   "notes": "HPV input takes 3 x 400-450 W panels in series (Voc < 150 V) -> best PV fit of the EcoFlow range. 51.5 kg. 4000 cycles to 80% at 0.5C/25 C. Large inverter -> expect higher fixed losses at a 300-500 W load (no measurement found; use ~30 W). VERIFIED: 2900 W at 12.5 A is at the 13 A plug limit - cap charge power so servers + charge <= ~2.9 kW.",
+   "availableNow": true,
+   "preorder": false,
+   "pvInputs": [
+    {
+     "maxDcW": 1600,
+     "vMinV": 30,
+     "vocMaxV": 150,
+     "iMaxA": 15
+    },
+    {
+     "maxDcW": 1000,
+     "vMinV": 11,
+     "vocMaxV": 60,
+     "iMaxA": 20
+    }
+   ],
+   "pvWireablePanels": 4
+  },
+  {
+   "id": "anker-solix-c1000-gen2",
+   "brand": "Anker SOLIX",
+   "model": "C1000 Gen 2 (1024 Wh)",
+   "kind": "power-station",
+   "usableKwh": 1.024,
+   "acOutputW": 2000,
+   "acChargeW": 1200,
+   "acChargeAdjustable": true,
+   "acInputLimitW": null,
+   "pvInputMaxW": 600,
+   "pvVoltageRange": "11-28 V/8.2 A; 29-60 V/14.5 A (XT60i)",
+   "pvWireableTypical": "1 x 400-450 W panel (60 V max)",
+   "upsSwitchMs": 10,
+   "passThrough": "bypass",
+   "bypassDisableable": null,
+   "idleW": 14,
+   "acAcEff": null,
+   "fixedLossW": null,
+   "cycles": 4000,
+   "warrantyYears": 5,
+   "touMode": true,
+   "scheduling": "Anker app: Standard and Time-of-Use (TOU) modes (\"automatically optimises charging and discharging based on electricity price fluctuations\"); UltraFast 1600 W charging toggle; AC bypass up to 1800 W. Home Assistant: thomluther/hacs-anker-solix (cloud + optional Anker MQTT; portable power stations partially supported) [2ND]",
+   "controlPaths": {
+    "appSchedule": true,
+    "haControl": "thomluther/ha-anker-solix: A1763/A1765 C1000(X) Gen 2 \"MQTT monitoring & control\" [2ND - README]",
+    "bypassDisable": null,
+    "smartPlugFallback": true
+   },
+   "feasibleStrategies": [
+    "peakcut19",
+    "peakcutNight",
+    "dynamicAgile (HA, MQTT - unproven)"
+   ],
+   "expansion": [],
+   "priceGbp": 474,
+   "rrpGbp": 999,
+   "priceDate": "2026-10-05",
+   "priceSource": "https://www.ankersolix.com/uk/products/c1000-gen2 (JSON-LD Offer price)",
+   "availability": "in stock",
+   "installRoute": "plug-in appliance (13 A socket input, own outlets; not grid-tied)",
+   "confidence": "high (price/spec), low (idle)",
+   "notes": "AC in: 1200 W normal, 1600 W UltraFast; bypass 1800 W max. No expansion port (Anker says use the older C1000 if you need it). idleW 14 is a secondary unsourced figure. Notebookcheck says the C1000 Gen 2 has a TOU mode (in F3000 review).",
+   "availableNow": true,
+   "preorder": false,
+   "pvInputs": [
+    {
+     "maxDcW": 600,
+     "vMinV": 11,
+     "vocMaxV": 60,
+     "iMaxA": 14.5
+    }
+   ],
+   "pvWireablePanels": 1
+  },
+  {
+   "id": "anker-solix-c2000-gen2",
+   "brand": "Anker SOLIX",
+   "model": "C2000 Gen 2 (2048 Wh)",
+   "kind": "power-station",
+   "usableKwh": 2.048,
+   "acOutputW": 2400,
+   "acChargeW": 2300,
+   "acChargeAdjustable": true,
+   "acInputLimitW": null,
+   "pvInputMaxW": 800,
+   "pvVoltageRange": "11-28 V/8.2 A; 28-60 V/17 A (XT60i)",
+   "pvWireableTypical": "1 x 400-450 W panel (28-60 V / 17 A input)",
+   "upsSwitchMs": 10,
+   "passThrough": "bypass",
+   "bypassDisableable": null,
+   "idleW": 9,
+   "acAcEff": 0.68,
+   "fixedLossW": 38,
+   "cycles": 4000,
+   "warrantyYears": 5,
+   "touMode": true,
+   "scheduling": "Anker app modes: Standard, Time-of-Use (TOU), Storm Guard, Fast Charging Plan; charge-rate limit; charge/discharge limits. No direct dynamic-tariff link (Notebookcheck). Home Assistant: thomluther/hacs-anker-solix (cloud + optional Anker MQTT; portable power stations partially supported) [2ND]",
+   "controlPaths": {
+    "appSchedule": true,
+    "haControl": "thomluther/ha-anker-solix: A1783/A1785 C2000(X) Gen 2 \"MQTT monitoring & control\" [2ND - README]",
+    "bypassDisable": null,
+    "smartPlugFallback": true
+   },
+   "feasibleStrategies": [
+    "peakcut19",
+    "peakcutNight",
+    "dynamicAgile (HA, MQTT - unproven)"
+   ],
+   "expansion": [
+    {
+     "model": "Anker SOLIX BP2000 Expansion Battery (Gen 2) 2048 Wh (price = bundle £1,848 minus unit £1,099)",
+     "kwh": 2.048,
+     "priceGbp": 749
+    }
+   ],
+   "priceGbp": 1099,
+   "rrpGbp": 1499.99,
+   "priceDate": "2026-10-05",
+   "priceSource": "https://www.ankersolix.com/uk/products/c2000-gen2 (JSON-LD Offer price) and https://www.ankersolix.com/uk/products/c2000-gen-2-expansion-battery (bundle £1,848)",
+   "availability": "in stock",
+   "installRoute": "plug-in appliance (13 A socket input, own outlets; not grid-tied)",
+   "confidence": "high (price/spec/measured eff)",
+   "notes": "Notebookcheck test: ~1600 Wh AC out at 200 W load (79%), ~1850 Wh at 1800 W (90%); AC charge 2350 Wh in for full (87%). => AC->AC 0.68 at 200 W; fitted fixed loss P0 ~38 W in battery mode (eta_inv 0.94). Anker claims 9 W idle (lab, \"Never Turn Off\" mode) - fine when idle but NOT representative of losses while serving a load.",
+   "availableNow": true,
+   "preorder": false,
+   "pvInputs": [
+    {
+     "maxDcW": 800,
+     "vMinV": 11,
+     "vocMaxV": 60,
+     "iMaxA": 17
+    }
+   ],
+   "pvWireablePanels": 1
+  },
+  {
+   "id": "anker-solix-f3000",
+   "brand": "Anker SOLIX",
+   "model": "F3000 (3072 Wh)",
+   "kind": "power-station",
+   "usableKwh": 3.072,
+   "acOutputW": 3600,
+   "acChargeW": 2990,
+   "acChargeAdjustable": true,
+   "acInputLimitW": null,
+   "pvInputMaxW": 2400,
+   "pvVoltageRange": "High-PV 11-165 V (1600 W) + Low-PV 11-60 V (800 W)",
+   "pvWireableTypical": "3 x 400-450 W in series on High-PV (<165 V) + 1 on Low-PV (~1.6-1.8 kWp)",
+   "upsSwitchMs": 20,
+   "passThrough": "bypass",
+   "bypassDisableable": null,
+   "idleW": null,
+   "acAcEff": 0.72,
+   "fixedLossW": 29,
+   "cycles": 4000,
+   "warrantyYears": 5,
+   "touMode": true,
+   "scheduling": "Anker app: TOU mode (UK page FAQ \"Enable TOU mode to charge when prices are low and power when prices are high\"; Notebookcheck EU test found none - firmware-dependent); max AC charge settable in 100 W steps. Home Assistant: thomluther/hacs-anker-solix (cloud + optional Anker MQTT; portable power stations partially supported) [2ND]",
+   "controlPaths": {
+    "appSchedule": true,
+    "haControl": "thomluther/ha-anker-solix: A1782 F3000 \"MQTT monitoring\" only (no control) [2ND - README]",
+    "bypassDisable": null,
+    "smartPlugFallback": true
+   },
+   "feasibleStrategies": [
+    "peakcut19",
+    "peakcutNight"
+   ],
+   "expansion": [
+    {
+     "model": "Anker SOLIX F3000 Expansion Battery 3072 Wh (price = bundle £3,348 minus unit £1,899; up to 12 kWh)",
+     "kwh": 3.072,
+     "priceGbp": 1449
+    }
+   ],
+   "priceGbp": 1899,
+   "rrpGbp": 2999,
+   "priceDate": "2026-10-05",
+   "priceSource": "https://www.ankersolix.com/uk/products/f3000 (JSON-LD Offer price) and https://www.ankersolix.com/uk/products/f3000-expansion-battery (bundle £3,348)",
+   "availability": "in stock",
+   "installRoute": "plug-in appliance (13 A socket input, own outlets; not grid-tied)",
+   "confidence": "high (price/spec/measured eff)",
+   "notes": "Notebookcheck: 2500 Wh out at 200 W (81%), ~2800 Wh at 1800 W (91%), AC charge 3480 Wh in (88%, 2992 W max). => AC->AC 0.72 at 200 W; fitted fixed loss ~29 W. 20 ms UPS is borderline for some server PSUs (ATX hold-up >=16-17 ms at full load). 41.5 kg, wheels.",
+   "availableNow": true,
+   "preorder": false,
+   "pvInputs": [
+    {
+     "maxDcW": 1600,
+     "vMinV": 11,
+     "vocMaxV": 165,
+     "iMaxA": null
+    },
+    {
+     "maxDcW": 800,
+     "vMinV": 11,
+     "vocMaxV": 60,
+     "iMaxA": null
+    }
+   ],
+   "pvWireablePanels": 4
+  },
+  {
+   "id": "bluetti-elite-100-v2",
+   "brand": "BLUETTI",
+   "model": "Elite 100 V2 (1024 Wh)",
+   "kind": "power-station",
+   "usableKwh": 1.024,
+   "acOutputW": 1800,
+   "acChargeW": 1200,
+   "acChargeAdjustable": true,
+   "acInputLimitW": null,
+   "pvInputMaxW": 1000,
+   "pvVoltageRange": "12-60 V [INF from Elite family]",
+   "pvWireableTypical": "1 x 400-450 W panel (single input; current limit unpublished)",
+   "upsSwitchMs": 10,
+   "passThrough": "bypass",
+   "bypassDisableable": null,
+   "idleW": null,
+   "acAcEff": null,
+   "fixedLossW": null,
+   "cycles": 4000,
+   "warrantyYears": 5,
+   "touMode": null,
+   "scheduling": "BLUETTI app: charge speed (TurboBoost 1200 W / standard / silent), alerts, Power Memory. No TOU/off-peak schedule advertised. Fallback that works on every unit: put the AC INPUT lead on a 13 A smart plug (a UK 13 A smart plug such as TP-Link Tapo P110 (UK, 13 A / 2990 W); NOT the Shelly Plug S Gen3, which is an EU Schuko 12 A / 2500 W model; keep servers + charge power <= ~2.9 kW through it) and switch it off in expensive Agile slots -> unit transfers loads to its inverter (UPS transfer) and back when the plug turns on. Home Assistant: community BLE integrations (bluetti_mqtt / bluetti-bt) for older AC/EB models; Elite-series support unverified [2ND/INF]",
+   "controlPaths": {
+    "appSchedule": false,
+    "haControl": "none verified for Elite series",
+    "bypassDisable": null,
+    "smartPlugFallback": true
+   },
+   "feasibleStrategies": [
+    "peakcut19"
+   ],
+   "expansion": [],
+   "priceGbp": 399,
+   "rrpGbp": 599,
+   "priceDate": "2026-10-05",
+   "priceSource": "https://www.bluettipower.co.uk/products/elite-100-v2-portable-power-station.js (Shopify)",
+   "availability": "in stock",
+   "installRoute": "plug-in appliance (13 A socket input, own outlets; not grid-tied)",
+   "confidence": "high (price), medium (spec), unknown (losses)",
+   "notes": "10 ms UPS, 1000 W solar, 4000+ cycles, 30 dB <600 W. Warranty 5 y assumed from Elite range (Elite 200 V2 page states 5 y) [INF]. VERIFIED: Smart-plug-only control: plugging the input back in means bypass + immediate full-rate recharge, so only the \"recharge from 19:00\" strategy is possible (sim: ~-5 to +20 GBP/yr battery-only at 500 W) unless a Home Assistant integration can cap charging.",
+   "availableNow": true,
+   "preorder": false,
+   "pvInputs": [
+    {
+     "maxDcW": 1000,
+     "vMinV": 12,
+     "vocMaxV": 60,
+     "iMaxA": null
+    }
+   ],
+   "pvWireablePanels": 1
+  },
+  {
+   "id": "bluetti-elite-200-v2",
+   "brand": "BLUETTI",
+   "model": "Elite 200 V2 (2073.6 Wh)",
+   "kind": "power-station",
+   "usableKwh": 2.0736,
+   "acOutputW": 2600,
+   "acChargeW": 2300,
+   "acChargeAdjustable": true,
+   "acInputLimitW": null,
+   "pvInputMaxW": 1000,
+   "pvVoltageRange": "12-60 V, 20 A",
+   "pvWireableTypical": "1 x 400-450 W panel (Voc 12-60 V, 20 A, 1,000 W max)",
+   "upsSwitchMs": 15,
+   "passThrough": "bypass",
+   "bypassDisableable": null,
+   "idleW": null,
+   "acAcEff": null,
+   "fixedLossW": null,
+   "cycles": 6000,
+   "warrantyYears": 5,
+   "touMode": true,
+   "scheduling": "BLUETTI app UPS working modes (UK FAQ): Standard UPS (holds SoC at 100%), Time control UPS (grid-charge off-peak, run loads from battery at peak), PV priority UPS, Custom UPS. Fallback: a UK 13 A smart plug such as TP-Link Tapo P110 (UK, 13 A / 2990 W); NOT the Shelly Plug S Gen3, which is an EU Schuko 12 A / 2500 W model; keep servers + charge power <= ~2.9 kW through it on the AC input. Home Assistant support for Elite series unverified.",
+   "controlPaths": {
+    "appSchedule": true,
+    "haControl": "none verified",
+    "bypassDisable": null,
+    "smartPlugFallback": true
+   },
+   "feasibleStrategies": [
+    "peakcut19",
+    "peakcutNight (Time control UPS)"
+   ],
+   "expansion": [],
+   "priceGbp": 849,
+   "rrpGbp": 1199,
+   "priceDate": "2026-10-05",
+   "priceSource": "https://www.bluettipower.co.uk/products/elite-200-v2-portable-power-station.js (Shopify)",
+   "availability": "in stock",
+   "installRoute": "plug-in appliance (13 A socket input, own outlets; not grid-tied)",
+   "confidence": "high (price), medium (spec), low (losses)",
+   "notes": "Cheapest 2 kWh LFP unit found (£849). UPS 15 ms per storagereview (Bluetti claim). A BLUETTI forum user reported ~45-50 W extra grid draw above a ~240 W AC load in PV-priority mode with AC Eco off (unverified, forum moved) - if true this unit is costly as a 24/7 pass-through. Expansion with B80/B300K not supported per FAQ wording [INF]. VERIFIED: cheapest 2 kWh unit that can defer charging to night slots by itself (Time control UPS). Default Standard UPS mode keeps SoC at 100% 24/7 (calendar ageing).",
+   "availableNow": true,
+   "preorder": false,
+   "pvInputs": [
+    {
+     "maxDcW": 1000,
+     "vMinV": 12,
+     "vocMaxV": 60,
+     "iMaxA": 20
+    }
+   ],
+   "pvWireablePanels": 1
+  },
+  {
+   "id": "bluetti-elite-300",
+   "brand": "BLUETTI",
+   "model": "Elite 300 (3014.4 Wh)",
+   "kind": "power-station",
+   "usableKwh": 3.0144,
+   "acOutputW": 2400,
+   "acChargeW": 2300,
+   "acChargeAdjustable": true,
+   "acInputLimitW": null,
+   "pvInputMaxW": 1200,
+   "pvVoltageRange": "12-60 V, 22 A max (1,200 W)",
+   "pvWireableTypical": "1 x 400-450 W panel (22 A limit rules out 2 typical panels in parallel)",
+   "upsSwitchMs": 10,
+   "passThrough": "bypass",
+   "bypassDisableable": null,
+   "idleW": null,
+   "acAcEff": 0.77,
+   "fixedLossW": 11,
+   "cycles": 6000,
+   "warrantyYears": 5,
+   "touMode": false,
+   "scheduling": "BLUETTI app: charge speed (standard 1200 W / turbo ~2300 W), ECO, power lifting; Notebookcheck missed \"charging at off-peak times\". Fallback that works on every unit: put the AC INPUT lead on a 13 A smart plug (a UK 13 A smart plug such as TP-Link Tapo P110 (UK, 13 A / 2990 W); NOT the Shelly Plug S Gen3, which is an EU Schuko 12 A / 2500 W model; keep servers + charge power <= ~2.9 kW through it) and switch it off in expensive Agile slots -> unit transfers loads to its inverter (UPS transfer) and back when the plug turns on. Home Assistant: community BLE integrations (bluetti_mqtt / bluetti-bt) for older AC/EB models; Elite-series support unverified [2ND/INF]",
+   "controlPaths": {
+    "appSchedule": false,
+    "haControl": "none verified",
+    "bypassDisable": null,
+    "smartPlugFallback": true
+   },
+   "feasibleStrategies": [
+    "peakcut19"
+   ],
+   "expansion": [],
+   "priceGbp": 1299,
+   "rrpGbp": 1599,
+   "priceDate": "2026-10-05",
+   "priceSource": "https://www.bluettipower.co.uk/products/elite-300-portable-power-station.js (Shopify)",
+   "availability": "in stock",
+   "installRoute": "plug-in appliance (13 A socket input, own outlets; not grid-tied)",
+   "confidence": "high (price/measured eff), medium (spec)",
+   "notes": "Most efficient unit measured at low load: Notebookcheck 2650 Wh out at 200 W (88%), 92% at 1800 W; AC charge 3450 Wh in at 1200 W (87%), 85% at 2300 W. => AC->AC 0.77 at 200 W; fitted fixed loss ~11 W. Only 2 AC outlets, not expandable, >50 dB fan at high load. VERIFIED: most efficient measured unit BUT Smart-plug-only control: plugging the input back in means bypass + immediate full-rate recharge, so only the \"recharge from 19:00\" strategy is possible (sim: ~-5 to +20 GBP/yr battery-only at 500 W) unless a Home Assistant integration can cap charging. Do not recommend it for Agile shifting without proven charge control.",
+   "availableNow": true,
+   "preorder": false,
+   "pvInputs": [
+    {
+     "maxDcW": 1200,
+     "vMinV": 12,
+     "vocMaxV": 60,
+     "iMaxA": 22
+    }
+   ],
+   "pvWireablePanels": 1
+  },
+  {
+   "id": "bluetti-elite-400",
+   "brand": "BLUETTI",
+   "model": "Elite 400 (3840 Wh)",
+   "kind": "power-station",
+   "usableKwh": 3.84,
+   "acOutputW": 2600,
+   "acChargeW": 2300,
+   "acChargeAdjustable": true,
+   "acInputLimitW": null,
+   "pvInputMaxW": 1000,
+   "pvVoltageRange": "XT60, 1,000 W (voltage window unpublished; assume 12-60 V like the Elite family) [INF]",
+   "pvWireableTypical": "1 x 400-450 W panel",
+   "upsSwitchMs": 15,
+   "passThrough": "bypass",
+   "bypassDisableable": null,
+   "idleW": null,
+   "acAcEff": 0.71,
+   "fixedLossW": 45,
+   "cycles": null,
+   "warrantyYears": 5,
+   "touMode": null,
+   "scheduling": "BLUETTI app: UPS settings, ECO, fast-charge toggle. Fallback that works on every unit: put the AC INPUT lead on a 13 A smart plug (a UK 13 A smart plug such as TP-Link Tapo P110 (UK, 13 A / 2990 W); NOT the Shelly Plug S Gen3, which is an EU Schuko 12 A / 2500 W model; keep servers + charge power <= ~2.9 kW through it) and switch it off in expensive Agile slots -> unit transfers loads to its inverter (UPS transfer) and back when the plug turns on.",
+   "controlPaths": {
+    "appSchedule": false,
+    "haControl": "none verified",
+    "bypassDisable": null,
+    "smartPlugFallback": true
+   },
+   "feasibleStrategies": [
+    "peakcut19"
+   ],
+   "expansion": [],
+   "priceGbp": 1599,
+   "rrpGbp": 1899,
+   "priceDate": "2026-10-05",
+   "priceSource": "https://www.bluettipower.co.uk/products/elite-400-portable-power-station.js (Shopify)",
+   "availability": "in stock",
+   "installRoute": "plug-in appliance (13 A socket input, own outlets; not grid-tied)",
+   "confidence": "high (price/measured eff), low (spec gaps)",
+   "notes": "Notebookcheck: 3130 Wh out at 250 W (82%), 93% at 1800 W; 4400 Wh in at 2300 W (87%). => AC->AC 0.71 at 250 W; fitted fixed loss ~45 W - poor for a small constant load. Not expandable, 2 AC outlets, ~39 kg. VERIFIED: Smart-plug-only control: plugging the input back in means bypass + immediate full-rate recharge, so only the \"recharge from 19:00\" strategy is possible (sim: ~-5 to +20 GBP/yr battery-only at 500 W) unless a Home Assistant integration can cap charging.",
+   "availableNow": true,
+   "preorder": false,
+   "pvInputs": [
+    {
+     "maxDcW": 1000,
+     "vMinV": 12,
+     "vocMaxV": 60,
+     "iMaxA": null
+    }
+   ],
+   "pvWireablePanels": 1
+  },
+  {
+   "id": "bluetti-apex-300",
+   "brand": "BLUETTI",
+   "model": "Apex 300 (2764.8 Wh, expandable)",
+   "kind": "power-station",
+   "usableKwh": 2.7648,
+   "acOutputW": 3840,
+   "acChargeW": 2990,
+   "acChargeAdjustable": true,
+   "acInputLimitW": null,
+   "pvInputMaxW": 2400,
+   "pvVoltageRange": "2 x XT60, 12-60 V Voc, 20 A, 1,200 W each; optional SolarX 4K adds HV string input (500 V max, up to 3,200 W on one Apex 300)",
+   "pvWireableTypical": "2 x 400-450 W (one per XT60 input); more needs the separate SolarX 4K",
+   "upsSwitchMs": 20,
+   "passThrough": "bypass",
+   "bypassDisableable": null,
+   "idleW": 20,
+   "acAcEff": null,
+   "fixedLossW": null,
+   "cycles": 6000,
+   "warrantyYears": null,
+   "touMode": true,
+   "scheduling": "BLUETTI app working modes: Backup, Self-consumption, Time of Use, Custom (\"Peak-Load-Shifting\": grid-charge off-peak, power loads at peak). Home Assistant: community BLE integrations (bluetti_mqtt / bluetti-bt) for older AC/EB models; Elite-series support unverified [2ND/INF]",
+   "controlPaths": {
+    "appSchedule": true,
+    "haControl": "none verified",
+    "bypassDisable": null,
+    "smartPlugFallback": true
+   },
+   "feasibleStrategies": [
+    "peakcut19",
+    "peakcutNight (Time of Use / Custom working mode)"
+   ],
+   "expansion": [
+    {
+     "model": "B300K for Apex 300 (2,764.8 Wh)",
+     "kwh": 2.7648,
+     "priceGbp": 1099
+    },
+    {
+     "model": "B500K for Apex 300 (5.12 kWh, 4,000+ cycles)",
+     "kwh": 5.12,
+     "priceGbp": 1999
+    }
+   ],
+   "priceGbp": 1499,
+   "rrpGbp": 1899,
+   "priceDate": "2026-10-05",
+   "priceSource": "https://www.bluettipower.co.uk/products/apex-300-home-battery-backup.js (Shopify); expansion prices from product-page upsell text",
+   "availability": "in stock",
+   "installRoute": "plug-in appliance (13 A socket input, own outlets; not grid-tied)",
+   "confidence": "high (price), medium (spec), low (losses)",
+   "notes": "Home-backup oriented (Hub D1 / SolarX 4K add-ons; 12 kW bypass). Bluetti claims \"20W idle loss\" (magnetic-core transformer) and 6000 cycles to 80%. Check the UK unit has usable BS 1363 outlets for your servers before choosing; AC charge rate not found.",
+   "availableNow": true,
+   "preorder": false,
+   "pvInputs": [
+    {
+     "maxDcW": 1200,
+     "vMinV": 12,
+     "vocMaxV": 60,
+     "iMaxA": 20
+    },
+    {
+     "maxDcW": 1200,
+     "vMinV": 12,
+     "vocMaxV": 60,
+     "iMaxA": 20
+    }
+   ],
+   "pvWireablePanels": 2
+  },
+  {
+   "id": "jackery-explorer-1000-v2",
+   "brand": "Jackery",
+   "model": "Explorer 1000 v2 (1070 Wh)",
+   "kind": "power-station",
+   "usableKwh": 1.07,
+   "acOutputW": 1500,
+   "acChargeW": 1400,
+   "acChargeAdjustable": true,
+   "acInputLimitW": null,
+   "pvInputMaxW": 400,
+   "pvVoltageRange": "12-60 V [INF]",
+   "pvWireableTypical": "1 x 400 W panel",
+   "upsSwitchMs": 20,
+   "passThrough": "bypass",
+   "bypassDisableable": null,
+   "idleW": 11,
+   "acAcEff": null,
+   "fixedLossW": null,
+   "cycles": 4000,
+   "warrantyYears": 5,
+   "touMode": false,
+   "scheduling": "Jackery app: charge mode (Emergency Super Charge ~1400 W / standard / Quiet ~260 W), SoC limits, energy-saving mode. No TOU. Fallback that works on every unit: put the AC INPUT lead on a 13 A smart plug (a UK 13 A smart plug such as TP-Link Tapo P110 (UK, 13 A / 2990 W); NOT the Shelly Plug S Gen3, which is an EU Schuko 12 A / 2500 W model; keep servers + charge power <= ~2.9 kW through it) and switch it off in expensive Agile slots -> unit transfers loads to its inverter (UPS transfer) and back when the plug turns on. No mature HA integration found; use smart plug on AC input + app [INF]",
+   "controlPaths": {
+    "appSchedule": false,
+    "haControl": "none found",
+    "bypassDisable": null,
+    "smartPlugFallback": true
+   },
+   "feasibleStrategies": [
+    "peakcut19"
+   ],
+   "expansion": [],
+   "priceGbp": 419,
+   "rrpGbp": 899,
+   "priceDate": "2026-10-05",
+   "priceSource": "https://uk.jackery.com/products/explorer-1000-v2-portable-power-station (Shopify products.json + page)",
+   "availability": "in stock (a duplicate \"with accessories\" listing shows £929 - stale)",
+   "installRoute": "plug-in appliance (13 A socket input, own outlets; not grid-tied)",
+   "confidence": "high (price), medium (spec), low (losses)",
+   "notes": "UPS <=20 ms, IEC 62040 certified (UPS safety standard incl. backfeed protection). nextpit: 1020 Wh in, 902 Wh out (0.88 AC->AC, load unstated - optimistic). idleW ~10-12 W secondary/unsourced. 4000 cycles to 70%. Warranty 3 y + 2 y on registration. VERIFIED: nextpit 0.88 discarded (charged energy < nominal capacity). Smart-plug-only control: plugging the input back in means bypass + immediate full-rate recharge, so only the \"recharge from 19:00\" strategy is possible (sim: ~-5 to +20 GBP/yr battery-only at 500 W) unless a Home Assistant integration can cap charging.",
+   "availableNow": true,
+   "preorder": false,
+   "pvInputs": [
+    {
+     "maxDcW": 400,
+     "vMinV": 12,
+     "vocMaxV": 60,
+     "iMaxA": null
+    }
+   ],
+   "pvWireablePanels": 1
+  },
+  {
+   "id": "jackery-explorer-2000-v2",
+   "brand": "Jackery",
+   "model": "Explorer 2000 v2 (2042 Wh)",
+   "kind": "power-station",
+   "usableKwh": 2.042,
+   "acOutputW": 2200,
+   "acChargeW": 1800,
+   "acChargeAdjustable": true,
+   "acInputLimitW": null,
+   "pvInputMaxW": 400,
+   "pvVoltageRange": "12-60 V [INF]",
+   "pvWireableTypical": "1 x 400 W panel (400 W cap)",
+   "upsSwitchMs": 20,
+   "passThrough": "bypass",
+   "bypassDisableable": null,
+   "idleW": null,
+   "acAcEff": null,
+   "fixedLossW": null,
+   "cycles": 4000,
+   "warrantyYears": 5,
+   "touMode": false,
+   "scheduling": "Jackery app: charge speed, SoC limits, energy-saving mode (nextpit: same limited feature set as 2000 Plus). No TOU. Fallback that works on every unit: put the AC INPUT lead on a 13 A smart plug (a UK 13 A smart plug such as TP-Link Tapo P110 (UK, 13 A / 2990 W); NOT the Shelly Plug S Gen3, which is an EU Schuko 12 A / 2500 W model; keep servers + charge power <= ~2.9 kW through it) and switch it off in expensive Agile slots -> unit transfers loads to its inverter (UPS transfer) and back when the plug turns on. No mature HA integration found; use smart plug on AC input + app [INF]",
+   "controlPaths": {
+    "appSchedule": false,
+    "haControl": "none found",
+    "bypassDisable": null,
+    "smartPlugFallback": true
+   },
+   "feasibleStrategies": [
+    "peakcut19"
+   ],
+   "expansion": [],
+   "priceGbp": 807,
+   "rrpGbp": 1399,
+   "priceDate": "2026-10-05",
+   "priceSource": "https://uk.jackery.com/products/explorer-2000-v2-portable-power-station (Shopify products.json + page)",
+   "availability": "in stock (duplicate listing shows £1,479 - stale)",
+   "installRoute": "plug-in appliance (13 A socket input, own outlets; not grid-tied)",
+   "confidence": "high (price), medium (spec), low (losses)",
+   "notes": "Only 2 AC outlets, solar capped at 400 W (nextpit). 20 ms UPS (UL 1778). nextpit full cycle 2141 Wh in / 1920 Wh out (0.90, load unstated). Charge time 1.33 h emergency mode implies ~1800 W [INF]. VERIFIED: nextpit 0.90 discarded (implied 95% charge efficiency). acChargeW 1800 is uncertain (UK page claims 52-minute super charge). Smart-plug-only control: plugging the input back in means bypass + immediate full-rate recharge, so only the \"recharge from 19:00\" strategy is possible (sim: ~-5 to +20 GBP/yr battery-only at 500 W) unless a Home Assistant integration can cap charging.",
+   "availableNow": true,
+   "preorder": false,
+   "pvInputs": [
+    {
+     "maxDcW": 400,
+     "vMinV": 12,
+     "vocMaxV": 60,
+     "iMaxA": null
+    }
+   ],
+   "pvWireablePanels": 1
+  },
+  {
+   "id": "jackery-explorer-3000-v2",
+   "brand": "Jackery",
+   "model": "Explorer 3000 v2 (3072 Wh)",
+   "kind": "power-station",
+   "usableKwh": 3.072,
+   "acOutputW": 3600,
+   "acChargeW": 1800,
+   "acChargeAdjustable": true,
+   "acInputLimitW": null,
+   "pvInputMaxW": 1000,
+   "pvVoltageRange": "up to 60 V",
+   "pvWireableTypical": "1-2 x 400-450 W (<= 60 V; input count unverified)",
+   "upsSwitchMs": 20,
+   "passThrough": "bypass",
+   "bypassDisableable": null,
+   "idleW": null,
+   "acAcEff": null,
+   "fixedLossW": null,
+   "cycles": 4000,
+   "warrantyYears": 5,
+   "touMode": true,
+   "scheduling": "Jackery app \"Smart Power Modes\": Charging Plan (scheduled off-peak AC charging windows) and Self-powered Mode (reserve threshold; solar first, hybrid charge below threshold). Does not say it stops pass-through at peak -> pair with smart plug. No mature HA integration found; use smart plug on AC input + app [INF]",
+   "controlPaths": {
+    "appSchedule": true,
+    "haControl": "none found",
+    "bypassDisable": null,
+    "smartPlugFallback": true
+   },
+   "feasibleStrategies": [
+    "peakcut19",
+    "peakcutNight (Charging Plan; pair with smart plug for the peak window)"
+   ],
+   "expansion": [],
+   "priceGbp": 1499,
+   "rrpGbp": 2299,
+   "priceDate": "2026-10-05",
+   "priceSource": "https://uk.jackery.com/products/explorer-3000-v2-portable-power-station (Shopify products.json + page)",
+   "availability": "in stock",
+   "installRoute": "plug-in appliance (13 A socket input, own outlets; not grid-tied)",
+   "confidence": "high (price), medium (spec), unknown (losses)",
+   "notes": "3600 W, ~27 kg, UPS <=0.02 s, \"year-long standby with 95% charge retention\". Not expandable. AC 1.8 h to 100% -> ~1800 W [INF].",
+   "availableNow": true,
+   "preorder": false,
+   "pvInputs": [
+    {
+     "maxDcW": 1000,
+     "vMinV": null,
+     "vocMaxV": 60,
+     "iMaxA": null
+    }
+   ],
+   "pvWireablePanels": 1,
+   "pvNote": "input count unverified (1–2 panels)"
+  },
+  {
+   "id": "dji-power-2000",
+   "brand": "DJI",
+   "model": "Power 2000 (2048 Wh)",
+   "kind": "power-station",
+   "usableKwh": 2.048,
+   "acOutputW": 3000,
+   "acChargeW": 1800,
+   "acChargeAdjustable": null,
+   "acInputLimitW": null,
+   "pvInputMaxW": 1800,
+   "pvVoltageRange": "unknown (via DJI solar adapter)",
+   "pvWireableTypical": "needs the separate DJI Power 1.8 kW Solar/Car Super Fast Charger (extra cost); voltage window not verified",
+   "upsSwitchMs": 10,
+   "passThrough": "bypass",
+   "bypassDisableable": null,
+   "idleW": null,
+   "acAcEff": null,
+   "fixedLossW": null,
+   "cycles": 4000,
+   "warrantyYears": 5,
+   "touMode": true,
+   "scheduling": "DJI Home app: Scheduled Periods (timed charge/discharge, fw v01.00.12.00+). Its \"Grid-Tied ESS\" mode (feeds the house with a Shelly Pro 3EM/EM-50 meter) is a plug-in battery export path - prohibited in GB unless installed as a G98/G99 system; do NOT use it plug-in. Fallback: a UK 13 A smart plug such as TP-Link Tapo P110 (UK, 13 A / 2990 W); NOT the Shelly Plug S Gen3, which is an EU Schuko 12 A / 2500 W model; keep servers + charge power <= ~2.9 kW through it.",
+   "controlPaths": {
+    "appSchedule": true,
+    "haControl": "none found",
+    "bypassDisable": null,
+    "smartPlugFallback": true
+   },
+   "feasibleStrategies": [
+    "peakcut19",
+    "peakcutNight (Scheduled Periods)"
+   ],
+   "expansion": [
+    {
+     "model": "DJI Power Expansion Battery 2000 (2,048 Wh; price = 4 kWh combo £1,698 minus unit £899)",
+     "kwh": 2.048,
+     "priceGbp": 799
+    }
+   ],
+   "priceGbp": 899,
+   "rrpGbp": 959,
+   "priceDate": "2026-10-05",
+   "priceSource": "https://store.dji.com/uk/product/dji-power-2000 (DJI Store UK, 2026-10-05); Camera World £912 is a back-order price",
+   "availability": "in stock at DJI Store UK; Camera World back-order (expected ~24 Oct 2026)",
+   "installRoute": "plug-in appliance (13 A socket input, own outlets; not grid-tied)",
+   "confidence": "high (price/warranty), medium (spec), unknown (losses)",
+   "notes": "4 UK sockets, 3000 W, AC 0-80% in 45 min, \"UPS mode 0.01 s switchover\", 4000+ cycles. Expansion battery price not found. VERIFIED: PV input requires the optional DJI 1.8 kW Solar/Car Super Fast Charger (not included) - add its cost to any PV scenario.",
+   "availableNow": true,
+   "preorder": false,
+   "pvInputs": [],
+   "pvWireablePanels": 0,
+   "pvNote": "needs the separate DJI 1.8 kW solar charger (extra cost)"
+  },
+  {
+   "id": "bluetti-ac300-b300k",
+   "brand": "BLUETTI",
+   "model": "AC300 + B300K (2,764.8 Wh; modular inverter + battery)",
+   "kind": "power-station",
+   "usableKwh": 2.7648,
+   "acOutputW": 3000,
+   "acChargeW": 3000,
+   "acChargeAdjustable": null,
+   "acInputLimitW": null,
+   "pvInputMaxW": 2400,
+   "pvVoltageRange": "unverified (2,400 W max solar per UK page)",
+   "pvWireableTypical": "unverified",
+   "upsSwitchMs": 20,
+   "passThrough": "bypass",
+   "bypassDisableable": null,
+   "idleW": 50,
+   "acAcEff": null,
+   "fixedLossW": null,
+   "cycles": null,
+   "warrantyYears": 4,
+   "touMode": true,
+   "scheduling": "BLUETTI app UPS modes (UK FAQ Q6): Standard UPS, Time Control UPS (\"Charge the system during off-peak hours and power your loads when electricity prices are high\"), PV Priority UPS, Customized UPS. Fallback: a UK 13 A smart plug such as TP-Link Tapo P110 (UK, 13 A / 2990 W); NOT the Shelly Plug S Gen3, which is an EU Schuko 12 A / 2500 W model; keep servers + charge power <= ~2.9 kW through it.",
+   "controlPaths": {
+    "appSchedule": true,
+    "haControl": "community bluetti_mqtt historically supported AC300 (unverified for current firmware)",
+    "bypassDisable": null,
+    "smartPlugFallback": true
+   },
+   "feasibleStrategies": [
+    "peakcut19",
+    "peakcutNight (Time Control UPS)"
+   ],
+   "expansion": [
+    {
+     "model": "B300K (2,764.8 Wh), up to 4 -> 11,059.2 Wh",
+     "kwh": 2.7648,
+     "priceGbp": 1099
+    }
+   ],
+   "priceGbp": 1999,
+   "rrpGbp": 1999,
+   "priceDate": "2026-10-05",
+   "priceSource": "https://www.bluettipower.co.uk/products/ac300-b300k-home-battery-backup.js (Shopify, available=True)",
+   "availability": "in stock",
+   "installRoute": "plug-in appliance (13 A socket input, own outlets; not grid-tied)",
+   "confidence": "high (price/availability/modes/self-consumption claim), low (losses)",
+   "notes": "Added by verification: the original meta said AC300 was gone from the UK store - it is in stock at £1,999. UK FAQ: UPS switching latency 20 ms (not online/0 ms); self-consumption \"20W with AC and DC off, and 50W with AC and DC on\" - a 50 W overhead costs ~£88/yr at 20p, so it is a poor 24/7 server choice despite Time Control UPS. acChargeW 3000 inferred from 5,400 W dual charging minus 2,400 W solar [INF]. 4-year warranty per UK description.",
+   "availableNow": true,
+   "preorder": false,
+   "pvInputs": [],
+   "pvWireablePanels": 0,
+   "pvNote": "PV voltage window unverified"
+  }
+ ]
+}

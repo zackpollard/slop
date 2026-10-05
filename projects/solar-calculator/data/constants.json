@@ -1,0 +1,100 @@
+{
+ "version": 1,
+ "source": "plugin-market-constants.verified.json snapshot, verified 2026-10-05 (see docs/solar-calculator/VERIFY-market.md)",
+ "_meta": {
+  "verifiedOn": "2026-10-05",
+  "note": "Constants re-checked live by the adversarial verifier. 'live' = fetched today; 'doc' = primary PDF/legislation; 'seller' = retailer-published; 'inf' = inference."
+ },
+ "plugInRules": {
+  "acMaxVA": 800,
+  "acMaxCurrentA": 3.5,
+  "siDefinitionAcWatts": 800,
+  "dcMaxWp": 2000,
+  "dcProfessionalAssessmentAboveWp": 960,
+  "maxModules": 4,
+  "maxModulesInSeries": 2,
+  "devicesPerHousehold": 1,
+  "batteriesAllowed": false,
+  "inForceFrom": "2026-08-27",
+  "sources": {
+   "si": "https://www.legislation.gov.uk/uksi/2026/848/made (live: 'plug-in microgenerator' = PV, <=800 W rated AC output, standard plug, parallel with network, and (e) 'not designed to import electrical energy ... for the purpose of storing energy for later supply')",
+   "ips": "https://assets.publishing.service.gov.uk/media/6a60a03c47af652afa0c89f5/plug-in-solar-final-_interim-product-specification.pdf (live, md5 7afa62b26e9a9368c01d8a91b17bb954; s4.1 800 VA / 3.5 A / 2000 W / 960 W; Fig note 4 modules / 2 in series)",
+   "ofgem": "https://www.ofgem.gov.uk/sites/default/files/2026-08/Ofgem-decision-to-Approve-DCRP-MP-26-02-Proposed-Amendment-to-facilitate-Plug-in-Microgeneration.pdf (published 11 Aug 2026; one per Customer Installation; Plug-in Electricity Storage remains prohibited; aggregate with wired micro-gen <=16 A/phase)",
+   "notify": "https://myplugin.solar/ (live; ENA-operated; 'Registering your plug-in solar device is a legal requirement'; one device per household; existing 3.68 kW G98 system => G99 via installer and extra generation must be wired in)"
+  },
+  "territorialExtent": "SI regs 1-2 (plug approval) extend to UK incl. NI; reg 3 (ESQCR) extends to GB only. Treat as GB-only (pluginsolarexplained: 'not currently legal in Northern Ireland')."
+ },
+ "hardwiredRules": {
+  "g98PerPhaseMaxA": 16,
+  "g98PerPhaseMaxW_at230V": 3680,
+  "note": "Batteries (EcoFlow STREAM, Anker Solarbank 4 Pro, Zendure 2400, Hoymiles HiBattery) must be hardwired on a dedicated circuit by a Part P electrician with G98 notification. Total micro-generation incl. any plug-in device must stay <=16 A/phase or G99 applies."
+ },
+ "installCostDefaultsGbp": {
+  "plugInDiy": 0,
+  "electricianDedicatedCircuit": {
+   "default": 350,
+   "low": 150,
+   "high": 600,
+   "evidence": [
+    "Thunder Energy schema.org data (live): 'Storm 710W + Professional Installation' GBP 999 (Greater London) vs Storm 710W kit GBP 649 => ~GBP 350 for fused spur on a dedicated radial circuit + G98 DNO notification + testing",
+    "trade2base.com UK Electrician Pricing Guide 2026 (25 May 2026): new circuit GBP 150-400"
+   ]
+  },
+  "consumerUnitUpgradeIfNeeded": {
+   "low": 400,
+   "high": 900,
+   "evidence": [
+    "trade2base.com 2026: CU replacement GBP 400-700 incl. testing + Part P notification; GBP 600-900 with remediation"
+   ]
+  },
+  "ctMeterForLoadFollowing": {
+   "zendure1CTS": 84.99,
+   "zendure3CT": 129,
+   "ecoflowSmartMeter": 99,
+   "ecoflowDualCT": 159,
+   "shellyPro3EM_atEcoFlow": 149,
+   "anker": "included free with Solarbank 4 Pro",
+   "zendure2400": "1CT-S included free"
+  }
+ },
+ "exportTariffs": {
+  "defaultForPlugIn": {
+   "pencePerKwh": 0,
+   "why": "No MCS cert => no SEG; Octopus: if kit bought elsewhere 'You won't be able to sign up for an Octopus export tariff for that system'"
+  },
+  "outgoingPrime": {
+   "productCode": "OUTGOING-PRIME-FIX-12M-26-06-23",
+   "tariffCode": "E-1R-OUTGOING-PRIME-FIX-12M-26-06-23-{A..P}",
+   "ratesUrl": "https://api.octopus.energy/v1/products/OUTGOING-PRIME-FIX-12M-26-06-23/electricity-tariffs/E-1R-OUTGOING-PRIME-FIX-12M-26-06-23-C/standard-unit-rates/",
+   "peakPence": 16,
+   "offPeakPence": 9,
+   "peakWindowLocal": "16:00-19:00 Europe/London (API rows are UTC: 15:00-18:00Z in BST)",
+   "availableFrom": "2026-06-23",
+   "termMonths": 12,
+   "cors": "Access-Control-Allow-Origin: * (live)",
+   "historyCaveat": "No rate rows exist before 2026-06-23: a 12-month backtest must synthesise 16p/9p by local clock time.",
+   "eligibilityPlugIn": "Octopus-bought plug-in kit AND Octopus supplies the home",
+   "compatibleWithAgileImport": true,
+   "compatibilitySource": "https://a.storyblok.com/f/150126/2244x3266/a1a66fa40e/mobile-smart-tarrif-combination-table-2x.png (image on octopus.energy 'Which export tariff can I combine with my import tariff?'; Agile row: Prime Outgoing / Outgoing / Outgoing Agile / SEG all ticked; Flux and Intelligent Flux crossed). Local copy sources/octopus-import-export-compat-table.png"
+  },
+  "outgoingFlat": {
+   "productCode": "OUTGOING-VAR-24-10-26",
+   "pence": 12,
+   "since": "2026-03-01T00:00Z",
+   "previousPence": 15
+  },
+  "agileOutgoing": {
+   "productCode": "AGILE-OUTGOING-19-05-13",
+   "floorPence": 0,
+   "note": "Floors at exactly 0.00p, not 'just above 0' (live: region C 2026-06-13 11:00-12:30Z all 0.0)."
+  }
+ },
+ "enaRegister": {
+  "publicSearchApi": "https://hybrid.connect-direct.energynetworks.org/lct/v1/ttr-search?device_type_id=14&skip=0&limit=100",
+  "referenceListsApi": "https://hybrid.connect-direct.energynetworks.org/lct/v1/ttr-reference",
+  "auth": "none (live 200)",
+  "limitMax": 100,
+  "cors": "Access-Control-Allow-Origin only echoes https://connect-direct.energynetworks.org - NOT usable from the browser at runtime; usable for an offline catalog refresh",
+  "deviceTypeIdPlugInSolar": 14
+ }
+}
