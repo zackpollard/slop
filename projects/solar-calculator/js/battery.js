@@ -13,6 +13,10 @@
  *  - Power stations use the measured loss model (P_dc = P_ac/η_inv + P0 while inverting, bypass
  *    relay overhead while not, charger efficiency ~0.88) and never export.
  *  - SoC grid step δ, Int16Array policy, wear cost in the objective only.
+ *  - 'threshold' (the realistic default) is, for dc/ac batteries, a day-ahead controller: a greedy
+ *    plan per Agile day on the day's known prices, a 7-day load forecast and persistence PV,
+ *    re-planned from the actual SoC when reality drifts off it (planBatteryDay, thresholdPlan).
+ *    Power stations keep the sim_ups price-threshold rule (upsController).
  *
  * Energies are kWh per slot, prices p/kWh, Δt = 0.5 h. "Stored" energy s is the DC energy in the
  * cells; delta = Δs per slot. Every slot function answers: "the battery must change by delta —
@@ -96,9 +100,12 @@ export function slotDC(delta, s, c) {
         const b = delta / c.effC;
         if (b > c.maxChgDc + TOL) return null;
         const gridCap = c.allowGridCharge ? c.gridCapDc : 0;
-        const lo = pos(b - clip - dcInv);
+        const lo0 = pos(b - clip - dcInv);
         const hi = Math.min(b, gridCap);
-        if (lo > hi + TOL) return null;
+        if (lo0 > hi + TOL) return null;
+        // a charge of exactly the PV on offer can come back from delta/effC a hair above it: that
+        // floating noise (≤ TOL) is not grid energy, and must not show up as grid charging
+        const lo = lo0 < hi ? lo0 : hi;
         const aE = c.acChargeEff;
         // min-g decision: PV first (clip is free, then inverter PV), grid only for the remainder
         const fcA = Math.min(clip, b - lo);
@@ -595,60 +602,296 @@ function ruleSlot(slot, delta, s, c) {
     return r || slot(0, s, c);
 }
 
-/** Threshold ("Agile-aware automation") roles for dc/ac: price-aware rule + PV headroom. */
-function thresholdPlan(m) {
-    const { n, S, c, b, sMin, sMax, ad } = m;
-    const usable = sMax - sMin;
-    const role = new Int8Array(n);
-    const target = new Float64Array(n).fill(sMin);
-    const lastDis = new Int32Array(n).fill(-1);
-    const groups = groupBy(ad, n);
-    const ac = c.coupling === 'ac';
-    const etaOut = ac ? c.acEffD : c.effD * c.etaNom;
-    const disAc = ac ? c.maxDisAc : Math.min(c.maxDisDc * c.etaNom, c.acCap);
-    const chgAc = ac ? (c.allowGridCharge ? c.gridCapAc : 0) : (c.allowGridCharge ? c.gridCapDc / c.acChargeEff : 0);
-    const etaIn = ac ? c.acEffC : c.effC * c.acChargeEff;
-    const etaInPv = ac ? c.acEffC : c.effC / c.etaNom;
-    const rte = ac ? c.acEffC * c.acEffD : c.acChargeEff * c.effC * c.effD * c.etaNom;
-    const surplus = groups.map((ts) => {
-        let v = 0;
-        for (const t of ts) v += pos(S[t].pvAc - S[t].L) + (ac ? 0 : S[t].clip * S[t].etaPv);
-        return v;
-    });
-    let prevLast = -1;
-    for (let di = 0; di < groups.length; di++) {
-        const ts = groups[di];
-        let meanL = 0;
-        for (const t of ts) meanL += S[t].L;
-        meanL /= ts.length;
-        // without battery export a discharge slot can only cover the house load
-        const perSlot = c.allowGridExport ? disAc : Math.min(disAc, meanL);
-        const mm = Math.max(1, Math.min(ts.length, perSlot > 0 ? Math.ceil((usable * etaOut) / perSlot - 1e-9) : ts.length));
-        const hi = [...ts].sort((a, z) => S[a].p - S[z].p || a - z).slice(-mm);
-        let tFirst = Infinity;
-        let tLast = -1;
-        let pHi = 0;
-        for (const t of hi) { role[t] = 1; tFirst = Math.min(tFirst, t); tLast = Math.max(tLast, t); pHi += S[t].p; }
-        pHi /= hi.length;
-        const fc = b.pvForecast === 'perfect' || di === 0 ? surplus[di] : surplus[di - 1];
-        const tgt = Math.max(sMin, sMax - 0.8 * fc * etaInPv);
-        if (chgAc > 0) {
-            const nn = Math.ceil(usable / (etaIn * chgAc) - 1e-9);
-            const cand = [];
-            for (let t = prevLast + 1; t < tFirst; t++) if (role[t] === 0) cand.push(t);
-            cand.sort((a, z) => S[a].p - S[z].p || a - z);
-            for (const t of cand.slice(0, nn)) {
-                if (S[t].p / rte + b.wearPPerKwh < pHi) { role[t] = -1; target[t] = tgt; }
+/* ── threshold: a day-ahead plan per Agile day ── */
+
+/** Width of the per-day planning buffers: an Agile day has 46, 48 or 50 half-hours. */
+const DAY_W = 64;
+/** Planning tolerance (kWh, p/kWh): amounts and margins below it are floating-point noise. */
+const PLAN_EPS = 1e-9;
+/** The load forecast is the mean of the same half-hour over this many previous days. */
+const LOAD_FORECAST_DAYS = 7;
+/**
+ * The rest of the day is re-planned once the SoC is off the planned path by 5% of usable capacity
+ * or 0.1 kWh, whichever is less. The cap matters: a tolerance that grew with capacity let a big
+ * battery sit on energy its stale plan had reserved, so it earned less than a smaller one.
+ */
+const REPLAN_TOL = 0.05;
+const REPLAN_MAX_KWH = 0.1;
+/** Re-plans happen at most once an hour, which bounds the cost of a noisy load. */
+const REPLAN_MIN_SLOTS = 2;
+/**
+ * Charge sources per slot, in buffer order: 0 clipped DC, 1 PV surplus, 2 grid (AC charger),
+ * 3 PV diverted from the house (dc only: the cells take inverter DC and the house imports instead).
+ * Sources 2 and 3 are bought at the import price; the plan reports them in `grid` and `divert`.
+ */
+const NSRC = 4;
+
+/**
+ * Planning buffers for planBatteryDay (DAY_W wide; source k of slot i at index k·DAY_W + i).
+ * Inputs: sinkCap, sinkV, chg, srcCap, srcCost. Outputs: path, dis, grid, divert. Scratch: used, order.
+ * @returns {Object}
+ */
+export function newDayPlanBuffers() {
+    const f = (k = 1) => new Float64Array(k * DAY_W);
+    return {
+        sinkCap: f(), sinkV: f(), chg: f(), srcCap: f(NSRC), srcCost: f(NSRC), path: f(), dis: f(), grid: f(), divert: f(),
+        used: new Int8Array(DAY_W), order: new Int32Array(DAY_W),
+    };
+}
+
+/**
+ * Greedy day-ahead battery plan for one day (every quantity is stored kWh, the cell side).
+ * Sinks — half-hours where the battery can cover forecast house load — are taken in order of
+ * value, highest first, and each is paired with the cheapest source that is chronologically
+ * feasible without leaving [sMin, sMax] anywhere on the planned SoC path:
+ *  - a charge earlier in the day (the SoC is higher from the charge until the sink),
+ *  - a recharge later in the day (the SoC is lower until then, so the energy must already be in
+ *    the battery), or
+ *  - the energy already in the battery, at no cost (the day ends lower).
+ * A pair is added only while value − cost > 0: value = the sink's price × η_out − wear, cost =
+ * the source's price / η_in for grid charging, the import price × η_pv / η_in for PV diverted
+ * from the house, the export price forgone for PV surplus, 0 for clipped DC. A slot is never both
+ * a source and a sink. Sources priced below zero that are left over still charge (they pay), up
+ * to the room left at the end of the day.
+ * Each pairing step is O(T) and exhausts a sink, a source, a slot's charge power or an SoC bound,
+ * so a day costs O(T log T + T·steps) with T ≤ 50.
+ * @param {Object} P buffers from newDayPlanBuffers, inputs filled for slots 0…T−1:
+ *   sinkCap (stored kWh the slot's load can absorb), sinkV (p per stored kWh), chg (stored kWh the
+ *   charge power allows, all sources together), srcCap/srcCost (NSRC × DAY_W: clipped DC, PV
+ *   surplus, grid, PV diverted from the house). sinkCap is read-only; chg and srcCap are used up.
+ * @param {number} T half-hours to plan
+ * @param {number} soc0 SoC at the start (kWh)
+ * @param {number} sMin
+ * @param {number} sMax
+ * @returns {Object} P with path (planned SoC at the end of each slot), dis (stored kWh
+ *   discharged), grid (stored kWh charged from the grid by the AC charger) and divert (stored kWh
+ *   of PV diverted from the house) for slots 0…T−1
+ */
+export function planBatteryDay(P, T, soc0, sMin, sMax) {
+    const { sinkCap, sinkV, chg, srcCap, srcCost, path, dis, grid, divert, used } = P;
+    const W = DAY_W;
+    if (T > W) throw new RangeError(`planBatteryDay: ${T} slots > ${W}`);
+    for (let i = 0; i < T; i++) { path[i] = soc0; dis[i] = 0; grid[i] = 0; divert[i] = 0; used[i] = 0; }
+    let k = 0;
+    for (let i = 0; i < T; i++) if (sinkCap[i] > PLAN_EPS) P.order[k++] = i;
+    const ord = P.order.subarray(0, k).sort((a, z) => sinkV[z] - sinkV[a] || a - z);
+    for (let oi = 0; oi < k; oi++) {
+        const d = ord[oi];
+        let rem = sinkCap[d];
+        while (rem > PLAN_EPS && used[d] !== 1) {
+            let bc = -1;
+            let bk = -1;
+            let bCost = sinkV[d] - PLAN_EPS;
+            let bAmt = 0;
+            // a charge earlier in the day: the SoC rises on [c, d)
+            let mx = -Infinity;
+            for (let c = d - 1; c >= 0; c--) {
+                if (path[c] > mx) mx = path[c];
+                const room = sMax - mx;
+                if (room <= PLAN_EPS) break;
+                if (used[c] === 2) continue;
+                const lim = room < chg[c] ? room : chg[c];
+                if (lim <= PLAN_EPS) continue;
+                for (let j = 0; j < NSRC; j++) {
+                    const cap = srcCap[j * W + c];
+                    const cost = srcCost[j * W + c];
+                    if (cap > PLAN_EPS && cost < bCost) { bCost = cost; bc = c; bk = j; bAmt = cap < lim ? cap : lim; }
+                }
+            }
+            // a recharge later in the day, or (c = T) energy already stored: the SoC falls on [d, c)
+            let mn = Infinity;
+            for (let c = d + 1; c <= T; c++) {
+                if (path[c - 1] < mn) mn = path[c - 1];
+                const room = mn - sMin;
+                if (room <= PLAN_EPS) break;
+                if (c === T) {
+                    if (0 < bCost) { bCost = 0; bc = T; bk = -1; bAmt = room; }
+                    break;
+                }
+                if (used[c] === 2) continue;
+                const lim = room < chg[c] ? room : chg[c];
+                if (lim <= PLAN_EPS) continue;
+                for (let j = 0; j < NSRC; j++) {
+                    const cap = srcCap[j * W + c];
+                    const cost = srcCost[j * W + c];
+                    if (cap > PLAN_EPS && cost < bCost) { bCost = cost; bc = c; bk = j; bAmt = cap < lim ? cap : lim; }
+                }
+            }
+            if (bc < 0) break;
+            const x = rem < bAmt ? rem : bAmt;
+            if (bc < d) for (let i = bc; i < d; i++) path[i] += x;
+            else for (let i = d; i < bc; i++) path[i] -= x;
+            rem -= x;
+            dis[d] += x;
+            used[d] = 2;
+            if (bc < T) {
+                srcCap[bk * W + bc] -= x;
+                chg[bc] -= x;
+                used[bc] = 1;
+                if (bk === 2) grid[bc] += x;
+                else if (bk === 3) divert[bc] += x;
             }
         }
-        for (const t of ts) lastDis[t] = tLast;
-        prevLast = tLast;
     }
+    // sources left over that pay to charge (negative prices): charge for later, as room allows
+    for (let c = 0; c < T; c++) {
+        if (used[c] === 2) continue;
+        for (let j = 0; j < NSRC; j++) {
+            if (!(srcCost[j * W + c] < 0) || srcCap[j * W + c] <= PLAN_EPS || chg[c] <= PLAN_EPS) continue;
+            let mx = -Infinity;
+            for (let i = c; i < T; i++) if (path[i] > mx) mx = path[i];
+            const x = Math.min(srcCap[j * W + c], chg[c], sMax - mx);
+            if (x <= PLAN_EPS) continue;
+            for (let i = c; i < T; i++) path[i] += x;
+            srcCap[j * W + c] -= x;
+            chg[c] -= x;
+            used[c] = 1;
+            if (j === 2) grid[c] += x;
+            else if (j === 3) divert[c] += x;
+        }
+    }
+    return P;
+}
+
+/** Agile days as contiguous slot groups; without a local index (one group) 48-slot blocks. */
+function planningDays(ad, n) {
+    const out = [];
+    for (const ts of groupBy(ad, n)) {
+        if (ts.length <= 50) out.push(ts);
+        else for (let i = 0; i < ts.length; i += 48) out.push(ts.slice(i, i + 48));
+    }
+    return out;
+}
+
+/**
+ * Threshold ("Agile-aware automation (realistic)") for dc/ac batteries: what a home controller
+ * can do with day-ahead Agile prices. At the start of each Agile day (23:00 local, when the whole
+ * day's prices are known) it plans the day with planBatteryDay from the SoC it actually has, the
+ * day's import and export prices, a load forecast (the mean of the same half-hour over the last 7
+ * days) and a persistence PV forecast (the same half-hour yesterday; today's own PV with
+ * pvForecast 'perfect'). Whenever the SoC drifts off the planned path (PV or load not as
+ * forecast; by more than 5% of usable capacity or 0.1 kWh) it re-plans the rest of the day from
+ * the SoC it has, at most once an hour. Nothing after the current half-hour is used except the
+ * day's prices. The plan drives these modes:
+ *  - grid-charge slots charge up to the planned SoC (taking any PV surplus first);
+ *  - (dc) PV-divert slots charge up to the planned SoC from PV only — the inverter's DC goes to
+ *    the cells and the house imports instead — never from the AC charger, so a slot planned for
+ *    a little cheap dusk DC can never buy grid energy at a peak price;
+ *  - discharge slots follow the load (and store PV surplus if there is any);
+ *  - every other slot before the day's last discharge slot holds (stores PV surplus, never
+ *    discharges); after it the battery self-consumes.
+ * A dc battery with paid export also leaves room for the clipped DC forecast later in the day
+ * rather than filling up with inverter PV that could have been exported.
+ * Pairs are added only while they pay, so extra capacity only adds trades a smaller battery could
+ * not fit: the value does not fall as capacity rises (the old rule counted discharge slots from
+ * capacity ÷ mean load and stopped grid charging once a battery approached a day's load).
+ * Battery export (allowGridExport) is not planned: discharge always serves the house.
+ */
+function thresholdPlan(m) {
+    const { n, S, c, b, sMin, sMax, ad } = m;
+    const ac = c.coupling === 'ac';
+    const etaOut = ac ? c.acEffD : c.effD * c.etaNom; // AC delivered per stored kWh
+    const wearOut = ac ? b.wearPPerKwh : b.wearPPerKwh * c.effD; // wear per stored kWh discharged
+    const etaInGrid = ac ? c.acEffC : c.effC * c.acChargeEff; // stored per AC kWh from the grid
+    const chgMax = ac ? c.maxChgAc * c.acEffC : c.maxChgDc * c.effC;
+    const gridMax = c.allowGridCharge ? Math.min(chgMax, ac ? c.gridCapAc * c.acEffC : c.gridCapDc * c.effC) : 0;
+    const disAcMax = ac ? c.maxDisAc : Math.min(c.maxDisDc * c.etaNom, c.acCap);
+    const perfectPv = b.pvForecast === 'perfect';
+    const replanKwh = Math.min(REPLAN_TOL * (sMax - sMin), REPLAN_MAX_KWH);
+    const days = planningDays(ad, n);
+    const dayOf = new Int32Array(n);
+    days.forEach((ts, di) => { for (const t of ts) dayOf[t] = di; });
+    const role = new Int8Array(n); // 1 discharge, −1 grid charge, −2 divert PV (dc), 0 hold / self-consume
+    const planned = new Float64Array(n); // planned SoC at the end of each slot (the grid-charge target)
+    const clipAhead = new Float64Array(n); // forecast clipped DC (stored kWh) later in the day
+    const lastDis = new Int32Array(n).fill(-1);
+    const P = newDayPlanBuffers();
+    const W = DAY_W;
+    /** Plan slots t0…end of day `di` from SoC soc0. */
+    const plan = (di, t0, soc0) => {
+        const ts = days[di];
+        const T = ts[0] + ts.length - t0;
+        for (let i = 0; i < T; i++) {
+            const t = t0 + i;
+            const s = S[t];
+            // forecasts only look at half-hours already past at t0: "the same half-hour a day
+            // earlier" is 48 slots back, or 96 for the end of a 50-slot (autumn DST) day. The
+            // first day of the data has no history and uses its own load and PV.
+            let lag = 48;
+            while (t - lag >= t0) lag += 48;
+            let lf = 0;
+            let k = 0;
+            for (let j = 0; j < LOAD_FORECAST_DAYS && t - lag - 48 * j >= 0; j++) { lf += S[t - lag - 48 * j].L; k++; }
+            lf = k ? lf / k : s.L;
+            const sPv = perfectPv || t - lag < 0 ? s : S[t - lag];
+            const net = lf - sPv.pvAc;
+            P.chg[i] = chgMax;
+            P.sinkCap[i] = 0;
+            P.sinkV[i] = 0;
+            for (let j = 0; j < NSRC; j++) { P.srcCap[j * W + i] = 0; P.srcCost[j * W + i] = 0; }
+            if (net > 0) {
+                // without battery export a discharge can only cover the load net of PV
+                P.sinkCap[i] = Math.min(net, disAcMax, ac ? Infinity : pos(c.acCap - sPv.pvAc)) / etaOut;
+                P.sinkV[i] = s.p * etaOut - wearOut;
+            } else if (ac) {
+                P.srcCap[W + i] = Math.min(chgMax, -net * c.acEffC);
+                P.srcCost[W + i] = s.x / c.acEffC;
+            } else if (sPv.etaPv > 0) {
+                P.srcCap[W + i] = Math.min(chgMax, Math.min(sPv.dcInv, -net / sPv.etaPv) * c.effC);
+                P.srcCost[W + i] = (s.x * sPv.etaPv) / c.effC;
+            }
+            if (!ac) {
+                P.srcCap[i] = Math.min(chgMax, sPv.clip * c.effC);
+                // inverter DC the house would have used can go into the cells instead while the house
+                // imports (a hybrid's charge-from-PV, output-0 W mode): how a dc battery buys energy
+                // without an AC charger, and cheaper than one (η_pv of AC forgone per DC kWh, against
+                // 1/η_charger). A slot is never both a source and a sink, so diverting is offered only
+                // where it costs at least what the slot is worth as a discharge slot. With a working
+                // inverter (η_pv ≈ η_nom) that always holds; it fails only for a few Wh of dawn/dusk DC
+                // the inverter barely converts (η_pv ≈ 0), which looked free and, once paired, stopped
+                // a 4–7pm slot from discharging at all.
+                const surplusDc = net < 0 && sPv.etaPv > 0 ? Math.min(sPv.dcInv, -net / sPv.etaPv) : 0;
+                const houseDc = sPv.dcInv - surplusDc;
+                const divertCost = (s.p * sPv.etaPv) / c.effC;
+                if (houseDc > PLAN_EPS && !(P.sinkCap[i] > PLAN_EPS && divertCost < P.sinkV[i])) {
+                    P.srcCap[3 * W + i] = Math.min(chgMax, houseDc * c.effC);
+                    P.srcCost[3 * W + i] = divertCost;
+                }
+            }
+            if (gridMax > 0) {
+                P.srcCap[2 * W + i] = gridMax;
+                P.srcCost[2 * W + i] = s.p / etaInGrid;
+            }
+        }
+        if (!ac) {
+            let acc = 0;
+            for (let i = T - 1; i >= 0; i--) { clipAhead[t0 + i] = acc; acc += P.srcCap[i]; }
+        }
+        planBatteryDay(P, T, soc0, sMin, sMax);
+        let last = -1;
+        for (let i = 0; i < T; i++) {
+            const t = t0 + i;
+            planned[t] = P.path[i];
+            role[t] = P.grid[i] > PLAN_EPS ? -1 : P.divert[i] > PLAN_EPS ? -2 : P.dis[i] > PLAN_EPS ? 1 : 0;
+            if (P.dis[i] > PLAN_EPS) last = t;
+        }
+        for (let i = 0; i < T; i++) lastDis[t0 + i] = last;
+    };
     const follow = (t) => followTarget(Math.min(S[t].L, outCap(c)), S[t], c);
+    let day = -1;
+    let planAt = -1;
     return (t, soc) => {
-        const f = follow(t);
+        if (dayOf[t] !== day) { day = dayOf[t]; plan(day, t, soc); planAt = t; }
+        else if (t - planAt >= REPLAN_MIN_SLOTS && Math.abs(soc - planned[t - 1]) > replanKwh) { plan(day, t, soc); planAt = t; }
+        let f = follow(t);
+        if (!ac && f > 0 && S[t].x > 0 && role[t] !== -1) {
+            // when export pays, inverter PV stored now could crowd out free clipped DC later today:
+            // store it only while room for the forecast clip remains (clip itself is always stored)
+            f = Math.min(f, Math.max(S[t].clip * c.effC, sMax - clipAhead[t] - soc));
+        }
         if (role[t] === 1) return f;
-        if (role[t] === -1) return Math.max(pos(f), target[t] - soc);
+        if (role[t] === -1) return Math.max(pos(f), planned[t] - soc);
+        if (role[t] === -2) return Math.max(pos(f), Math.min(planned[t] - soc, (S[t].dcInv + S[t].clip) * c.effC));
         return t > lastDis[t] ? f : pos(f);
     };
 }
