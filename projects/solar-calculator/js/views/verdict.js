@@ -31,6 +31,9 @@
  * <style id="style-verdict">.
  */
 
+// usageBasis: what the usage behind the page is ('meter' | 'extended' | 'demo' | 'manual'), as the verdict's context line says it
+import { usageBasis } from '../verdict.js';
+
 const STYLE_ID = 'style-verdict';
 const STAGES = ['usage', 'plugin', 'all', 'bands', 'answers'];
 const STAGE_LABEL = { usage: 'Listing the options', plugin: 'Solar on its own', all: 'Batteries & power stations', bands: '20 years of weather', answers: 'Your questions' };
@@ -539,7 +542,9 @@ export default {
         if (!this.v) this.build();
         this.fillHead(summary);
         if (summary.engineUnavailable) {
-            this.showError(new Error('Your data is loaded, but the simulation engine isn’t available in this browser. Your usage is still on the Usage tab.'), { retry: false });
+            // the usage tiles need no engine; the hub keeps retrying and fires 'dataset' when it starts
+            this.fillUsage(summary);
+            this.showEngineError(summary);
             return;
         }
         // A hidden tab doesn't need the worker's time: catch up when it is shown again.
@@ -557,14 +562,7 @@ export default {
         this.markStale(true);
         this.v.parts.error.hidden = true;
         this.setStages(-1, false);
-        data.insights().then(ins => {
-            if (token !== this.token || data.summary()?.id !== summary.id) return;
-            this.fillTiles(ins);
-            this.fillBanner(ins);
-        }).catch(err => {
-            if (err?.name === 'AbortError' || token !== this.token) return;
-            this.v.parts.tiles.replaceChildren(this.ctx.ui.h('div', { class: 'notice notice-bad' }, this.ctx.ui.icon('alert'), this.ctx.ui.h('span', null, `Couldn’t read your usage: ${err?.message || err}`)));
-        });
+        this.fillUsage(summary, token);
         const onPartial = (stage, v) => {
             if (token !== this.token || data.summary()?.id !== summary.id || !v) return;
             this.apply(v);
@@ -575,6 +573,19 @@ export default {
         }).catch(err => {
             if (err?.name === 'AbortError' || token !== this.token) return;
             this.showError(err);
+        });
+    },
+
+    /** The usage tiles and the always-on banner, from ctx.data.insights() (no engine needed). */
+    fillUsage(summary, token = this.token) {
+        const { data, ui } = this.ctx;
+        data.insights().then(ins => {
+            if (!this.v || token !== this.token || data.summary()?.id !== summary.id) return;
+            this.fillTiles(ins);
+            this.fillBanner(ins);
+        }).catch(err => {
+            if (!this.v || err?.name === 'AbortError' || token !== this.token) return;
+            this.v.parts.tiles.replaceChildren(ui.h('div', { class: 'notice notice-bad' }, ui.icon('alert'), ui.h('span', null, `Couldn’t read your usage: ${err?.message || err}`)));
         });
     },
 
@@ -643,6 +654,53 @@ export default {
         this.fillPrintLine();
         this.setStages(-1, false, true);
         this.v.parts.live.textContent = `Couldn’t work out the verdict: ${err?.message || err}`;
+    },
+
+    /**
+     * The data is loaded but the calculator didn't start (part of it, or the product list, didn't
+     * download): say why in the engine's own words (summary.engineError) — never "this browser" —
+     * and offer Try again (DataHub.retryEngine). The hub also retries by itself; when the engine
+     * starts it fires 'dataset' and this view runs the verdict.
+     */
+    showEngineError(summary) {
+        const { ui, data } = this.ctx;
+        const h = ui.h;
+        const m = summary?.engineError?.message;
+        const why = typeof m === 'string' && m.trim() ? m.trim() : 'Part of the calculator didn’t download.';
+        const host = this.v.parts.error;
+        const msg = h('span', null, `Your data is loaded, but the verdict can’t be worked out until the calculator starts. ${why}`);
+        let retry = null;
+        if (typeof data.retryEngine === 'function') {
+            retry = ui.button({ label: 'Try again', icon: 'refresh', onClick: () => {
+                if (retry.disabled) return;
+                retry.disabled = true;
+                retry.setAttribute('aria-busy', 'true');
+                // on success the hub fires 'dataset' and render() runs the verdict: keep focus on the page
+                data.retryEngine().then(() => {
+                    // the error card is hidden now (or gone): focus on it would be lost
+                    const doc = this.el.ownerDocument;
+                    const a = doc?.activeElement;
+                    if (!a || a === doc.body || a === retry || !a.isConnected) this.v?.parts.title.focus({ preventScroll: true });
+                }, err => {
+                    if (!retry.isConnected) return;
+                    msg.textContent = `Still can’t work out the verdict. ${err?.message || err}`;
+                    retry.disabled = false;
+                    retry.removeAttribute('aria-busy');
+                    retry.focus();
+                });
+            } });
+        }
+        host.replaceChildren(ui.card({ body: h('div', { class: 'vd-error' },
+            h('div', { class: 'notice notice-bad', role: 'alert' }, ui.icon('alert'), msg),
+            h('p', { class: 'muted', style: { margin: '0', fontSize: '14px' } }, 'This page also tries again by itself for a couple of minutes, and the verdict appears as soon as it works. Your usage is on the Usage tab meanwhile.'),
+            h('div', { class: 'row' },
+                retry,
+                ui.button({ label: 'See your usage', kind: 'ghost', href: '#usage', icon: 'arrowRight' }))) }));
+        host.hidden = false;
+        this.v.running = false;
+        this.fillPrintLine();
+        this.setStages(-1, false, true);
+        this.v.parts.live.textContent = `The verdict can’t be worked out until the calculator starts. ${why}`;
     },
 
     /* ── skeleton & build ───────────────────────────────────────────────── */
@@ -803,18 +861,32 @@ export default {
         const pb = store.get().settings.projectBaseW;
         // no 20-year sunshine record → the engine's "typical" year is the last 12 months
         const typical = summary.weatherBasis ? !!summary.weatherBasis.hasClimatology : true;
+        const span = `(${isoDay(fmt, summary.from)} – ${isoDay(fmt, summary.to)})`;
+        // never "your half-hourly use" for usage that isn't the user's meter (as the Usage tab says)
+        const basis = usageBasis(summary.coverage, summary.source, days);
+        const estDays = finite(summary.coverage?.extrapolatedSlots) ? Math.round(summary.coverage.extrapolatedSlots / 48) : 0;
+        const usageLong = basis === 'manual' ? [h('b', null, 'A typical year'), ' built from your numbers']
+            : basis === 'demo' ? [h('b', null, `${fmt.num(days)} days`), ` of the example household’s half-hourly use ${span}`]
+                : basis === 'extended' ? [h('b', null, `${fmt.num(days - estDays)} days`), ` of half-hourly readings, extended to a year ${span}`]
+                    : [h('b', null, `${fmt.num(days)} days`), ` of your half-hourly use ${span}`];
+        // phones hide the real-data chip, so the short line says what the usage is itself
+        const usageShort = basis === 'manual' ? h('b', null, 'Typical year from your numbers')
+            : basis === 'demo' ? [h('b', null, 'Example household'), ` · ${fmt.num(days)} days`]
+                : basis === 'extended' ? [h('b', null, `${fmt.num(days - estDays)} days`), ' extended to a year']
+                    : h('b', null, `${fmt.num(days)} days`);
         const long = h('span', { class: 'vd-ctx-long' },
-            h('b', null, `${fmt.num(days)} days`), ` of your half-hourly use (${isoDay(fmt, summary.from)} – ${isoDay(fmt, summary.to)})`,
+            usageLong,
             summary.tariffCode ? [' · ', h('b', null, summary.tariffCode)] : null,
             typical ? ` · typical-year sunshine for ${where}` : ` · your last 12 months’ sunshine at ${where}`,
             finite(pb) ? [' · ', h('b', null, `projected with ${fmt.num(pb)} W always-on`)] : null);
         const short = h('span', { class: 'vd-ctx-short' },
-            h('b', null, `${fmt.num(days)} days`), ` · ${/AGILE/i.test(summary.tariffCode || '') ? 'Agile' : summary.tariffCode || 'your tariff'} · ${where} · ${typical ? 'typical-year sun' : 'last year’s sun'}`,
+            usageShort, ` · ${/AGILE/i.test(summary.tariffCode || '') ? 'Agile' : summary.tariffCode || 'your tariff'} · ${where} · ${typical ? 'typical-year sun' : 'last year’s sun'}`,
             finite(pb) ? ` · ${fmt.num(pb)} W projected` : null);
         const real = summary.coverage?.realPct;
         // the shared real-data chip (amber below 95%; on phones only then, where room is short)
-        ui.put(p.context, h('p', { class: 'context-line' }, long, short), ui.coverageChip(summary.coverage));
+        ui.put(p.context, h('p', { class: 'context-line' }, long, short), ui.coverageChip(summary.coverage, { source: summary.source }));
         this.v.realPct = real;
+        this.v.usageBasis = basis;
         this.fillPrintLine();
         this.fillDemo(summary);
     },
@@ -823,9 +895,13 @@ export default {
     fillPrintLine() {
         const { fmt } = this.ctx;
         const real = this.v.realPct;
+        const basis = this.v.usageBasis;
         const checked = this.V?.context?.pricesChecked;
         this.v.parts.print.textContent = [
-            finite(real) ? `${fmt.pct(real, { dp: real >= 99.95 || real < 10 ? 0 : 1 })} real half-hourly readings` : null,
+            // synthetic usage is never "100% real readings" on paper either
+            basis === 'demo' ? 'example household (synthetic usage)'
+                : basis === 'manual' ? 'typical usage from your figures'
+                    : finite(real) ? `${fmt.pct(real, { dp: real >= 99.95 || real < 10 ? 0 : 1 })} real half-hourly readings` : null,
             checked ? `product prices checked ${isoDay(fmt, checked)}` : null,
             `printed ${fmt.date(Date.now())}`,
             // paper has no spinners: say so when it was printed mid-run
@@ -870,7 +946,11 @@ export default {
         const host = this.v.parts.stages;
         if (failed) { host.replaceChildren(); return; }
         const V = this.V;
-        const info = done && V ? `${fmt.num(V.context?.options ?? V.ranked.length)} options checked against your ${fmt.num(Math.round(V.context?.days ?? 0))} days` : '';
+        const n = fmt.num(V?.context?.options ?? V?.ranked?.length ?? 0);
+        const basis = this.v.usageBasis;
+        const against = basis === 'manual' ? 'a typical year built from your numbers'
+            : `${basis === 'demo' ? 'the example household’s' : 'your'} ${fmt.num(Math.round(V?.context?.days ?? 0))} days`;
+        const info = done && V ? `${n} options checked against ${against}` : '';
         host.replaceChildren(vdStages(h, ui, si, done, info));
     },
 
@@ -1110,7 +1190,7 @@ export default {
             const toBattery = () => {
                 const q = this.v.parts.questions.battery.d;
                 q.open = true;
-                q.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                q.scrollIntoView({ behavior: ui.scrollBehavior?.() ?? 'smooth', block: 'center' });
                 q.querySelector('summary')?.focus({ preventScroll: true });
             };
             kids.push(h('p', { class: 'vd-sub-note vd-rank-note' }, ui.icon('info'), h('span', null,
@@ -1129,7 +1209,7 @@ export default {
         const note = [h('b', null, '10-yr value'), `: what you’re ahead after 10 years once it has paid for itself, in today’s money (later savings count ${disc} a year less) — the order of this list.`, plain];
         const groups = og.groups.map(g => ({ ...g, rows: this.rowsFor(g.rows) }));
         const tbl = ui.table({
-            columns: this.optionCols(maxP90), groups, rowClass, onRowClick: open, dense: true, note: h('span', null, note),
+            columns: this.optionCols(maxP90), groups, rowClass, onRowClick: open, rowAction: 'open it in Design', dense: true, note: h('span', null, note),
             caption: 'Every option, ranked by 10-year value',
             onToggle: (key, isOpen) => {
                 if (key === 'beaten') this.v.beatenOpen = isOpen;
@@ -1187,8 +1267,9 @@ export default {
             isolines: sc.isolines.map(i => ({ points: i.points, label: i.label })),
             front: sc.front,
             onPick: pt => router.go('design', { scenario: pt.id }),
+            touchPickHint: 'Tap again to open it in Design',
             printTable: false,   // the ranked tables below carry the same numbers on paper
-            note: 'Dashed lines: what an option must save to pay back in that many years (cost ÷ years, before price rises). The pale line joins the options nothing beats on both price and savings. Click a dot to open it.',
+            note: 'Dashed lines: what an option must save to pay back in that many years (cost ÷ years, before price rises). The pale line joins the options nothing beats on both price and savings. Click a dot (tap it twice on a phone) to open it.',
         });
     },
 

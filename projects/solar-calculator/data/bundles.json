@@ -1,6 +1,6 @@
 {
  "version": 1,
- "note": "Fixed-price bundles of a catalog unit plus panels. Prices are entered here by hand from the verified catalog (research/plugin-kits-verified.json, checked live 2026-10-05) so the app never parses prices out of free-text notes. 'base' must exist in kits.json; 'panels.catalogId' names the matching loose-panel entry.",
+ "note": "Fixed-price bundles of a catalog unit plus panels. Prices are entered here by hand from the verified catalog (kits.json, checked live 2026-10-05; docs/solar-calculator/VERIFY-market.md) so the app never parses prices out of free-text notes. 'base' must exist in kits.json; 'panels.catalogId' names the matching loose-panel entry.",
  "bundles": [
   {
    "id": "ecoflow-stream-ultra+4x500",

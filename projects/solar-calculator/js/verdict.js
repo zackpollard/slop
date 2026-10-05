@@ -20,7 +20,11 @@
  *             payback tornado and a complete "How sure is this?"
  *   'bands'   2006–2025 weather band for every option → whiskers, payback range, confidence levels
  *   'answers' the orientation checks (flips), the always-on-load curve
- * Between options it yields to the event loop, so other engine calls and a cancel can get in.
+ * Between options it yields to the event loop, so other engine calls and a cancel can get in. The
+ * heavy calls (autoScenarios, runScenario, answerOrientation, tornado, baseLoadCurve) go through
+ * the engine's step form (engine.callAsync) and pause every `sliceMs` inside a run as well: an
+ * engine on the page's own thread (engine.js's inline fallback) never blocks it for seconds, and a
+ * cancel gets in mid-run.
  *
  * Money basis: every £/yr is the engine's first ownership year on the forward basis (install on
  * the 1st of next month, VAT 0% to 31 Mar 2027 then 5%, export never VAT'd). The usage tiles are
@@ -40,7 +44,7 @@
  * Pure module (worker-safe): no DOM, no fetch.
  */
 
-import { findProduct, pluginKits } from './kits.js';
+import { findProduct, pluginKits, SERVER_SAFE_SWITCH_MS } from './kits.js';
 import { compass16 } from './sweep.js';
 
 /** Stage names in the order onPartial reports them (CONTRACTS §15). */
@@ -63,6 +67,7 @@ const LINKS = {
 };
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const MINUS = '−';
 
 /* ── small pure helpers ─────────────────────────────────────────────────────── */
@@ -118,6 +123,37 @@ export function sunshineRank(wx, { sameMonths = false } = {}) {
     if (n <= 0) return `about as sunny as ${months}the last ${of} years`;
     return n >= of ? `${word} than ${months}every one of the last ${of} years` : `${word} than ${months}${n} of the last ${of} years`;
 }
+/**
+ * A run of dark months (core.js darkMonths: month indices in calendar order through the year end)
+ * as words for a sentence — 'from November to January', 'in December', or '' when none is dark.
+ * Orientation's darkMonthsPhrase, so the Verdict and the Orientation tab name the same months.
+ * @param {number[]} dark
+ * @returns {string}
+ */
+export function darkMonthsPhrase(dark) {
+    const ok = (dark ?? []).filter((i) => Number.isInteger(i) && i >= 0 && i < 12);
+    if (!ok.length) return '';
+    if (ok.length === 1) return `in ${MONTH_NAMES[ok[0]]}`;
+    return `from ${MONTH_NAMES[ok[0]]} to ${MONTH_NAMES[ok[ok.length - 1]]}`;
+}
+
+/**
+ * What the usage behind every figure is: 'manual' (a typical profile from the user's own figures),
+ * 'demo' (the example household), 'extended' (a short meter history extended to a year) or
+ * 'meter' (a year of meter readings). Reads coverage.synthetic (set by the worker for the page) or
+ * coverage.kind + source (the dataset's own summary).
+ * @param {{ synthetic?: string, kind?: string, extrapolatedSlots?: number }|null|undefined} coverage
+ * @param {string|null|undefined} source DatasetSummary.source
+ * @param {number} [days] summary.days: an extension shorter than the data counts
+ * @returns {'manual'|'demo'|'extended'|'meter'}
+ */
+export function usageBasis(coverage, source, days) {
+    const syn = coverage?.synthetic || (coverage?.kind === 'synthetic' || source === 'manual' || source === 'demo' ? source : null);
+    if (syn === 'manual' || syn === 'demo') return syn;
+    const est = finite(coverage?.extrapolatedSlots) ? Math.round(coverage.extrapolatedSlots / 48) : 0;
+    return est > 0 && (!finite(days) || est < days) ? 'extended' : 'meter';
+}
+
 const byNpv = (a, b) => (b.npv10Gbp - a.npv10Gbp) || (a.capexGbp - b.capexGbp) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 const LEVELS = ['low', 'medium', 'high'];
 const minLevel = (...ls) => LEVELS[Math.min(...ls.map((l) => LEVELS.indexOf(l)).filter((i) => i >= 0))] ?? 'low';
@@ -196,14 +232,20 @@ export function breakEvenW(points, maxYears = 10) {
  * notes never lower it.
  * @param {Object} row ranked row (route, legal, battery, savings p10/p50/p90, panels)
  * @param {{ coveragePct: number, days: number, station?: Object|null, products?: Object[], batteryRange?: { threshold: number, optimal: number }|null,
- *   hasBand?: boolean }} ctx  hasBand false = the engine has no 2006–2025 years to build a weather range from
+ *   hasBand?: boolean, usage?: 'meter'|'extended'|'demo'|'manual', locationSource?: string|null }} ctx
+ *   hasBand false = the engine has no 2006–2025 years to build a weather range from; usage 'manual'
+ *   (a typical profile from the user's own figures, usageBasis) caps the data at medium;
+ *   locationSource 'region-centroid' (no home location: the sunshine is the region's centre) caps
+ *   the weather at medium
  * @returns {{ level: 'high'|'medium'|'low', data: Object, weather: Object, model: Object, reasons: string[], notes: string[] }}
  */
-export function confidenceFor(row, { coveragePct = 100, days = 365, station = null, products = [], batteryRange = null, hasBand = true } = {}) {
+export function confidenceFor(row, { coveragePct = 100, days = 365, station = null, products = [], batteryRange = null, hasBand = true, usage = 'meter', locationSource = null } = {}) {
     const cov = finite(coveragePct) ? coveragePct : 0;
-    const data = cov >= 95 && days >= 330 ? { level: 'high', reason: null }
+    let data = cov >= 95 && days >= 330 ? { level: 'high', reason: null }
         : cov >= 80 && days >= 180 ? { level: 'medium', reason: days < 330 ? `only ${Math.round(days)} days of your data` : `${Math.round(100 - cov)}% of your half-hours are estimated` }
             : { level: 'low', reason: days < 180 ? `only ${Math.round(days)} days of your data` : `${Math.round(100 - cov)}% of your half-hours are estimated` };
+    // hand-entered figures build a complete year, so the coverage test alone would call it High
+    if (usage === 'manual') data = { level: data.level === 'low' ? 'low' : 'medium', reason: 'your usage is a typical profile, not your meter readings' };
     let weather;
     const s = row.savings ?? {};
     if (!row.panels) weather = { level: 'high', reason: null };
@@ -213,6 +255,11 @@ export function confidenceFor(row, { coveragePct = 100, days = 365, station = nu
         const spread = s.p50 > 0 ? (s.p90 - s.p10) / s.p50 : Infinity;
         weather = { level: spread <= 0.15 ? 'high' : spread <= 0.30 ? 'medium' : 'low', spread,
             reason: spread <= 0.15 ? null : `the weather alone moves it between ${gbp(s.p10)} and ${gbp(s.p90)} a year` };
+    }
+    // no postcode or map spot found: the sunshine is for the centre of the region, not the home
+    if (row.panels && locationSource === 'region-centroid') {
+        const why = 'sunshine is for the centre of your region, not your home';
+        weather = weather.level === 'high' ? { ...weather, level: 'medium', reason: why } : { ...weather, reason: weather.reason ? `${why}; ${weather.reason}` : why };
     }
     let model;
     if (row.legal === 'whatif' || row.route === 'whatif') model = { level: 'low', reason: 'not legal today' };
@@ -367,25 +414,34 @@ const cancelled = () => Object.assign(new Error('Cancelled'), { name: 'AbortErro
  * @param {Object} engine SolarEngine (core.js)
  * @param {{ scenarios?: Object[], finance?: Object, maxPaybackYears?: number, tieBandPct?: number,
  *   onPartial?: (stage: string, partial: Object) => void, nowMs?: number, isCancelled?: () => boolean,
- *   overrides?: Object<string, { priceGbp?: number, costs?: Object[] }> }} [opts]
+ *   overrides?: Object<string, { priceGbp?: number, costs?: Object[] }>, sliceMs?: number }} [opts]
  *   scenarios default to engine.autoScenarios(); nowMs only stamps generatedAtMs (default now).
- *   isCancelled is checked between options (and between the answers): once it returns true the
- *   build stops there and rejects with an AbortError. overrides are the user's own prices by
+ *   isCancelled is checked between options (and between the answers), and — when the engine has a
+ *   step form (callAsync) — every sliceMs inside a heavy call (default 30 ms): once it returns true
+ *   the build stops there and rejects with an AbortError. overrides are the user's own prices by
  *   scenario id, applied as Compare stores them (applyPriceOverride); those rows carry
  *   priceOverride: true and context.priceOverrides lists their ids.
  * @returns {Promise<Object>} Verdict { stage, done, context, usage, ranked, excluded, bestBuyId, runnerUpId, stepUp,
  *   headline, answers: { orientation, battery, ups, growth, confidence, baseLoad }, tornado, scatter, generatedAtMs }
  */
-export async function buildVerdict(engine, { scenarios, finance = {}, maxPaybackYears = 10, tieBandPct = 3, onPartial, nowMs, isCancelled, overrides } = {}) {
+export async function buildVerdict(engine, { scenarios, finance = {}, maxPaybackYears = 10, tieBandPct = 3, onPartial, nowMs, isCancelled, overrides, sliceMs } = {}) {
     if (!engine) throw new Error('buildVerdict needs an engine');
     const fin = finance && typeof finance === 'object' ? finance : {};
     const maxYears = finite(maxPaybackYears) && maxPaybackYears > 0 ? maxPaybackYears : 10;
     const check = () => { if (typeof isCancelled === 'function' && isCancelled()) throw cancelled(); };
-    /** Between options: let other work in, then stop here if the caller has cancelled. */
+    /** Between options (and between slices of a heavy call): let other work in, then stop here if the caller has cancelled. */
     const pause = async () => { check(); await tick(); check(); };
+    const callOpts = { yieldFn: pause, ...(finite(sliceMs) && sliceMs >= 0 ? { sliceMs } : {}) };
+    /**
+     * A heavy engine method, cooperatively when the engine has a step form: the same work, caches
+     * and result as engine[method](...args), paused (pause) whenever sliceMs has passed — so an
+     * engine on the page's own thread never blocks it for seconds, and a cancel gets in mid-run
+     * (pause throws the AbortError, which every guard lets through).
+     */
+    const call = async (method, ...args) => (typeof engine.callAsync === 'function' ? engine.callAsync(method, args, callOpts) : engine[method](...args));
     check();
     const overridden = new Set();
-    const list = (Array.isArray(scenarios) && scenarios.length ? scenarios : engine.autoScenarios()).map((s) => {
+    const list = (Array.isArray(scenarios) && scenarios.length ? scenarios : await call('autoScenarios')).map((s) => {
         const sys = engine.normalizeSystem(s);
         const o = overrides && typeof overrides === 'object' && Object.prototype.hasOwnProperty.call(overrides, sys.id) ? overrides[sys.id] : null;
         const priced = o ? applyPriceOverride(sys, o) : null;
@@ -414,8 +470,8 @@ export async function buildVerdict(engine, { scenarios, finance = {}, maxPayback
         V.done = stage === STAGES[STAGES.length - 1];
         onPartial?.(stage, plain(V));
     };
-    const run = (sys, withBand) => {
-        const r = engine.runScenario(sys, { withBand, finance: fin });
+    const run = async (sys, withBand) => {
+        const r = await call('runScenario', sys, { withBand, finance: fin });
         results.set(sys.id, r);
         return r;
     };
@@ -423,13 +479,14 @@ export async function buildVerdict(engine, { scenarios, finance = {}, maxPayback
     /* ── stage 1: usage ── */
     const bl = ins.baseLoad ?? {};
     let r1 = list.find((s) => s.route === 'reference' && s.loadAdjustW < 0) ?? null;
-    const r1Res = run(r1 ?? { id: '__cut100', name: 'Cut 100 W of always-on load', route: 'reference', arrays: [], costs: [], loadAdjustW: -100 }, false);
+    const r1Res = await run(r1 ?? { id: '__cut100', name: 'Cut 100 W of always-on load', route: 'reference', arrays: [], costs: [], loadAdjustW: -100 }, false);
     const per100 = r1Res.headline.savingsGbp * (100 / Math.abs(r1Res.system.loadAdjustW || -100));
     if (!r1) results.delete('__cut100');
     const ctxRow = { gbpPer100W: per100, overridden };
     const cov = summary.coverage ?? {};
     const coveragePct = finite(cov.realPct) ? cov.realPct : 100;
     const estDays = finite(cov.extrapolatedSlots) ? Math.round(cov.extrapolatedSlots / 48) : 0;
+    const usage = usageBasis(cov, summary.source, summary.days);
     const wb = summary.weatherBasis ?? {};
     const installDate = fo.installDate;
     const [iy, im] = installDate.split('-').map(Number);
@@ -442,8 +499,14 @@ export async function buildVerdict(engine, { scenarios, finance = {}, maxPayback
     // Without the 2006–2025 record the engine's "typical" year is simply the last 12 months.
     const typicalYear = !!wb.hasClimatology;
     const fullYear = !(summary.days < 330);
+    const span = `(${day(summary.from)} – ${day(summary.to)})`;
+    // never "your half-hourly use" for usage that isn't the user's meter (Usage's head says the same)
+    const usageText = usage === 'manual' ? 'a typical year built from your numbers'
+        : usage === 'demo' ? `${num(summary.days)} days of the example household’s half-hourly use ${span}`
+            : usage === 'extended' ? `${num(summary.days - estDays)} days of half-hourly readings, extended to a year ${span}`
+                : `${num(summary.days)} days of your half-hourly use ${span}`;
     const line = [
-        `${num(summary.days)} days of your half-hourly use (${day(summary.from)} – ${day(summary.to)})`,
+        usageText,
         summary.tariffCode,
         typicalYear ? `typical-year sunshine for ${where}` : `${fullYear ? 'your last 12 months’' : 'the same days’'} sunshine at ${where}`,
         finite(engine.projectBaseW) ? `projected with ${num(engine.projectBaseW)} W always-on` : null,
@@ -461,7 +524,7 @@ export async function buildVerdict(engine, { scenarios, finance = {}, maxPayback
         tariffCode: summary.tariffCode ?? null, tariffCodes: (summary.tariffs ?? []).map((t) => t.code),
         region: summary.region ?? null, regionName: summary.regionName ?? null, postcode: summary.postcode ?? null,
         locationSource: summary.locationSource ?? null,
-        coveragePct, estimatedDays: estDays, serverW: summary.serverW ?? null,
+        coveragePct, estimatedDays: estDays, usage, serverW: summary.serverW ?? null,
         projectBaseW: finite(engine.projectBaseW) ? engine.projectBaseW : null,
         weather: { hasClimatology: !!wb.hasClimatology, typicalYear, fullYear, hasBand: (engine.bandYears?.length ?? 0) > 0,
             pctVsAverage: wb.pctVsAverage ?? null, sunnierThanYears: wb.sunnierThanYears ?? null, yearsCompared: wb.yearsCompared ?? 0 },
@@ -486,7 +549,7 @@ export async function buildVerdict(engine, { scenarios, finance = {}, maxPayback
         energyCostGbp: ins.totals?.energyGbp ?? null, standingGbp: ins.totals?.standingGbp ?? null, loadKwh: ins.totals?.kwh ?? null,
     };
     for (const s of list.filter((x) => x.route === 'reference')) {
-        const r = results.get(s.id) ?? run(s, false);
+        const r = results.get(s.id) ?? await run(s, false);
         rows.set(s.id, rowOf(engine, s, r, ctxRow));
     }
     emit('usage');
@@ -495,7 +558,7 @@ export async function buildVerdict(engine, { scenarios, finance = {}, maxPayback
     /* ── stage 2: solar-only options → the best buy ── */
     const solarOnly = (s) => !s.battery && (s.route === 'plugin' || s.route === 'hardwired');
     for (const s of list.filter(solarOnly)) {
-        rows.set(s.id, rowOf(engine, s, run(s, false), ctxRow));
+        rows.set(s.id, rowOf(engine, s, await run(s, false), ctxRow));
         await pause();
     }
     const decide = () => decideRows(engine, rows, { maxYears });
@@ -516,7 +579,7 @@ export async function buildVerdict(engine, { scenarios, finance = {}, maxPayback
     };
     const orientSys = orientFor();
     if (orientSys) {
-        V.answers.orientation = guard(() => orientationAnswer(engine, orientSys, { tieBandPct, finance: fin, flips: false }));
+        V.answers.orientation = await guardAsync(() => orientationAnswer(call, orientSys, { tieBandPct, finance: fin, flips: false }));
         emit('plugin');
         await pause();
     }
@@ -524,7 +587,7 @@ export async function buildVerdict(engine, { scenarios, finance = {}, maxPayback
     /* ── stage 3: storage, combinations, future rules ── */
     for (const s of list) {
         if (rows.has(s.id)) continue;
-        rows.set(s.id, rowOf(engine, s, run(s, false), ctxRow));
+        rows.set(s.id, rowOf(engine, s, await run(s, false), ctxRow));
         await pause();
     }
     Object.assign(V, decide());
@@ -548,7 +611,7 @@ export async function buildVerdict(engine, { scenarios, finance = {}, maxPayback
         for (const id of ids) {
             const s = byId.get(id);
             if (!s) continue;
-            const r = run(s, true);
+            const r = await run(s, true);
             const row = rowOf(engine, s, r, ctxRow);
             row.confidence = confidenceFor(row, confidenceCtx(engine, s, row, summary, coveragePct));
             rows.set(id, row);
@@ -559,9 +622,9 @@ export async function buildVerdict(engine, { scenarios, finance = {}, maxPayback
         V.scatter = scatterOf(V, rows);
     };
     await banded(order.slice(0, firstN));
-    const tornadoFor = (sys) => {
-        const t = guard(() => {
-            const x = engine.tornado(sys, { finance: fin });
+    const tornadoFor = async (sys) => {
+        const t = await guardAsync(async () => {
+            const x = await call('tornado', sys, { finance: fin });
             return { id: x.id, center: x.center, rows: x.rows.map((y) => ({ ...y })) };
         });
         return t?.status === 'error' ? null : t;
@@ -570,7 +633,7 @@ export async function buildVerdict(engine, { scenarios, finance = {}, maxPayback
     let best = focusOf(V, rows);
     let bestSys = best ? byId.get(best.id) : null;
     if (bestSys) {
-        V.tornado = tornadoFor(bestSys);
+        V.tornado = await tornadoFor(bestSys);
         await pause();
     }
     V.answers.confidence = guard(() => confidenceAnswer(V, rows, V.tornado));
@@ -584,7 +647,7 @@ export async function buildVerdict(engine, { scenarios, finance = {}, maxPayback
     best = focusOf(V, rows);
     if (best && best.id !== V.tornado?.id) {
         bestSys = byId.get(best.id) ?? null;
-        V.tornado = bestSys ? tornadoFor(bestSys) : null;
+        V.tornado = bestSys ? await tornadoFor(bestSys) : null;
     }
     V.answers.confidence = guard(() => confidenceAnswer(V, rows, V.tornado));
     emit('bands');
@@ -593,9 +656,9 @@ export async function buildVerdict(engine, { scenarios, finance = {}, maxPayback
     /* ── stage 5: what would change the direction, always-on load ── */
     // the same sweep (cached) with the "this changes if…" checks, for the final best buy
     const finalOrient = orientFor();
-    V.answers.orientation = guard(() => orientationAnswer(engine, finalOrient, { tieBandPct, finance: fin, flips: true }));
+    V.answers.orientation = await guardAsync(() => orientationAnswer(call, finalOrient, { tieBandPct, finance: fin, flips: true }));
     await pause();
-    V.answers.baseLoad = guard(() => baseLoadAnswer(engine, V, rows, byId, { maxYears, finance: fin, per100 }));
+    V.answers.baseLoad = await guardAsync(() => baseLoadAnswer(call, V, rows, byId, { maxYears, finance: fin, per100 }));
     emit('answers');
     return plain(V);
 }
@@ -610,6 +673,16 @@ function guard(fn) {
     }
 }
 
+/** guard() for an answer builder that awaits the engine (its pauses can throw the AbortError). */
+async function guardAsync(fn) {
+    try {
+        return await fn();
+    } catch (err) {
+        if (isAbort(err)) throw err;
+        return { status: 'error', message: String(err?.message || err) };
+    }
+}
+
 function confidenceCtx(engine, sys, row, summary, coveragePct) {
     const products = productsOf(engine.catalog, sys);
     const station = stationOf(engine.catalog, sys);
@@ -618,6 +691,8 @@ function confidenceCtx(engine, sys, row, summary, coveragePct) {
         coveragePct, days: summary.days, station, products,
         batteryRange: bv ? { threshold: bv.thresholdSystemGbp, optimal: bv.optimalSystemGbp } : null,
         hasBand: (engine.bandYears?.length ?? 0) > 0,
+        usage: usageBasis(summary.coverage, summary.source, summary.days),
+        locationSource: summary.locationSource ?? null,
     };
 }
 
@@ -840,18 +915,21 @@ function scatterOf(V, rows) {
 /**
  * Q1, west vs south, for one system's panels. flips false = the sweep alone (fast, answered first);
  * the "this changes if…" checks (lower load with Prime, Prime, more panels, a battery) come with
- * flips true — `checked` lists what was tried, so an empty list means not checked yet.
+ * flips true — `checked` lists what was tried, so an empty list means not checked yet. The months
+ * with little or no sun after 4pm come from the west-wall run (core.js darkMonths), as on the
+ * Orientation tab — not a fixed list.
+ * @param {(method: string, ...args: any[]) => Promise<any>} call buildVerdict's cooperative engine call
  */
-function orientationAnswer(engine, sys, { tieBandPct, finance, flips = true }) {
+async function orientationAnswer(call, sys, { tieBandPct, finance, flips = true }) {
     if (!sys) return { status: 'none', summary: 'No panels to point in these options.', body: [] };
-    const a = engine.answerOrientation(sys, { tieBandPct, finance, flips });
+    const a = await call('answerOrientation', sys, { tieBandPct, finance, flips });
     const kw = (p) => num(p.kwh);
     const tie = a.tie;
     const out = {
         status: 'ready', forId: sys.id, forName: sys.name, checksPending: !flips,
         best: a.best, s35: a.s35, w45: a.w45, w90: a.w90, ssw45: a.ssw45, current: a.current,
         tie, tieBandPct: a.tieBandPct, westPays: a.westPays, flips: a.flips, checked: a.checked, compass: a.compass,
-        proxyNote: a.proxyNote,
+        proxyNote: a.proxyNote, darkMonths: Array.isArray(a.darkMonths) ? a.darkMonths : null,
         cells: a.cells.map((c) => ({ az: c.az, tilt: c.tilt, kwh: c.kwh, gbp: c.gbp, pPerKwh: c.pPerKwh, peakSharePct: c.peakSharePct, peakShareAllPct: c.peakShareAllPct ?? c.peakSharePct })),
     };
     const body = [];
@@ -861,7 +939,11 @@ function orientationAnswer(engine, sys, { tieBandPct, finance, flips = true }) {
         const worth = a.w90.pPerKwh > a.best.pPerKwh
             ? `Each of those kWh is worth more (${num(a.w90.pPerKwh, 1)}p vs ${num(a.best.pPerKwh, 1)}p) because ${pct(a.w90.peakSharePct)} lands in the 4–7pm peak, but that doesn’t make up for the lost energy: ${em(`${gbp(a.w90.gbp)} vs ${gbp(a.best.gbp)} a year`)}.`
             : `And they wouldn’t even be worth more per kWh (${num(a.w90.pPerKwh, 1)}p vs ${num(a.best.pPerKwh, 1)}p): ${em(`${gbp(a.w90.gbp)} vs ${gbp(a.best.gbp)} a year`)}.`;
-        body.push(`On a west-facing wall they’d make ${kw(a.w90)} kWh/yr instead of ${kw(a.best)} (${pct(less)} less). ${worth} Around midwinter there’s little or no sun after 4pm.`);
+        // the dark months from the west-wall run, worded as Orientation words them; an engine
+        // that doesn't report them (darkMonths null) keeps the general line
+        const dark = out.darkMonths;
+        const season = dark ? (dark.length ? ` There’s little or no sun after 4pm ${darkMonthsPhrase(dark)}.` : '') : ' Around midwinter there’s little or no sun after 4pm.';
+        body.push(`On a west-facing wall they’d make ${kw(a.w90)} kWh/yr instead of ${kw(a.best)} (${pct(less)} less). ${worth}${season}`);
         if (tie) {
             const azs = tie.azMin === tie.azMax ? compass16(tie.azMin) : `${compass16(tie.azMin)} to ${compass16(tie.azMax)}`;
             const tl = tie.tiltMin === tie.tiltMax ? `${tie.tiltMin}°` : `${tie.tiltMin}–${tie.tiltMax}°`;
@@ -973,11 +1055,28 @@ function tenYearsText(row) {
     return `after ${RANK_YEARS} years you’re ${net} in plain pounds ${but} ${npv} in today’s money`;
 }
 
+const GRADE = { doesNotPay: 0, marginal: 1, pays: 2 };
+
+/**
+ * The power station the servers' answer is about: the best 10-year value — unless that one switches
+ * over too slowly for servers to ride through (serverSafeSwitch false) and a unit that doesn't is
+ * graded just as well (stationVerdict), which is then the better buy for servers.
+ * @param {Object[]} list rows, best NPV first
+ * @param {(row: Object) => boolean} safe
+ * @returns {Object|null}
+ */
+export function pickStation(list, safe) {
+    const top = list?.[0] ?? null;
+    if (!top || safe(top)) return top;
+    return list.find((r) => safe(r) && GRADE[stationVerdict(r)] >= GRADE[stationVerdict(top)]) ?? top;
+}
+
 function upsAnswer(engine, V, rows, byId, results, finance) {
     const ups = V.ranked.filter((r) => r.route === 'ups' && r.legal === 'ok' && !r.errors.length);
+    const safe = (r) => !!stationOf(engine.catalog, byId.get(r.id))?.serverSafeSwitch;
     const serverOnly = ups.filter((r) => !r.panels).sort(byNpv);
     const withPanels = ups.filter((r) => r.panels).sort(byNpv)[0] ?? null;
-    const main = serverOnly[0] ?? withPanels;
+    const main = pickStation(serverOnly, safe) ?? withPanels;
     if (!main) return { status: 'none', summary: 'No power station option on your data.', body: [] };
     const sys = byId.get(main.id);
     const raw = engine.upsStrategies(sys, { finance });
@@ -1033,8 +1132,12 @@ function upsAnswer(engine, V, rows, byId, results, finance) {
                     : `paying back in ${years(wpb, 'yrs')}`;
         body.push(`With ${n} panel${n === 1 ? '' : 's'} on its own solar inputs (no 800 W limit, nothing to register): ${em(`${gbp(withPanels.savings.typical)}/yr`)}, ${tail}.`);
     }
-    const sw = finite(st.switchMs) ? `${num(st.switchMs)} ms switchover` : null;
-    body.push(`Bonus: it’s a real UPS for the servers${sw || st.hid ? ` (${[sw, st.hid ? 'USB HID for clean shutdown' : null].filter(Boolean).join('; ')})` : ''}.`);
+    body.push(upsLine(st, station));
+    // the best-graded unit switches too slowly for servers: name the best one that doesn't
+    const safeAlt = !st.serverSafeSwitch ? serverOnly.find((r) => r !== main && safe(r)) ?? null : null;
+    if (safeAlt) {
+        body.push(`The best unit here that switches in ${SERVER_SAFE_SWITCH_MS} ms or less is the ${safeAlt.name.replace(/^Power station( for the servers)?:\s*/i, '')} (${gbp(safeAlt.capexGbp)}): ${em(`${gbp(safeAlt.savings.typical)}/yr`)}, ${finite(safeAlt.payback.typical) ? `paying back in ${years(safeAlt.payback.typical, 'yrs')}` : 'but it never pays back'}.`);
+    }
     return {
         status: 'ready', bestId: main.id, bestName: main.name,
         realisticGbp: st.realisticGbp, bestCaseGbp: st.bestCaseGbp, peakCutGbp: st.peakCutGbp,
@@ -1043,9 +1146,38 @@ function upsAnswer(engine, V, rows, byId, results, finance) {
         withPanels: withPanels ? { id: withPanels.id, name: withPanels.name, gbp: withPanels.savings.typical, paybackYears: withPanels.payback.typical, capexGbp: withPanels.capexGbp,
             npv10Gbp: withPanels.npv10Gbp, net10Gbp: withPanels.net10Gbp, endYear: storageLife(withPanels).endYear, wearsOutEarly: storageLife(withPanels).early,
             verdict: stationVerdict(withPanels) } : null,
-        switchMs: st.switchMs ?? null, hid: !!st.hid, automation: station?.touMode ? 'tou' : station?.smartPlugOnly ? 'smartPlug' : 'app',
+        switchMs: st.switchMs ?? null, hid: !!st.hid, serverSafeSwitch: !!st.serverSafeSwitch, holdUpMs: st.holdUpMs ?? null,
+        safeAltId: safeAlt?.id ?? null,
+        automation: station?.touMode ? 'tou' : station?.smartPlugOnly ? 'smartPlug' : 'app',
         summary, body,
     };
+}
+
+/**
+ * The power station as a UPS for the servers (REPORT-ups server caveat). Every unit on sale is a
+ * standby UPS: it moves the servers to its battery through a relay, in st.switchMs. A server's
+ * power supply only has to ride through about st.holdUpMs at full load (ATX 3.1), so the bonus
+ * line is only for a unit that switches within SERVER_SAFE_SWITCH_MS (st.serverSafeSwitch); any
+ * other gets the caveat — with a smart plug cutting its mains, it switches every day, not just in
+ * a power cut. USB HID (clean shutdown) is mentioned only when the unit has it.
+ * @param {{ switchMs?: number|null, serverSafeSwitch?: boolean, holdUpMs?: number|null, hid?: boolean }} st upsStrategies()
+ * @param {{ touMode?: boolean }|null} station the catalog product
+ * @returns {string}
+ */
+export function upsLine(st, station = null) {
+    const ms = finite(st?.switchMs) ? st.switchMs : null;
+    const hold = finite(st?.holdUpMs) ? st.holdUpMs : 12;
+    if (st?.serverSafeSwitch) {
+        const sw = ms != null ? `${num(ms)} ms switchover` : null;
+        return `Bonus: it’s a real UPS for the servers${sw || st.hid ? ` (${[sw, st.hid ? 'USB HID for clean shutdown' : null].filter(Boolean).join('; ')})` : ''}.`;
+    }
+    const head = ms != null
+        ? `It also keeps the servers up in a power cut, but it switches over in ${num(ms)} ms — longer than many server power supplies ride through at full load (ATX 3.1 only has to hold ~${num(hold)} ms).`
+        : `It also keeps the servers up in a power cut, but its switchover time isn’t published, and many server power supplies only ride through ~${num(hold)} ms at full load (ATX 3.1).`;
+    // the smart plug that moves the servers onto its battery each evening is a switchover too
+    const daily = station && !station.touMode ? ' With a smart plug cutting its mains, that switch happens every day, not just in a power cut.' : '';
+    const hid = st?.hid ? ' Its USB HID lets the servers shut down cleanly before its battery runs out.' : '';
+    return `${head}${daily} Prefer a unit that switches in ${SERVER_SAFE_SWITCH_MS} ms or less, or test that the servers ride through a switchover first.${hid}`;
 }
 
 function growthAnswer(engine, V, rows) {
@@ -1113,7 +1245,8 @@ function confidenceAnswer(V, rows, tornado) {
         p10: s.p10, p90: s.p90, summary, body };
 }
 
-function baseLoadAnswer(engine, V, rows, byId, { maxYears, finance, per100 }) {
+/** @param {(method: string, ...args: any[]) => Promise<any>} call buildVerdict's cooperative engine call */
+async function baseLoadAnswer(call, V, rows, byId, { maxYears, finance, per100 }) {
     const best = focusOf(V, rows);
     const plug = best && !best.battery ? best
         : V.ranked.filter((r) => r.route === 'plugin' && !r.battery && r.legal === 'ok' && !r.errors.length).sort(byNpv)[0] ?? null;
@@ -1133,7 +1266,7 @@ function baseLoadAnswer(engine, V, rows, byId, { maxYears, finance, per100 }) {
     for (const r of want) {
         const sys = byId.get(r.id);
         const xs = [...new Set([...CURVE_XS, ...extra])].sort((a, b) => a - b);
-        const [c] = engine.baseLoadCurve([sys], xs, { finance });
+        const [c] = await call('baseLoadCurve', [sys], xs, { finance });
         if (!c) continue;
         curves.push({ id: c.id, name: c.name, route: r.route, points: c.points.map((p) => ({ x: p.x, savingsGbp: p.savingsGbp, paybackYears: p.paybackYears, selfUsePct: p.selfUsePct, exportKwh: p.exportKwh, pvKwh: p.pvKwh })),
             breakEvenW: breakEvenW(c.points, maxYears) });

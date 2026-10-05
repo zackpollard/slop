@@ -437,3 +437,59 @@ export function upgradedSystem(system) {
         upgrade: null,
     });
 }
+
+/* ── saved scenarios (store.scenarios.saved, settings files) ── */
+
+const isPlainObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const optObj = (v) => v == null || isPlainObj(v);
+const objList = (v) => Array.isArray(v) && v.every(isPlainObj);
+const strList = (v) => Array.isArray(v) && v.every((s) => typeof s === 'string');
+
+/** Longest name a saved scenario keeps (a longer one is cut). */
+export const MAX_SCENARIO_NAME = 120;
+/** Most cost items one saved scenario (or its upgrade) may list. */
+export const MAX_SCENARIO_COSTS = 200;
+
+/** Cost items as normalizeCost reads them: a finite £ amount, a whole year from 0, text label and kind. */
+const costsOk = (v) => v == null || (Array.isArray(v) && v.length <= MAX_SCENARIO_COSTS && v.every((c) => isPlainObj(c)
+    && typeof c.gbp === 'number' && Number.isFinite(c.gbp) && Math.abs(c.gbp) <= 1e7
+    && (c.year === undefined || (Number.isInteger(c.year) && c.year >= 0 && c.year <= 100))
+    && (c.label === undefined || typeof c.label === 'string')
+    && (c.kind === undefined || typeof c.kind === 'string')));
+/** A battery (or power station): an object whose station spec, if any, lists its panels as objects. */
+const batteryOk = (b) => optObj(b) && (!b || (optObj(b.ups) && (!b.ups || b.ups.pvArrays == null || objList(b.ups.pvArrays))));
+
+/**
+ * Check one saved scenario (a System as normalizeSystem reads it, plus Compare's priceOverride /
+ * overrideOf). Every field Compare, Design, Orientation and the engine iterate or look inside must
+ * have the type they expect — a list where they map or filter, an object where they read a
+ * property — or the whole scenario is refused (a hand-edited `costs: "free"` used to throw in
+ * Compare and leave it blank on every visit). A missing or blank name becomes the id, and a long
+ * one is cut to MAX_SCENARIO_NAME. Used on settings-file imports (views/method.js) and on every
+ * read of the stored state (store.js), so junk stored before these checks existed is dropped too.
+ * Pure; never throws.
+ * @param {unknown} x
+ * @returns {{ sys: object, why?: undefined } | { sys?: undefined, why: string }}
+ */
+export function checkSavedScenario(x) {
+    if (!isPlainObj(x) || typeof x.id !== 'string' || !x.id || x.id.length > 80) return { why: 'not a scenario' };
+    const why = (() => {
+        if (x.name != null && typeof x.name !== 'string') return 'its name isn’t text';
+        if (x.route !== undefined && !ROUTES.includes(x.route)) return 'an unknown kind of setup';
+        if (!costsOk(x.costs)) return 'its costs aren’t a list of prices';
+        if (x.sourceIds != null && !strList(x.sourceIds)) return 'its products aren’t a list of ids';
+        if (x.arrays != null && !objList(x.arrays)) return 'its panels aren’t a list';
+        if (!optObj(x.inverter)) return 'its inverter isn’t a description';
+        if (!batteryOk(x.battery)) return 'its battery isn’t a description';
+        const u = x.upgrade;
+        if (!optObj(u) || (u && (!costsOk(u.costs) || (u.addArrays != null && !objList(u.addArrays)) || !batteryOk(u.battery)))) return 'its later upgrade isn’t a description';
+        if (!optObj(x.export)) return 'its export tariff isn’t a description';
+        if (x.notes != null && !strList(x.notes)) return 'its notes aren’t text';
+        for (const k of ['priceOverride', 'featured', 'canCurtail']) if (x[k] != null && typeof x[k] !== 'boolean') return `“${k}” isn’t on/off`;
+        for (const k of ['overrideOf', 'kitId', 'spotId']) if (x[k] != null && typeof x[k] !== 'string') return `“${k}” isn’t text`;
+        return null;
+    })();
+    if (why) return { why };
+    const name = typeof x.name === 'string' && x.name.trim() ? x.name.slice(0, MAX_SCENARIO_NAME) : x.id;
+    return { sys: name === x.name ? x : { ...x, name } };
+}

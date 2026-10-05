@@ -65,6 +65,63 @@ export const STEPPED_METHODS = Object.freeze(Object.keys(STEPPED));
 /** Base-load curve x values (W) before the user's own base and recent base are added (UX critique). */
 const BASE_XS = [0, 100, 200, 300, 400, 500, 600, 800, 1000, 1200, 1500];
 
+/** A month is "dark after 4pm" when a west wall makes under this % of its output 4–7pm (Orientation's DARK_PCT). */
+export const DARK_PCT = 5;
+
+/**
+ * Pence saved per kWh of solar made — the one definition Design and Compare show. With a battery
+ * the headline saving also holds what it earns charging in cheap half-hours (and loses on
+ * standby), which isn't the solar's doing: count the panels alone (battery.baseGbp) plus the
+ * battery's storing-solar share instead. Without the battery split (no battery, or a proxy run)
+ * it is the headline saving ÷ kWh made. null when the system makes (almost) nothing.
+ * @param {{ headline?: { savingsGbp: number, pvKwh: number }, battery?: { baseGbp: number, split?: { fromSolarGbp: number } } }|null} res
+ * @returns {number|null}
+ */
+export function pvValuePPerKwh(res) {
+    const hl = res?.headline;
+    if (!hl || !Number.isFinite(hl.pvKwh) || !(hl.pvKwh > 1)) return null;
+    const b = res.battery;
+    const gbp = b && Number.isFinite(b.baseGbp) ? b.baseGbp + Math.max(0, b.split?.fromSolarGbp ?? 0) : hl.savingsGbp;
+    return Number.isFinite(gbp) ? (100 * gbp) / hl.pvKwh : null;
+}
+
+/**
+ * Month-of-year share (%) of a run's output made 4–7pm: the grid-tied panels', or with station
+ * true a power station's own panels' (upsPvKwh). null where a month makes nothing. The same sums
+ * as Orientation's monthly chart (views/orientation.js monthlyPeakShare).
+ * @param {Array<{ month0: number, pvAcKwh: number, peakPvAcKwh: number, upsPvKwh: number, peakUpsPvKwh: number }>} monthly SimResult.monthly
+ * @param {boolean} [station]
+ * @returns {Array<number|null>} 12 values, January first
+ */
+export function monthlyPeakSharePct(monthly, station = false) {
+    const pv = new Float64Array(12);
+    const pk = new Float64Array(12);
+    const [all, peak] = station ? ['upsPvKwh', 'peakUpsPvKwh'] : ['pvAcKwh', 'peakPvAcKwh'];
+    for (const m of monthly ?? []) {
+        if (!Number.isInteger(m?.month0) || m.month0 < 0 || m.month0 > 11) continue;
+        pv[m.month0] += m[all] || 0;
+        pk[m.month0] += m[peak] || 0;
+    }
+    return Array.from(pv, (v, i) => (v > 1e-6 ? (100 * pk[i]) / v : null));
+}
+
+/**
+ * The longest run of months around December (Oct–Mar only) where the 4–7pm share stays under
+ * `below` % — "from November to January there's little or no sun after 4pm" comes from this, not
+ * a fixed list. Orientation's darkMonths rule (views/orientation.js), so both tabs name the same months.
+ * @param {Array<number|null>} share 12 monthly shares (null/NaN = nothing made, which counts as dark)
+ * @param {number} [below]
+ * @returns {number[]} month indices in calendar order through the year end, e.g. [10, 11, 0]
+ */
+export function darkMonths(share, below = DARK_PCT) {
+    const dark = (i) => !Number.isFinite(share?.[i]) || share[i] < below;
+    if (!dark(11)) return [];
+    const run = [11];
+    for (const i of [10, 9]) { if (dark(i)) run.unshift(i); else break; }
+    for (const i of [0, 1, 2]) { if (dark(i)) run.push(i); else break; }
+    return run;
+}
+
 /** C1's lower always-on load (W), and how far above it today's load must be for C1 to be "lower". */
 const FLIP_LOW_LOAD_W = 150;
 const FLIP_LOAD_MARGIN_W = 50;
@@ -609,7 +666,8 @@ export class SolarEngine {
      * @param {{ withBand?: boolean, finance?: Object, includeSlots?: boolean, fidelity?: 'full'|'proxy', dispatchOpts?: Object }} [opts]
      * @returns {Object} ScenarioResult (CONTRACTS §13) + headline { savingsGbp, actualGbp, billedGbp, p10Gbp, p50Gbp,
      *   p90Gbp, paybackYears, paybackP10Years, paybackP90Years, capexGbp, npv10Gbp, net10Gbp, npvGbp, selfUsePct,
-     *   exportIncomeGbp, exportKwh, exportUnpaidKwh, pvKwh, peakGenSharePct (grid-tied panels), peakGenShareAllPct (a station’s own panels too) } and weather { basis: 'typical', factors }
+     *   exportIncomeGbp, exportKwh, exportUnpaidKwh, pvKwh, peakGenSharePct (grid-tied panels), peakGenShareAllPct (a station’s own panels too),
+     *   pvValuePPerKwh (pence saved per kWh made, the solar's share only — see pvValuePPerKwh) } and weather { basis: 'typical', factors }
      */
     runScenario(system, opts = {}) {
         return runSteps(this._runScenarioSteps(system, opts));
@@ -686,7 +744,9 @@ export class SolarEngine {
             pvKwh: T.pvAcKwh + T.upsPvKwh,
             peakGenSharePct: T.peakGenSharePct,
             peakGenShareAllPct: T.peakGenShareAllPct,
+            pvValuePPerKwh: null,
         };
+        res.headline.pvValuePPerKwh = pvValuePPerKwh(res);
         return cache.set(key, res);
     }
 
@@ -996,14 +1056,16 @@ export class SolarEngine {
     /**
      * Full-fidelity value with the targeted panels re-pointed (3 sub-samples, typical weather,
      * battery included), on the headline's basis. (az, tilt) null keeps the system as configured:
-     * that is "current" for a kit whose panels face different ways.
+     * that is "current" for a kit whose panels face different ways. monthly true adds the run's
+     * month-of-year 4–7pm share (monthlyPeakSharePct) of the targeted panels.
      */
-    _pointed(sys, tg, az, tilt, fo) {
+    _pointed(sys, tg, az, tilt, fo, { monthly = false } = {}) {
         const n = normalizeSystem(sys);
         const s = az === null ? n : normalizeSystem(SolarEngine._repoint(n, tg, az, tilt));
         const q = this._quick(s, { fo, stage2: false });
         const pt = { az: az ?? tg.ref.azimuth, tilt: tilt ?? tg.ref.tilt, ...this._cellMetrics(q.full, fo, s, q.pvOnly) };
         if (az === null) pt.mixed = true;
+        if (monthly) pt.monthlyPeakSharePct = monthlyPeakSharePct(q.full.monthly, tg.station);
         return pt;
     }
 
@@ -1091,10 +1153,12 @@ export class SolarEngine {
      * ~150 W is not a lower load), and C1 is dropped when C2 lands on the same direction.
      * Named points are on the headline basis; 'current' of a split kit is the system as
      * configured (mixed: true), as in orientationSweep. A "wall" point (tilt ≥ WALL_TILT) is
-     * modelled as a wall mount whichever spot the kit came from (_repoint).
+     * modelled as a wall mount whichever spot the kit came from (_repoint). w90 also carries its
+     * month-of-year 4–7pm share (monthlyPeakSharePct), and darkMonths the months it makes under
+     * DARK_PCT % then — the same rule as Orientation, so both tabs name the same months.
      * @param {Object} system the kit to answer for (S01 in the verdict)
      * @param {{ tieBandPct?: number, finance?: Object, flips?: boolean }} [opts]
-     * @returns {{ best, s35, w45, w90, ssw45, current, tie, tieBandPct, westPays, flips, checked, proxyNote, compass, cells }}
+     * @returns {{ best, s35, w45, w90, ssw45, current, tie, tieBandPct, westPays, flips, checked, proxyNote, compass, cells, darkMonths: number[] }}
      */
     answerOrientation(system, opts = {}) {
         return runSteps(this._answerOrientationSteps(system, opts));
@@ -1124,7 +1188,7 @@ export class SolarEngine {
         }
         const named = {};
         for (const [k, az, tilt] of [['s35', 180, 35], ['w45', 270, 45], ['w90', 270, 90], ['ssw45', 200, 45]]) {
-            named[k] = at(az, tilt);
+            named[k] = k === 'w90' ? this._pointed(sys, tg, az, tilt, fo, { monthly: true }) : at(az, tilt);
             yield;
         }
         const out = {
@@ -1139,6 +1203,7 @@ export class SolarEngine {
             proxyNote: sw.proxyNote,
             compass: compass16(best.az),
             cells: window,
+            darkMonths: darkMonths(named.w90.monthlyPeakSharePct),
         };
         if (doFlips && !tg.station) {
             const coarse = orientationGrid({ azStep: 15, azMin: 90, azMax: 270, tilts: [15, 30, 45, 60, 90], includeFlat: false });

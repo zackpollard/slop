@@ -1,7 +1,7 @@
 /*
  * octopus.js — Octopus Energy REST/GraphQL client + pure helpers.
  *
- * Every quirk below was verified live on 2026-10-05 (research/VERIFY-octopus.md):
+ * Every quirk below was verified live on 2026-10-05 (docs/solar-calculator/VERIFY-octopus.md):
  *   - CORS is `*` everywhere; auth is HTTP Basic with the key as the user name and an
  *     empty password. We never send `credentials: 'include'` (that makes the browser
  *     refuse the `*` CORS answer) and only ever attach the key to api.octopus.energy.

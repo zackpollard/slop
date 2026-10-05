@@ -1,6 +1,6 @@
 {
  "version": 1,
- "source": "research/plugin-market-constants.verified.json (verified 2026-10-05)",
+ "source": "plugin-market-constants.verified.json snapshot, verified 2026-10-05 (see docs/solar-calculator/VERIFY-market.md)",
  "_meta": {
   "verifiedOn": "2026-10-05",
   "note": "Constants re-checked live by the adversarial verifier. 'live' = fetched today; 'doc' = primary PDF/legislation; 'seller' = retailer-published; 'inf' = inference."

@@ -614,6 +614,15 @@ img, svg, canvas { display: block; }
 .tbl-dense th, .tbl-dense td { padding: 6px 8px; }
 .tbl tr.is-muted td, .tbl tr.is-muted th { opacity: 0.5; }
 .tbl tr.is-highlight { background: var(--accent-dim); }
+/* A tinted badge on the highlighted row stacked its tint on the row's and fell below 4.5:1 (good
+   4.30, info 4.45, bad 3.58). Its tint goes over the card surface instead: it looks — and reads —
+   as it does on any other row (good 5.49, info 5.70, bad 4.58, warn 6.11). */
+.tbl tr.is-highlight :is(.badge-accent, .badge-good, .badge-warn, .badge-bad, .badge-info) { background-color: var(--surface); }
+.tbl tr.is-highlight .badge-accent { background-image: linear-gradient(var(--accent-dim), var(--accent-dim)); }
+.tbl tr.is-highlight .badge-good { background-image: linear-gradient(var(--good-dim), var(--good-dim)); }
+.tbl tr.is-highlight .badge-warn { background-image: linear-gradient(var(--warn-dim), var(--warn-dim)); }
+.tbl tr.is-highlight .badge-bad { background-image: linear-gradient(var(--bad-dim), var(--bad-dim)); }
+.tbl tr.is-highlight .badge-info { background-image: linear-gradient(rgba(111, 163, 224, 0.1), rgba(111, 163, 224, 0.1)); }
 .tbl-empty td { text-align: center; color: var(--muted); padding: 24px; }
 .th-sort {
     display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; background: none; cursor: pointer;

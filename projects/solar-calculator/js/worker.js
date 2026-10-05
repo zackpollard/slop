@@ -57,6 +57,15 @@ export class EngineError extends Error {
 
 const abortError = () => Object.assign(new Error('Cancelled'), { name: 'AbortError', code: 'CANCELLED' });
 
+/* Running as a module worker (false when engine.js runs this dispatcher inline on the page's thread). */
+const IN_WORKER = typeof WorkerGlobalScope !== 'undefined' && typeof self !== 'undefined' && self instanceof WorkerGlobalScope;
+/*
+ * How long the verdict's heavy engine calls run between pauses (engine.callAsync). On the page's
+ * own thread a short slice keeps it responsive; in a worker nothing paints, so a longer one costs
+ * fewer timer hops and still lets a cancel in within about a tenth of a second.
+ */
+const VERDICT_SLICE_MS = IN_WORKER ? 100 : 30;
+
 /* Usage that isn't meter readings: the example household, or a profile built from typed-in figures. */
 const SYNTHETIC_SOURCES = new Set(['demo', 'manual']);
 
@@ -373,6 +382,16 @@ export function createDispatcher({ post, importer, fetch: fetchImpl, catalogLoad
 
     const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+    /*
+     * A heavy engine method run cooperatively (engine.callAsync: paused every sliceMs), stopping
+     * with an AbortError at the first pause after the call is cancelled. An engine without a step
+     * form (tests' fakes) runs it in one go.
+     */
+    async function stepped(ctx, engine, method, args, sliceMs = VERDICT_SLICE_MS) {
+        if (typeof engine.callAsync !== 'function') return engine[method](...args);
+        return engine.callAsync(method, args, { sliceMs, yieldFn: async () => { ctx.check(); await sleep(0); ctx.check(); } });
+    }
+
     function findScenario(id) {
         const list = s.scenarios || [];
         return list.find(x => x?.id === id) || null;
@@ -447,23 +466,27 @@ export function createDispatcher({ post, importer, fetch: fetchImpl, catalogLoad
 
         runScenario: async (ctx, system, opts) => (await getEngine()).runScenario(system, opts ?? {}),
 
+        /* Cooperative like the verdict's own list (its placement sweeps take seconds). */
         async autoScenarios(ctx, opts) {
-            s.scenarios = (await getEngine()).autoScenarios(opts ?? {});
+            s.scenarios = await stepped(ctx, await getEngine(), 'autoScenarios', [opts ?? {}]);
             return s.scenarios;
         },
 
         /*
          * opts: { scenarios?, spots?, finance?, maxPaybackYears?, overrides?: { [scenarioId]: { priceGbp, costs? } }, … }.
-         * The verdict polls isCancelled() between options, so a cancel stops it mid-stage instead of
-         * at the next stage boundary (onPartial stays a cancellation point too).
+         * The verdict polls isCancelled() between options and between slices of each heavy engine
+         * call (engine.callAsync), so a cancel stops it mid-run instead of at the next stage
+         * boundary (onPartial stays a cancellation point too). The option list itself is built the
+         * same way: the placement sweeps behind it take seconds, which inline would freeze the page.
          */
         async verdict(ctx, opts = {}) {
             const engine = await getEngine();
             const { buildVerdict } = await need('verdict', ['buildVerdict']);
             const { scenarios, spots, overrides, ...rest } = opts || {};
-            const list = scenarios ?? (s.scenarios = engine.autoScenarios(spots ? { spots } : {}));
+            const list = scenarios ?? (s.scenarios = await stepped(ctx, engine, 'autoScenarios', [spots ? { spots } : {}]));
             ctx.check();
             return buildVerdict(engine, {
+                sliceMs: VERDICT_SLICE_MS,
                 ...rest,
                 scenarios: list,
                 finance: opts?.finance,
@@ -605,8 +628,7 @@ export function createDispatcher({ post, importer, fetch: fetchImpl, catalogLoad
 }
 
 /* ── bootstrap when running as a module worker ─────────────────────────────── */
-const inWorker = typeof WorkerGlobalScope !== 'undefined' && typeof self !== 'undefined' && self instanceof WorkerGlobalScope;
-if (inWorker) {
+if (IN_WORKER) {
     const dispatcher = createDispatcher({ post: msg => self.postMessage(msg) });
     self.addEventListener('message', e => { dispatcher.handle(e.data); });
     self.postMessage({ type: 'ready' });

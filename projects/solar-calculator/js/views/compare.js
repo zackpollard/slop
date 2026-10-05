@@ -152,6 +152,7 @@ a.cv-pod-name:hover { color: var(--accent-strong); text-decoration: underline; }
 .cv-meta:empty { display: none; }
 .cv-meta .badge { height: 20px; font-size: 11px; padding: 0 7px; }
 .cv-beaten { font-size: 12px; color: var(--muted); line-height: 1.4; }
+.cv-life { font-size: 12px; color: var(--muted); line-height: 1.4; }
 .cv-beaten b { color: var(--text-2); font-weight: 500; }
 .cv-cost { display: inline-flex; align-items: center; gap: 2px; justify-content: flex-end; }
 .cv-edit {
@@ -393,6 +394,8 @@ tr.cv-toggle > td { padding: 8px 10px; }
 
 const finite = v => typeof v === 'number' && Number.isFinite(v);
 const num = v => (finite(v) ? v : null);
+/* a saved option's lists (costs, products, panels) as arrays: junk saved before the import checks never throws */
+const list = v => (Array.isArray(v) ? v : []);
 const EPS = 0.005;
 
 /** Stable JSON (sorted keys) for change detection. */
@@ -440,13 +443,15 @@ export function mergeSystems(auto, saved) {
  * show one number. With a battery the headline saving also holds what it earns charging in cheap
  * half-hours (and loses on standby), which isn't the solar's doing: count the panels alone
  * (battery.baseGbp) plus the battery's storing-solar share instead. Without the battery split
- * (no battery, or a proxy run) it is the headline saving ÷ kWh made.
+ * (no battery, or a proxy run) it is the headline saving ÷ kWh made. When the engine fills
+ * headline.pvValuePPerKwh (the same figure, worked out once in core.js), that is used as is.
  * @param {object|null} res ScenarioResult
  * @returns {number|null}
  */
 export function solarPPerKwh(res) {
     const hl = res?.headline;
     if (!hl || !finite(hl.pvKwh) || !(hl.pvKwh > 1)) return null;
+    if (finite(hl.pvValuePPerKwh)) return hl.pvValuePPerKwh;
     const b = res.battery;
     const gbp = b && finite(b.baseGbp) ? b.baseGbp + Math.max(0, b.split?.fromSolarGbp ?? 0) : hl.savingsGbp;
     return finite(gbp) ? (100 * gbp) / hl.pvKwh : null;
@@ -454,6 +459,9 @@ export function solarPPerKwh(res) {
 
 /**
  * One leaderboard row from a system and its ScenarioResult (res may be null while it runs).
+ * Saved options come from this device's storage, which may hold anything an older import let
+ * through (costs: 'free', sourceIds: 'kit-1', upgrade: { costs: {} }): a list that isn't one
+ * counts as empty, so the row still renders.
  * @param {{ sys: object, kind: string }} entry
  * @param {object|null} res
  * @param {{ products: Map<string, object> }} env
@@ -462,18 +470,20 @@ export function rowModel(entry, res, env = {}) {
     const sys = entry.sys;
     const h = res?.headline || null;
     const A = res?.typical?.annual || null;
-    const costs0 = (sys.costs || []).filter(c => !(Number(c?.year) > 0));
-    const sumOf = list => list.reduce((s, c) => s + (Number(c?.gbp) || 0), 0);
-    const products = (sys.sourceIds || []).map(id => env.products?.get(id)).filter(Boolean);
-    const warnings = res?.rules?.warnings || [];
+    const costs = list(sys.costs);
+    const costs0 = costs.filter(c => !(Number(c?.year) > 0));
+    const sumOf = items => items.reduce((s, c) => s + (Number(c?.gbp) || 0), 0);
+    const products = list(sys.sourceIds).map(id => env.products?.get(id)).filter(Boolean);
+    const warnings = list(res?.rules?.warnings);
     const legal = res?.rules?.legal ?? (sys.route === 'whatif' ? 'whatif' : sys.route === 'reference' ? 'reference' : 'ok');
+    const battery = sys.battery && typeof sys.battery === 'object' ? sys.battery : null;
     const r = {
-        id: sys.id, name: sys.name || sys.id, route: sys.route, kind: entry.kind, sys, res, ready: !!res,
+        id: sys.id, name: typeof sys.name === 'string' && sys.name.trim() ? sys.name : String(sys.id), route: sys.route, kind: entry.kind, sys, res, ready: !!res,
         featured: !!sys.featured, legal,
-        errors: res?.rules?.errors?.length || 0,
+        errors: list(res?.rules?.errors).length,
         warnings,
         capex: finite(h?.capexGbp) ? h.capexGbp : sumOf(costs0),
-        install: sumOf(costs0.filter(c => c.kind === 'install')),
+        install: sumOf(costs0.filter(c => c?.kind === 'install')),
         sav: num(h?.savingsGbp), p10: num(h?.p10Gbp), p90: num(h?.p90Gbp), actual: num(h?.actualGbp),
         payback: num(h?.paybackYears), dpayback: num(res?.finance?.discountedPaybackYears),
         npv10: num(h?.npv10Gbp), net10: num(h?.net10Gbp), npv20: num(h?.npvGbp),
@@ -484,18 +494,21 @@ export function rowModel(entry, res, env = {}) {
         // (peakGenSharePct counts grid-tied panels only)
         peakShare: num(h?.peakGenShareAllPct) ?? num(h?.peakGenSharePct), cycles: num(A?.battCycles) ?? 0,
         pvAcKwh: num(A?.pvAcKwh) ?? 0, upsPvKwh: num(A?.upsPvKwh) ?? 0,
+        // the last year a battery or power station saves; with 'buy a new battery when it wears
+        // out' on, the figures include the new one (finance flag batteryReplaced)
         batteryEndYear: num(res?.finance?.batteryEndYear),
-        hasBattery: !!sys.battery, coupling: sys.battery?.coupling ?? null,
-        onSale: !products.some(p => p.availableNow === false) && !warnings.some(w => w.code === 'NOT_ON_SALE'),
+        batteryReplaced: list(res?.finance?.flags).includes('batteryReplaced'),
+        hasBattery: !!battery, coupling: battery?.coupling ?? null,
+        onSale: !products.some(p => p.availableNow === false) && !warnings.some(w => w?.code === 'NOT_ON_SALE'),
         preorder: products.some(p => p.preorder === true),
         products,
         dominatedBy: null, dominatedHow: null,
     };
     r.lost = r.clipped + r.curtailed + r.upsWasted;
     // a staged plan buys more later: show it beside the upfront cost
-    const up = sys.upgrade;
-    r.laterGbp = (up ? sumOf(up.costs || []) : 0) + sumOf(costsLater(sys.costs));
-    r.laterYear = up?.atYear ?? (sys.costs || []).find(c => Number(c?.year) > 0)?.year ?? null;
+    const up = sys.upgrade && typeof sys.upgrade === 'object' ? sys.upgrade : null;
+    r.laterGbp = (up ? sumOf(list(up.costs)) : 0) + sumOf(costsLater(costs));
+    r.laterYear = num(up?.atYear) ?? num(Number(costsLater(costs)[0]?.year)) ?? null;
     // the solar's share of the saving per kWh made (not the battery's grid charging), as in Design
     r.pPerKwh = solarPPerKwh(res);
     r.pPerKwhSplit = !!res?.battery && finite(res.battery.baseGbp);
@@ -503,7 +516,7 @@ export function rowModel(entry, res, env = {}) {
     return r;
 }
 
-function costsLater(costs) { return (costs || []).filter(c => Number(c?.year) > 0); }
+function costsLater(costs) { return list(costs).filter(c => Number(c?.year) > 0); }
 
 /** Rows that compete on price and savings: not future rules, not yardsticks. */
 export const isMain = r => r.legal !== 'whatif' && r.legal !== 'reference';
@@ -546,7 +559,7 @@ export function hasOwnOptions(rows) {
  * @returns {boolean}
  */
 export function canVaryPanels(r) {
-    return !!r && r.ready && r.legal !== 'reference' && (!!r.sys?.arrays?.length || r.coupling === 'ups') && !(r.legal === 'whatif' && !r.hasBattery);
+    return !!r && r.ready && r.legal !== 'reference' && (list(r.sys?.arrays).length > 0 || r.coupling === 'ups') && !(r.legal === 'whatif' && !r.hasBattery);
 }
 
 /**
@@ -693,7 +706,7 @@ export function confidenceOf(r, { realPct = 100, days = 365 } = {}) {
             ? `depends on how well it’s automated: ${fmtGbp(b.thresholdSystemGbp)} realistic vs ${fmtGbp(b.optimalSystemGbp)} best case`
             : 'depends on how well the battery is automated');
     }
-    const arrays = [...(r.sys.arrays || []), ...(r.sys.battery?.ups?.pvArrays || [])];
+    const arrays = [...list(r.sys?.arrays), ...list(r.sys?.battery?.ups?.pvArrays)];
     if (arrays.some(a => a && !a.shadingExplicit && Number(a.shadingPct ?? 3) === 3)) notes.push('assumes 3% shading — a tree or wall can cost 10–30%');
     // same test as verdict.js: a 'medium' catalog entry, or a weak rating on its price or specs
     if (r.products.some(p => typeof p.confidence === 'string' && (/^medium\b/i.test(p.confidence) || /\b(medium|low|unknown) \((?=[^)]*(price|spec))/i.test(p.confidence)))) {
@@ -862,6 +875,9 @@ export default {
             escalation: finite(f.escalation) ? f.escalation : DEFAULT_FINANCE.escalation,
             discount: finite(f.discountRate) ? f.discountRate : DEFAULT_FINANCE.discountRate,
             years: finite(f.years) ? Math.round(f.years) : DEFAULT_FINANCE.years,
+            // 'Buy a new battery when it wears out' (Method / Design): off, a worn-out battery or
+            // power station stops saving instead
+            replaceBattery: f.replaceBattery === true,
             installDate: typeof s.finance?.installDate === 'string' ? s.finance.installDate : nextMonthIso(),
             vatReturns: s.vatReturns !== false,
             projectBaseW: finite(s.projectBaseW) ? s.projectBaseW : null,
@@ -891,7 +907,8 @@ export default {
         }
         if (summary.engineUnavailable) {
             this.teardown();
-            this.el.replaceChildren(this.errorCard({ message: 'The simulation engine isn’t available in this browser, so options can’t be compared. Usage still works.' }, false));
+            this.el.replaceChildren(this.engineCard(summary));
+            this.restoreFocus();
             return;
         }
 
@@ -918,43 +935,77 @@ export default {
         }
         if (token !== this.token || data.summary()?.id !== summary.id) return;
 
-        const entries = mergeSystems(auto, this.ctx.store.get().scenarios?.saved);
-        if (fresh || !this.v) {
-            this.teardown();
-            this.build(summary);
-        }
-        const v = this.v;
-        v.auto = auto;
-        v.savedSig = stableJson(this.ctx.store.get().scenarios?.saved || []);
-        const set = this.settings();
-        const progressive = fresh || !v.rows?.length || v.settingsSig !== set.sig;
-        const next = new Map();
-        // Fresh: rows appear at once (cost known up front) and fill in as each run returns.
-        if (fresh) {
+        // Building the rows can trip over a saved option this view can't draw (junk an older import
+        // let into storage): then the error card replaces the view, never a half-built one.
+        try {
+            const entries = mergeSystems(auto, this.ctx.store.get().scenarios?.saved);
+            if (fresh || !this.v) {
+                this.teardown();
+                this.build(summary);
+            }
+            const v = this.v;
+            v.auto = auto;
+            v.savedSig = stableJson(this.ctx.store.get().scenarios?.saved || []);
+            const set = this.settings();
+            const progressive = fresh || !v.rows?.length || v.settingsSig !== set.sig;
+            const next = new Map();
+            // Fresh: rows appear at once (cost known up front) and fill in as each run returns.
+            if (fresh) {
+                v.entries = entries;
+                v.results = next;
+                v.keys = new Map();
+                this.rebuildRows();
+                this.renderBoard();
+            }
+            this.setStatusLine(`Working out ${entries.length} options…`, 0);
+            if (progressive) this.announce(`Working out ${entries.length} options…`);
+            v.running = true;
+            const ok = await this.runEntries(token, entries, next, {
+                onEach: (done) => {
+                    this.setStatusLine(`Working out option ${Math.min(done + 1, entries.length)} of ${entries.length}…`, done / entries.length);
+                    if (fresh) { this.rebuildRows(); this.scheduleBoard(); }
+                },
+            });
+            if (this.v === v) v.running = false;
+            if (!ok || token !== this.token) return;
             v.entries = entries;
             v.results = next;
-            v.keys = new Map();
-            this.rebuildRows();
-            this.renderBoard();
+            v.keys = new Map(entries.map(e => [e.sys.id, stableJson(engineSystem(e.sys))]));
+            v.settingsSig = set.sig;
+            this.setStatusLine(null);
+            if (!this.finalize(token, { announce: progressive })) return;
+            if (v.pendingScenarios) { v.pendingScenarios = false; this.onScenarios(); }
+        } catch (err) {
+            if (err?.name === 'AbortError' || token !== this.token) return;
+            this.fail(err);
         }
-        this.setStatusLine(`Working out ${entries.length} options…`, 0);
-        if (progressive) this.announce(`Working out ${entries.length} options…`);
-        v.running = true;
-        const ok = await this.runEntries(token, entries, next, {
-            onEach: (done) => {
-                this.setStatusLine(`Working out option ${Math.min(done + 1, entries.length)} of ${entries.length}…`, done / entries.length);
-                if (fresh) { this.rebuildRows(); this.scheduleBoard(); }
-            },
-        });
-        if (this.v === v) v.running = false;
-        if (!ok || token !== this.token) return;
-        v.entries = entries;
-        v.results = next;
-        v.keys = new Map(entries.map(e => [e.sys.id, stableJson(engineSystem(e.sys))]));
-        v.settingsSig = set.sig;
-        this.setStatusLine(null);
-        this.finalize(token, { announce: progressive });
-        if (v.pendingScenarios) { v.pendingScenarios = false; this.onScenarios(); }
+    },
+
+    /**
+     * A render step threw: put the error card (with Try again) where the half-built view was, stop
+     * the runs still in flight from painting into it, and keep the keyboard in the view.
+     */
+    fail(err) {
+        console.error('compare view failed', err);
+        const hadFocus = typeof document !== 'undefined' && !!document.activeElement && document.activeElement !== document.body
+            && this.el.contains(document.activeElement);
+        this.token++;
+        this.cancelJobs();
+        this.teardown();
+        this.el.replaceChildren(this.errorCard(err, true));
+        if (hadFocus) this.focusAfter = 'error';
+        this.restoreFocus();
+    },
+
+    /** Run a synchronous render step; on a throw, fail() and return false. */
+    guarded(fn) {
+        try {
+            fn();
+            return true;
+        } catch (err) {
+            this.fail(err);
+            return false;
+        }
     },
 
     /**
@@ -1003,21 +1054,26 @@ export default {
         v.byId = new Map(v.rows.map(r => [r.id, r]));
     },
 
-    /** Everything that needs all results: dominance, badges, pins, side-by-side, ladder, curves. */
+    /**
+     * Everything that needs all results: dominance, badges, pins, side-by-side, ladder, curves.
+     * Returns false when a step threw (the error card is up instead).
+     */
     finalize(token, { announce = false } = {}) {
         const v = this.v;
-        if (!v) return;
-        this.rebuildRows();
-        v.final = true;
-        this.renderBoard();
-        this.setStale(false);
-        this.renderPodium();
-        this.renderLadder();
-        this.renderSide();
-        this.renderCurves();
-        this.requestPick(token);
-        if (announce) this.announce(`All ${v.rows.length} options worked out.`);
-        this.restoreFocus();
+        if (!v) return false;
+        return this.guarded(() => {
+            this.rebuildRows();
+            v.final = true;
+            this.renderBoard();
+            this.setStale(false);
+            this.renderPodium();
+            this.renderLadder();
+            this.renderSide();
+            this.renderCurves();
+            this.requestPick(token);
+            if (announce) this.announce(`All ${v.rows.length} options worked out.`);
+            this.restoreFocus();
+        });
     },
 
     /* ── verdict pick ───────────────────────────────────────────────────── */
@@ -1095,10 +1151,12 @@ export default {
 
     applyPick() {
         if (!this.v?.final) return;
-        this.renderBoard();
-        this.renderPodium();
-        this.renderSide();
-        this.renderCurves();
+        this.guarded(() => {
+            this.renderBoard();
+            this.renderPodium();
+            this.renderSide();
+            this.renderCurves();
+        });
     },
 
     /**
@@ -1129,31 +1187,36 @@ export default {
         if (!v?.final || !v.auto) return;
         const saved = this.ctx.store.get().scenarios?.saved || [];
         const sig = stableJson(saved);
-        if (sig === v.savedSig) { this.renderBoard(); this.renderSide(); return; }
+        if (sig === v.savedSig) { this.guarded(() => { this.renderBoard(); this.renderSide(); }); return; }
         if (v.running) { v.pendingScenarios = true; return; }
         if (!this.visible || this.el.hidden) { this.dirty = true; return; }
         v.savedSig = sig;
         const token = this.token;
-        const entries = mergeSystems(v.auto, saved);
-        const changed = entries.filter(e => v.keys.get(e.sys.id) !== stableJson(engineSystem(e.sys)));
-        v.entries = entries;
-        for (const e of changed) v.results.delete(e.sys.id);
-        // drop results for rows that no longer exist
-        const ids = new Set(entries.map(e => e.sys.id));
-        for (const id of [...v.results.keys()]) if (!ids.has(id)) v.results.delete(id);
-        this.rebuildRows();
-        this.renderBoard();
-        if (!changed.length) { this.finalize(token); return; }
-        this.setStatusLine(`Re-working ${changed.length === 1 ? changed[0].sys.name || changed[0].sys.id : `${changed.length} options`}…`, null);
-        v.running = true;
-        const ok = await this.runEntries(token, changed, v.results, { onEach: () => { this.rebuildRows(); this.scheduleBoard(); } });
-        if (this.v === v) v.running = false;
-        if (!ok || this.v !== v) return;
-        for (const e of changed) v.keys.set(e.sys.id, stableJson(engineSystem(e.sys)));
-        this.setStatusLine(null);
-        this.finalize(token);
-        if (changed.length === 1) this.flashRow(changed[0].sys.id);
-        if (v.pendingScenarios) { v.pendingScenarios = false; this.onScenarios(); }
+        try {
+            const entries = mergeSystems(v.auto, saved);
+            const changed = entries.filter(e => v.keys.get(e.sys.id) !== stableJson(engineSystem(e.sys)));
+            v.entries = entries;
+            for (const e of changed) v.results.delete(e.sys.id);
+            // drop results for rows that no longer exist
+            const ids = new Set(entries.map(e => e.sys.id));
+            for (const id of [...v.results.keys()]) if (!ids.has(id)) v.results.delete(id);
+            this.rebuildRows();
+            this.renderBoard();
+            if (!changed.length) { this.finalize(token); return; }
+            this.setStatusLine(`Re-working ${changed.length === 1 ? v.byId.get(changed[0].sys.id)?.name ?? changed[0].sys.id : `${changed.length} options`}…`, null);
+            v.running = true;
+            const ok = await this.runEntries(token, changed, v.results, { onEach: () => { this.rebuildRows(); this.scheduleBoard(); } });
+            if (this.v === v) v.running = false;
+            if (!ok || this.v !== v) return;
+            for (const e of changed) v.keys.set(e.sys.id, stableJson(engineSystem(e.sys)));
+            this.setStatusLine(null);
+            if (!this.finalize(token)) return;
+            if (changed.length === 1) this.flashRow(changed[0].sys.id);
+            if (v.pendingScenarios) { v.pendingScenarios = false; this.onScenarios(); }
+        } catch (err) {
+            if (err?.name === 'AbortError' || token !== this.token || this.v !== v) return;
+            this.fail(err);
+        }
     },
 
     /* ── catalog (availability, pre-order, price dates) ─────────────────── */
@@ -1196,6 +1259,43 @@ export default {
                 h('div', { class: 'row' },
                     retry ? ui.button({ label: 'Try again', icon: 'refresh', onClick: () => { this.focusAfter = 'retry'; this.render(); } }) : null,
                     ui.button({ label: 'Check your data', kind: 'ghost', href: '#data', icon: 'arrowRight' }))) }));
+    },
+
+    /**
+     * The data is loaded but the calculator didn't start (part of it, or the product list, didn't
+     * download): say why in the engine's own words (summary.engineError), offer Try again, and
+     * point at what works meanwhile. The hub also retries by itself; when the calculator starts it
+     * fires 'dataset' and this view renders the options.
+     */
+    engineCard(summary) {
+        const { ui } = this.ctx;
+        const h = ui.h;
+        const msg = h('span', null, `Options can’t be compared until the calculator starts. ${engineWhy(summary)}`);
+        let retry = null;
+        if (typeof this.ctx.data.retryEngine === 'function') {
+            retry = ui.button({ label: 'Try again', icon: 'refresh', onClick: () => {
+                if (retry.disabled) return;
+                retry.disabled = true;
+                retry.setAttribute('aria-busy', 'true');
+                this.focusAfter = 'retry';      // on success the view is rebuilt: land on its title
+                this.ctx.data.retryEngine().catch(err => {
+                    if (!retry.isConnected) return;
+                    this.focusAfter = null;
+                    msg.textContent = `Still can’t compare the options. ${retryWhy(err)}`;
+                    retry.disabled = false;
+                    retry.removeAttribute('aria-busy');
+                    retry.focus();
+                });
+            } });
+        }
+        return h('div', { class: 'cv' },
+            this.head(null),
+            ui.card({ body: h('div', { class: 'cv-error' },
+                h('div', { class: 'notice notice-bad', role: 'alert' }, ui.icon('alert'), msg),
+                h('p', { class: 'cv-lede', style: { margin: '0' } }, 'This page also tries again by itself for a couple of minutes, and the options appear as soon as it works. Your usage is on the Usage tab meanwhile.'),
+                h('div', { class: 'row' },
+                    retry,
+                    ui.button({ label: 'See your usage', kind: 'ghost', href: '#usage', icon: 'arrowRight' }))) }));
     },
 
     head(summary) {
@@ -1388,7 +1488,7 @@ export default {
 
     scheduleBoard() {
         if (this.boardRaf) return;
-        this.boardRaf = requestAnimationFrame(() => { this.boardRaf = 0; if (this.v) this.renderBoard(); });
+        this.boardRaf = requestAnimationFrame(() => { this.boardRaf = 0; if (this.v) this.guarded(() => this.renderBoard()); });
     },
 
     /** Rows passing the filters (yardsticks always show). */
@@ -1433,7 +1533,7 @@ export default {
             { key: 'npv10', label: '10-yr value', cls: 'c-npv10', align: 'right', sort: 'npv10', mobile: sort === 'npv10' ? 'show' : 'hide',
                 help: `What you’re ahead after 10 years in today’s money (later savings count ${fmt.pct(set.discount * 100, { dp: 0 })} a year less) — the Verdict’s ranking` },
             { key: 'npv20', label: `${set.years}-yr value`, cls: 'c-npv20', align: 'right', mobile: 'hide',
-                help: `The same over ${set.years} years, including replacements` },
+                help: `The same over ${set.years} years${npvLongHelp(set)}` },
             { key: 'conf', label: 'How sure', cls: 'c-conf', mobile: 'hide' },
             { key: 'sale', label: 'On sale', cls: 'c-sale', mobile: 'hide' },
             { key: 'pin', label: 'Compare', cls: 'c-pin cv-actions-h', align: 'right', mobile: 'actions' },
@@ -1552,10 +1652,14 @@ export default {
                         r.legal === 'check' ? ui.badge({ text: 'Check first', tone: 'warn', title: (r.warnings.find(w => /UPS_WITH_PLUGIN/.test(w.code)) || r.warnings[0])?.message }) : null,
                         r.preorder ? ui.badge({ text: 'Pre-order', tone: 'warn' }) : !r.onSale && r.legal !== 'reference' ? ui.badge({ text: 'Not on sale now', tone: 'warn' }) : null);
                     const by = r.dominatedBy ? this.v.byId.get(r.dominatedBy) : null;
+                    const life = r.ready ? wearsOut(r) : null;
                     content = h('div', { class: 'cv-name' },
                         r.legal === 'reference' ? h('span', { class: 'cv-name-link' }, r.name)
                             : h('a', { class: 'cv-name-link', href: `#design?scenario=${encodeURIComponent(r.id)}` }, r.name),
                         meta,
+                        // a battery or power station that wears out inside the 10 years says so (as on
+                        // the Verdict): it is why a quick payback can still leave a small 10-yr value
+                        life ? h('span', { class: 'cv-life', title: life.title }, life.text) : null,
                         by ? h('span', { class: 'cv-beaten' }, 'Beaten by ', h('b', null, by.name), `: ${r.dominatedHow === 'both' ? 'cheaper and saves more' : r.dominatedHow === 'cheaper' ? 'cheaper, saves the same' : 'same price, saves more'}`) : null);
                     break;
                 }
@@ -1867,8 +1971,9 @@ export default {
             { label: 'Payback', help: 'simple · discounted', value: r => (finite(r.payback) ? r.payback : Infinity), better: 'low', tie: 0.05,
                 render: r => (r.capex <= EPS && r.legal !== 'reference' ? '—' : finite(r.payback) ? fmt.years(r.payback) : 'never'),
                 sub: r => {
-                    // a power station isn't replaced: once its battery is worn out it stops saving
-                    const stops = r.coupling === 'ups' && finite(r.batteryEndYear) && r.batteryEndYear < set.years ? `it stops saving after year ${r.batteryEndYear}` : null;
+                    // a power station isn't replaced (unless 'Buy a new battery when it wears out' is
+                    // on): once its battery is worn out it stops saving
+                    const stops = r.coupling === 'ups' && !r.batteryReplaced && finite(r.batteryEndYear) && r.batteryEndYear < set.years ? `it stops saving after year ${r.batteryEndYear}` : null;
                     const disc = finite(r.dpayback) ? `${fmt.years(r.dpayback)} discounted`
                         : finite(r.payback) ? (stops ? 'never once discounted' : `not within ${set.years} yrs once discounted`)
                             : `not within ${set.years} yrs`;
@@ -1877,7 +1982,7 @@ export default {
                 diff: (b, a) => (finite(b.payback) && finite(a.payback) ? sgn(b.payback - a.payback, x => fmt.years(x)) : '—') },
             { label: 'Ahead after 10 yrs', help: 'savings minus costs, plain £', value: r => r.net10, better: 'high', render: r => fmt.gbp(r.net10),
                 sub: r => sub(`${fmt.gbp(r.npv10)} in today’s money`), diff: (b, a) => gbpD(b, a, 'net10') },
-            { label: `${set.years}-yr value`, help: 'in today’s money, with replacements', value: r => r.npv20, better: 'high', render: r => fmt.gbp(r.npv20), diff: (b, a) => gbpD(b, a, 'npv20') },
+            { label: `${set.years}-yr value`, help: `in today’s money${npvLongHelp(set)}`, value: r => r.npv20, better: 'high', render: r => fmt.gbp(r.npv20), diff: (b, a) => gbpD(b, a, 'npv20') },
             { label: 'Made a year', help: 'solar electricity', value: r => r.pvKwh, better: 'high', tie: 1, render: r => (r.pvKwh > 0.5 ? fmt.kwh(r.pvKwh) : 'no panels'), diff: (b, a) => kwhD(b, a, 'pvKwh') },
             { label: 'Used at home', help: 'share of what it makes', value: r => (r.pvKwh > 0.5 ? r.selfUse : null), better: 'high', tie: 0.2,
                 render: r => (r.pvKwh > 0.5 ? fmt.pct(r.selfUse) : '—'), diff: (b, a) => (b.pvKwh > 0.5 && a.pvKwh > 0.5 ? sgn(b.selfUse - a.selfUse, x => `${fmt.num(x, 1)} pts`) : '—') },
@@ -1929,7 +2034,7 @@ export default {
         this.chart('cash', charts.createLine, host, {
             title: 'Money back over the years',
             ariaLabel: 'Cumulative money back for each pinned option, by year after install',
-            note: 'Nominal £: savings minus what it cost, with price rises and replacements. Where a line crosses zero, it has paid for itself.',
+            note: cashNote(this.settings()),
             x: { values: xs, type: 'linear', label: 'Years after install', format: y => `${y}`, tipFormat: y => (y === 0 ? 'Day one' : `After ${y} yr${y === 1 ? '' : 's'}`) },
             y: { format: x => fmt.gbp(x, { compact: true }) },
             series, markers, endLabels: false, height: 260,
@@ -2290,7 +2395,7 @@ export default {
         const h = ui.h;
         const entry = v.entries.find(e => e.sys.id === id);
         const base = entry?.auto ?? null;
-        const lines = (r.sys.costs || []).map((c, i) => ({ c, i })).filter(({ c }) => !(Number(c.year) > 0));
+        const lines = list(r.sys.costs).map((c, i) => ({ c, i })).filter(({ c }) => c && typeof c === 'object' && !(Number(c.year) > 0));
         const vals = new Map(lines.map(({ c, i }) => [i, Number(c.gbp) || 0]));
         const inputs = new Map();
         const bad = new Set();        // cost lines whose box is empty or not a price: never saved as £0
@@ -2318,7 +2423,7 @@ export default {
             inp.input.addEventListener('input', () => read(i, inp.input));
             inp.input.addEventListener('change', () => read(i, inp.input));
             const hint = auto && Math.abs((Number(auto.gbp) || 0) - (Number(c.gbp) || 0)) > EPS ? `Catalog price ${money(Number(auto.gbp))}` : c.kind === 'install' ? 'Our estimate — use your electrician’s quote' : null;
-            return ui.field({ label: c.label, hint, input: inp });
+            return ui.field({ label: typeof c.label === 'string' && c.label.trim() ? c.label : 'Price', hint, input: inp });
         });
         paint();
         const sources = r.products.filter(p => p.priceGbp != null).map(p => `${p.name || p.id}: ${fmt.gbp(p.priceGbp, { dp: Number.isInteger(p.priceGbp) ? 0 : 2 })}${p.priceDate ? ` on ${fmt.date(Date.parse(`${p.priceDate}T12:00:00Z`))}` : ''}`);
@@ -2378,11 +2483,12 @@ export default {
         const { store, ui, fmt } = this.ctx;
         const entry = v?.entries.find(e => e.sys.id === id);
         if (!entry) return;
+        const name = v.byId?.get(id)?.name ?? id;
         const saved = Array.isArray(store.get().scenarios?.saved) ? [...store.get().scenarios.saved] : [];
         const base = entry.auto;
-        const costs = (entry.sys.costs || []).map((c, i) => (vals && vals.has(i) ? { ...c, gbp: Math.round(vals.get(i) * 100) / 100 } : c));
-        const unchanged = vals && (entry.sys.costs || []).every((c, i) => !vals.has(i) || Math.abs((Number(c.gbp) || 0) - vals.get(i)) < EPS);
-        if (unchanged) { ui.toast(`No change to the price of ${entry.sys.name}.`, { timeoutMs: 3000 }); return; }
+        const costs = list(entry.sys.costs).map((c, i) => (vals && vals.has(i) ? { ...c, gbp: Math.round(vals.get(i) * 100) / 100 } : c));
+        const unchanged = vals && list(entry.sys.costs).every((c, i) => !vals.has(i) || Math.abs((Number(c?.gbp) || 0) - vals.get(i)) < EPS);
+        if (unchanged) { ui.toast(`No change to the price of ${name}.`, { timeoutMs: 3000 }); return; }
         let next;
         let same = false;
         if (entry.kind === 'saved' || entry.kind === 'edited') {
@@ -2395,7 +2501,7 @@ export default {
         }
         store.set({ scenarios: { saved: next } });
         const t = sumYear0(costs);
-        ui.toast(vals && !same ? `Using ${fmt.gbp(t, { dp: Number.isInteger(t) ? 0 : 2 })} for ${entry.sys.name}. Working it out again…` : `Back to the catalog price for ${entry.sys.name}.`, { tone: 'good' });
+        ui.toast(vals && !same ? `Using ${fmt.gbp(t, { dp: Number.isInteger(t) ? 0 : 2 })} for ${name}. Working it out again…` : `Back to the catalog price for ${name}.`, { tone: 'good' });
     },
 
     flashRow(id) {
@@ -2491,12 +2597,70 @@ function routeColor(r) { return `var(${routeVar(r)})`; }
 function howText(r) {
     if (r.legal === 'whatif') return ROUTE.whatif.how;
     if (r.route === 'plugin' && r.coupling === 'ups') return 'A plug-in kit in a socket plus a power station for the servers. Check first: plug-in kits’ instructions forbid use with a battery.';
-    if (r.route === 'hardwired' && !r.sys.arrays?.length) return 'An electrician wires in a battery; no panels. About £350 to install.';
+    if (r.route === 'hardwired' && !list(r.sys?.arrays).length) return 'An electrician wires in a battery; no panels. About £350 to install.';
     return ROUTE[r.route]?.how || '—';
 }
 
+/**
+ * A battery or power station that wears out before year 10 (the years options are ranked on),
+ * as a sub-line for its name: 'wears out in year N' (its savings stop then), or, with 'Buy a new
+ * battery when it wears out' on, 'battery bought again after year N'. Null otherwise.
+ * @param {{ hasBattery: boolean, batteryEndYear: number|null, batteryReplaced?: boolean }} r row
+ * @returns {{ text: string, title: string }|null}
+ */
+export function wearsOut(r) {
+    if (!r?.hasBattery || !finite(r.batteryEndYear) || !(r.batteryEndYear < 10)) return null;
+    return r.batteryReplaced
+        ? { text: `battery bought again after year ${r.batteryEndYear}`, title: 'A new one is bought then; the 10-yr value counts its price.' }
+        : { text: `wears out in year ${r.batteryEndYear}`, title: 'Its savings stop then; the 10-yr value counts that.' };
+}
+
+/**
+ * The end of the help for the long-horizon value (20-yr value): 'with replacements' only when a
+ * new battery is bought each time one wears out; otherwise a worn-out one just stops saving.
+ * @param {{ replaceBattery?: boolean }} set
+ * @returns {string} a clause starting with its own punctuation
+ */
+export function npvLongHelp(set) {
+    return set?.replaceBattery ? ', with replacements (a new battery each time one wears out)'
+        : '; a battery or power station that wears out stops saving then';
+}
+
+/**
+ * The note under 'Money back over the years': battery replacements are only in those lines when
+ * a new battery is bought each time one wears out (the micro-inverter swap is always counted).
+ * @param {{ replaceBattery?: boolean }} set
+ * @returns {string}
+ */
+export function cashNote(set) {
+    return `Nominal £: savings minus what it cost, with price rises and inverter replacements${set?.replaceBattery
+        ? ', and a new battery each time one wears out' : '; a battery or power station that wears out stops saving then'}. Where a line crosses zero, it has paid for itself.`;
+}
+
+/**
+ * Why the calculator isn't running, in the engine's own words (summary.engineError, e.g. “Couldn't
+ * download the product list (data/kits.json, error 503). Try again in a moment.”).
+ * @param {object|null} summary DatasetSummary
+ * @returns {string}
+ */
+export function engineWhy(summary) {
+    const m = summary?.engineError?.message;
+    return typeof m === 'string' && m.trim() ? m.trim() : 'Part of the calculator didn’t download.';
+}
+
+/**
+ * A failed retryEngine() in a sentence for the card, without the worker's lead-in the card already
+ * says ('Your data is loaded, but the simulation engine couldn’t start.').
+ * @param {unknown} err
+ * @returns {string}
+ */
+export function retryWhy(err) {
+    const m = String(err?.message || err || '').replace(/^Your data is loaded, but the simulation engine couldn[’']t start\.\s*/, '').trim();
+    return m || 'Part of the calculator still didn’t download.';
+}
+
 function sumYear0(costs) {
-    return (costs || []).filter(c => !(Number(c?.year) > 0)).reduce((s, c) => s + (Number(c?.gbp) || 0), 0);
+    return list(costs).filter(c => !(Number(c?.year) > 0)).reduce((s, c) => s + (Number(c?.gbp) || 0), 0);
 }
 
 /** A tidy max for the strip scale (1/2/2.5/5 × 10ⁿ). */

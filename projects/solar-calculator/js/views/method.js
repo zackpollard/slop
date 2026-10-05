@@ -20,6 +20,11 @@
  */
 
 import { DEFAULT_FINANCE } from '../finance.js';
+import { checkSavedScenario } from '../system.js';
+
+// The saved-scenario check lives in system.js (store.js runs it on every read of the stored state
+// and must not import a view); re-exported here for the settings-import tests.
+export { checkSavedScenario };
 
 const STYLE_ID = 'style-method';
 
@@ -369,54 +374,6 @@ const plain = v => (Number.isFinite(v) ? String(+v.toFixed(4)) : '—');
 const isPlainObj = v => v !== null && typeof v === 'object' && !Array.isArray(v);
 const FIN_FIELDS = new Map(FIN_GROUPS.flatMap(g => g.fields).map(f => [f.key, f]));
 const GB_BOUNDS = { lat: [49.8, 60.9], lon: [-8.7, 1.8] };
-
-/* What a saved scenario may hold (system.js normalizeSystem plus Compare's priceOverride/overrideOf). */
-const SCENARIO_ROUTES = ['plugin', 'hardwired', 'ups', 'whatif', 'reference'];
-const MAX_SCENARIO_NAME = 120;
-const MAX_SCENARIO_COSTS = 200;
-const optObj = v => v == null || isPlainObj(v);
-const objList = v => Array.isArray(v) && v.every(isPlainObj);
-const strList = v => Array.isArray(v) && v.every(s => typeof s === 'string');
-/** Cost items as system.js reads them: a finite £ amount, a whole year from 0, text label and kind. */
-const costsOk = v => v == null || (Array.isArray(v) && v.length <= MAX_SCENARIO_COSTS && v.every(c => isPlainObj(c)
-    && typeof c.gbp === 'number' && Number.isFinite(c.gbp) && Math.abs(c.gbp) <= 1e7
-    && (c.year === undefined || (Number.isInteger(c.year) && c.year >= 0 && c.year <= 100))
-    && (c.label === undefined || typeof c.label === 'string')
-    && (c.kind === undefined || typeof c.kind === 'string')));
-/** A battery (or power station): an object whose station spec, if any, lists its panels as objects. */
-const batteryOk = b => optObj(b) && (!b || (optObj(b.ups) && (!b.ups || b.ups.pvArrays == null || objList(b.ups.pvArrays))));
-
-/**
- * Check one saved scenario from a settings file. Every field Compare, Design, Orientation and the
- * engine iterate or look inside must have the type they expect — a list where they map or filter,
- * an object where they read a property — or the whole scenario is left out (a hand-edited
- * `costs: "free"` used to throw in Compare and leave it blank on every visit). A missing or blank
- * name becomes the id, and a long one is cut to MAX_SCENARIO_NAME. Pure, exported for tests.
- * @param {unknown} x
- * @returns {{ sys: object, why?: undefined } | { sys?: undefined, why: string }}
- */
-export function checkSavedScenario(x) {
-    if (!isPlainObj(x) || typeof x.id !== 'string' || !x.id || x.id.length > 80) return { why: 'not a scenario' };
-    const why = (() => {
-        if (x.name != null && typeof x.name !== 'string') return 'its name isn’t text';
-        if (x.route !== undefined && !SCENARIO_ROUTES.includes(x.route)) return 'an unknown kind of setup';
-        if (!costsOk(x.costs)) return 'its costs aren’t a list of prices';
-        if (x.sourceIds != null && !strList(x.sourceIds)) return 'its products aren’t a list of ids';
-        if (x.arrays != null && !objList(x.arrays)) return 'its panels aren’t a list';
-        if (!optObj(x.inverter)) return 'its inverter isn’t a description';
-        if (!batteryOk(x.battery)) return 'its battery isn’t a description';
-        const u = x.upgrade;
-        if (!optObj(u) || (u && (!costsOk(u.costs) || (u.addArrays != null && !objList(u.addArrays)) || !batteryOk(u.battery)))) return 'its later upgrade isn’t a description';
-        if (!optObj(x.export)) return 'its export tariff isn’t a description';
-        if (x.notes != null && !strList(x.notes)) return 'its notes aren’t text';
-        for (const k of ['priceOverride', 'featured', 'canCurtail']) if (x[k] != null && typeof x[k] !== 'boolean') return `“${k}” isn’t on/off`;
-        for (const k of ['overrideOf', 'kitId', 'spotId']) if (x[k] != null && typeof x[k] !== 'string') return `“${k}” isn’t text`;
-        return null;
-    })();
-    if (why) return { why };
-    const name = typeof x.name === 'string' && x.name.trim() ? x.name.slice(0, MAX_SCENARIO_NAME) : x.id;
-    return { sys: name === x.name ? x : { ...x, name } };
-}
 
 /**
  * Check a settings file before anything from it is shown or stored. Only keys this page can
@@ -788,7 +745,7 @@ export default {
     jump(id) {
         const sec = this.el.querySelector(`[data-sec="${id}"]`);
         if (!sec) return;
-        sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        sec.scrollIntoView({ behavior: this.ctx.ui.scrollBehavior(), block: 'start' });
         try { history.replaceState(null, '', `#method?s=${id}`); } catch { /* sandboxed: keep the old hash */ }
         this.params = { s: id };
         const h = sec.querySelector('h2');

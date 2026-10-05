@@ -6,8 +6,8 @@
  *
  *   node projects/solar-calculator/scripts/build-demo.mjs [researchDir]
  *
- * researchDir defaults to $SOLAR_RESEARCH_DIR, else the research folder this project was
- * built from. Outputs (in projects/solar-calculator/data/):
+ * researchDir (or $SOLAR_RESEARCH_DIR) is the folder of research snapshots the data was built
+ * from; it is not committed (docs/solar-calculator/README.md). Outputs (in projects/solar-calculator/data/):
  *
  *   demo.json      12 months of real London (region C) half-hours on the LOCAL-day window
  *                  [2025-09-30T23:00Z, 2026-09-30T23:00Z) = 17 520 slots = 365 local days:
@@ -36,7 +36,11 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 // SOLAR_DATA_OUT writes elsewhere (e.g. to diff a rebuild against the committed files first)
 const OUT = process.env.SOLAR_DATA_OUT ?? join(HERE, '..', 'data');
-const R = process.argv[2] ?? process.env.SOLAR_RESEARCH_DIR ?? '/home/zack/.claude/jobs/52762e7f/tmp/research';
+const R = process.argv[2] ?? process.env.SOLAR_RESEARCH_DIR;
+if (!R) {
+    console.error('usage: node projects/solar-calculator/scripts/build-demo.mjs <researchDir>  (or set SOLAR_RESEARCH_DIR)');
+    process.exit(1);
+}
 const SLOT = 1_800_000;
 const START = Date.parse('2025-09-30T23:00:00Z');
 const N = 17_520;
@@ -217,7 +221,7 @@ function buildKits() {
         if (pv) o.pvInputs = pv;
         return o;
     });
-    write('kits.json', { version: 1, source: 'research/plugin-kits-verified.json (verified live 2026-10-05)', priceDate: BUILD_DATE, kits });
+    write('kits.json', { version: 1, source: 'plugin-kits-verified.json snapshot, verified live 2026-10-05 (see docs/solar-calculator/VERIFY-market.md)', priceDate: BUILD_DATE, kits });
 }
 
 const STATION_FIELDS = ['id', 'brand', 'model', 'kind', 'usableKwh', 'acOutputW', 'acChargeW', 'acChargeAdjustable', 'acInputLimitW',
@@ -267,7 +271,7 @@ function buildStations() {
     const meta = read('ups/power-stations-verified.meta.json');
     write('stations.json', {
         version: 1,
-        source: 'research/ups/power-stations-verified.json (verified live 2026-10-05; VERIFY-ups corrections applied)',
+        source: 'power-stations-verified.json snapshot, verified live 2026-10-05 with the corrections in docs/solar-calculator/VERIFY-ups.md',
         priceDate: BUILD_DATE,
         conventions: {
             usableKwh: meta.conventions?.usableKwh, fixedLossW: meta.conventions?.fixedLossW,
@@ -283,7 +287,7 @@ function buildStations() {
 function buildConstants() {
     const c = read('plugin-market-constants.verified.json');
     delete c.enaRegister?.snapshot;
-    write('constants.json', { version: 1, source: 'research/plugin-market-constants.verified.json (verified 2026-10-05)', ...c });
+    write('constants.json', { version: 1, source: 'plugin-market-constants.verified.json snapshot, verified 2026-10-05 (see docs/solar-calculator/VERIFY-market.md)', ...c });
 }
 
 function write(name, obj) {

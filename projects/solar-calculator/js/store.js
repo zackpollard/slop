@@ -8,7 +8,14 @@
  *
  * The API key lives outside the state object on purpose: it is never written into the persisted
  * JSON (so exports and bug reports can't leak it) and only reaches localStorage when the user
- * ticks "Remember on this device". Otherwise it stays in sessionStorage, which dies with the tab.
+ * ticks "Remember on this device". Otherwise it stays in sessionStorage, which a browser that
+ * restores tabs (Ctrl+Shift+T, session restore) brings back with the tab. A key Octopus rejects is
+ * dropped from both (app.js DataHub.load).
+ *
+ * Saved scenarios are checked on every read of the stored blob (system.js checkSavedScenario): an
+ * entry a view would choke on — junk imported before the settings-import checks existed, or a
+ * hand-edited blob — is dropped. Pins and the active id are left alone: they may name a ready-made
+ * option, and every view already copes with an id that no longer exists (as after a delete).
  *
  * Several tabs share the one localStorage blob. A tab must never write a stale copy over what
  * another tab saved (an old tab switching views used to wipe options saved in a newer one), so:
@@ -20,6 +27,8 @@
  *  - which tab is open (ui.tab) and the scenario on screen (scenarios.activeId) belong to each
  *    tab: they are written for the next fresh start, but never taken from another tab.
  */
+
+import { checkSavedScenario } from './system.js';
 
 export const STATE_KEY = 'solar-calculator:v1';
 export const API_KEY_KEY = 'solar-calculator:key';
@@ -213,6 +222,9 @@ export function createStore({ local, session, events } = {}) {
             if (!saved || saved.version !== 1) return null;
             const s = sanitize(defaultState(), saved);
             delete s.dataset;
+            // A saved scenario a view would choke on is dropped; a valid one is kept exactly as
+            // stored (the tabs' three-way merge compares entries by their JSON).
+            s.scenarios.saved = s.scenarios.saved.filter(x => !checkSavedScenario(x).why);
             return s;
         } catch {
             return null;

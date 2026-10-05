@@ -43,6 +43,8 @@
  * tie band as a wedge on a mini fan — "anything in here is fine"), and the Top-10 list.
  */
 
+import { pointArray } from '../system.js';
+
 const STYLE_ID = 'style-orientation';
 const TIE_PCT = 3;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -366,9 +368,13 @@ export function darkMonthsPhrase(dark) {
     return `from ${MONTH_NAMES[dark[0]]} to ${MONTH_NAMES[dark[dark.length - 1]]}`;
 }
 
-/** The system with the targeted panels pointed at (az, tilt) — mirrors SolarEngine._repoint. */
+/**
+ * The system with the targeted panels pointed at (az, tilt) — SolarEngine._repoint, so a picked
+ * cell runs the physics the rose shows: frame panels turned vertical become a wall mount (and a
+ * wall turned to a frame tilt a frame), via system.js pointArray.
+ */
 export function repoint(sys, tg, az, tilt) {
-    const re = (a, j) => (tg.index < 0 || j === tg.index ? { ...a, azimuth: az, tilt } : a);
+    const re = (a, j) => (tg.index < 0 || j === tg.index ? pointArray(a, az, tilt) : a);
     if (!tg.station) return { ...sys, arrays: sys.arrays.map(re) };
     const u = sys.battery.ups;
     return { ...sys, battery: { ...sys.battery, ups: { ...u, pvArrays: u.pvArrays.map(re) } } };
@@ -658,7 +664,7 @@ export default {
         }
         if (summary.engineUnavailable) {
             this.teardown();
-            this.el.replaceChildren(this.errorCard({ message: 'The simulation engine isn’t available, so directions can’t be compared. Your usage figures still work.' }, false));
+            this.el.replaceChildren(this.engineCard(summary));
             return;
         }
         if (!this.v || this.v.dsId !== summary.id) {
@@ -1007,7 +1013,7 @@ export default {
         this.fillScatter();
         this.fillNamed();
         this.announce(`Picked ${this.dirLabel(a, tilt)}.`);
-        if (window.matchMedia?.('(max-width: 1023px)').matches) this.v.parts.pickCard.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+        if (window.matchMedia?.('(max-width: 1023px)').matches) this.v.parts.pickCard.scrollIntoView?.({ block: 'nearest', behavior: this.ctx.ui.scrollBehavior?.() ?? 'smooth' });
         const token = this.token;
         this.runPick(token).then(() => {
             if (token !== this.token) return;
@@ -1105,6 +1111,46 @@ export default {
                 h('div', { class: 'row' },
                     retry ? ui.button({ label: 'Try again', icon: 'refresh', onClick: () => this.render() }) : null,
                     ui.button({ label: 'Check your data', kind: 'ghost', href: '#data', icon: 'arrowRight' }))) }));
+    },
+
+    /**
+     * The data is loaded but the calculator didn't start (part of it, or the product list, didn't
+     * download): say why in the engine's own words (summary.engineError), offer Try again, and
+     * point at what works meanwhile. The hub also retries by itself; when the calculator starts it
+     * fires 'dataset' and this view renders the rose.
+     */
+    engineCard(summary) {
+        const { ui } = this.ctx;
+        const h = ui.h;
+        const m = summary?.engineError?.message;
+        const why = typeof m === 'string' && m.trim() ? m.trim() : 'Part of the calculator didn’t download.';
+        const msg = h('span', null, `Directions can’t be compared until the calculator starts. ${why}`);
+        let retry = null;
+        if (typeof this.ctx.data.retryEngine === 'function') {
+            retry = ui.button({ label: 'Try again', icon: 'refresh', onClick: () => {
+                if (retry.disabled) return;
+                retry.disabled = true;
+                retry.setAttribute('aria-busy', 'true');
+                // on success the hub fires 'dataset' and render() rebuilds the view: keep focus in it
+                this.ctx.data.retryEngine().then(() => {
+                    if (!retry.isConnected && (!document.activeElement || document.activeElement === document.body)) this.el.querySelector('.view-title')?.focus();
+                }, err => {
+                    if (!retry.isConnected) return;
+                    const why = String(err?.message || err || '').replace(/^Your data is loaded, but the simulation engine couldn[’']t start\.\s*/, '').trim();
+                    msg.textContent = `Still can’t compare directions. ${why || 'Part of the calculator still didn’t download.'}`;
+                    retry.disabled = false;
+                    retry.removeAttribute('aria-busy');
+                    retry.focus();
+                });
+            } });
+        }
+        return h('div', { class: 'ov' }, this.headEl(null),
+            ui.card({ body: h('div', { class: 'ov-error' },
+                h('div', { class: 'notice notice-bad', role: 'alert' }, ui.icon('alert'), msg),
+                h('p', { class: 'muted', style: { margin: '0', fontSize: '14px' } }, 'This page also tries again by itself for a couple of minutes, and the directions appear as soon as it works. Your usage is on the Usage tab meanwhile.'),
+                h('div', { class: 'row' },
+                    retry,
+                    ui.button({ label: 'See your usage', kind: 'ghost', href: '#usage', icon: 'arrowRight' }))) }));
     },
 
     showError(err) {
@@ -1594,6 +1640,7 @@ export default {
         P.named.replaceChildren(ui.table({
             columns, rows, dense: true, caption: 'Named directions, full simulation',
             onRowClick: r => (r.mixed ? this.ctx.ui.toast('Those panels face different ways — pick one set under “Which panels” to move it.') : this.choose(r.az, r.tilt)),
+            rowAction: r => (r.mixed ? 'its panels face different ways' : 'try this direction'),
             rowClass: r => (sameDir(this.pick, r) ? 'is-highlight' : ''),
         }));
         const sel = this.sel;

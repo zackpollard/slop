@@ -173,7 +173,7 @@ const LOCATION_SOURCE = {
     postcode: 'Located from your postcode.',
     outcode: 'Located from the first half of your postcode (within a couple of km).',
     latlon: 'Located from the pin you dropped on the map.',
-    'region-centroid': 'Using the centre of your region — set your postcode for accurate sunshine.',
+    'region-centroid': 'Sunshine is for the centre of your region, not your home — set your postcode or drop a pin on the map for your own.',
     demo: 'The example home in central London.',
 };
 const WX_SOURCES = [
@@ -293,6 +293,26 @@ function deleteCacheDb() {
             req.onblocked = () => setTimeout(() => resolve(true), 1200);
         } catch { resolve(false); }
     });
+}
+
+/**
+ * The existing-solar date the account's own readings suggest (dataset.js existingGenerationHint:
+ * an export meter registered during the year, or a year that had to stop where the readings turn
+ * into runs of 0 kWh), with the sign in words — or null when a date is already set or there is
+ * no sign. Pure, exported for tests.
+ * @param {object|null} summary DatasetSummary
+ * @param {object|null} conn store.connection
+ * @param {(ms: number) => string} dateText formats a day (ms at noon UTC)
+ * @returns {{ date: string, why: string|null }|null}
+ */
+export function suggestedInstall(summary, conn, dateText) {
+    const g = summary?.existingGeneration;
+    const date = g?.suggestedInstallDate;
+    if (conn?.installedSolarDate || typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !finite(isoDay(date))) return null;
+    const why = date === g.exportSince ? `Your account has had an export meter since ${dateText(isoDay(date))}.`
+        : date === g.zeroTailFrom ? `Your readings after ${dateText(isoDay(date) - DAY_MS)} are mostly 0 kWh.`
+            : null;
+    return { date, why };
 }
 
 export default {
@@ -901,8 +921,9 @@ export default {
         } catch (err) {
             this.busy = false;
             if (isAbort(err)) { this.render(); return; }
-            // A key Octopus rejected is no use to keep (it stays in the field to correct).
-            if (err?.code === 'AUTH') { try { store.clearApiKey(); } catch { /* storage blocked */ } }
+            // A key Octopus rejected has already been dropped from storage (DataHub.load); it stays
+            // in the field to correct. The device card must stop saying it is kept.
+            if (err?.code === 'AUTH') this.paintDevice();
             pl.settle(run.failed || err?.step || null);
             form?.classList.remove('da-stale');
             this.el.querySelectorAll('.da-source, button[type="submit"]').forEach(b => { b.disabled = false; });
@@ -951,7 +972,7 @@ export default {
         requestAnimationFrame(() => {
             if (!panel.isConnected) return;
             const r = panel.getBoundingClientRect();
-            if (r.top < 70 || r.bottom > window.innerHeight - 8) panel.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            if (r.top < 70 || r.bottom > window.innerHeight - 8) panel.scrollIntoView({ block: 'center', behavior: this.ctx.ui.scrollBehavior() });
             const a = document.activeElement;
             if (!a || a === document.body || !a.isConnected || a.disabled) {
                 const first = panel.querySelector('input[type="radio"]:checked');
@@ -1293,6 +1314,17 @@ export default {
         });
     },
 
+    /**
+     * Rebuild the device card in place, without moving focus: for a change made elsewhere (a key
+     * Octopus rejected is dropped while the user is in a form or editor, not on this card).
+     */
+    paintDevice() {
+        const host = this.el?.querySelector('.da-device');
+        const s = this.ctx.data.summary();
+        if (!host || !s || host.contains(document.activeElement)) return;
+        host.replaceWith(this.deviceBody(s));
+    },
+
     forgetDevice() {
         const { ui, store } = this.ctx;
         ui.modal({
@@ -1407,9 +1439,13 @@ export default {
 
         // Existing solar
         if (src === 'octopus' || src === 'csv') {
-            row('installed', 'Existing solar', conn.installedSolarDate ? `Installed ${fmt.date(isoDay(conn.installedSolarDate))}` : 'None',
+            // The account's own readings can say when solar went in: name the sign, and the editor
+            // opens with that date filled in.
+            const sug = suggestedInstall(summary, conn, ms => fmt.date(ms));
+            row('installed', 'Existing solar', conn.installedSolarDate ? `Installed ${fmt.date(isoDay(conn.installedSolarDate))}` : sug ? 'None set' : 'None',
                 conn.installedSolarDate ? 'Readings from that date on are left out, because they are net of your own generation.'
-                    : 'If you already have panels or a battery, tell us when they went in — readings after that undercount your real use.',
+                    : sug ? `${sug.why ? `${sug.why} If solar or a battery went in around then` : `If solar or a battery went in around ${fmt.date(isoDay(sug.date))}`}, tell us when — the date is filled in for you.`
+                        : 'If you already have panels or a battery, tell us when they went in — readings after that undercount your real use.',
                 true, () => this.installedEditor(summary));
         }
 
@@ -1486,6 +1522,7 @@ export default {
         d.basis = (s && s.source !== 'demo' ? s.priceBasis : null) || c.priceBasis || 'mine';
         d.flatP = c.flatP ?? 25;
         d.installed = c.installedSolarDate || '';
+        d.installedHinted = false;          // the existing-solar editor may fill in a suggested date again
         d.region = c.region || '';
         d.serverW = s?.source === 'demo' ? s.serverW ?? c.demoServerW ?? 500 : c.demoServerW || 500;
         d.baseW = c.manual?.baseW ?? 400;
@@ -1563,12 +1600,20 @@ export default {
         return box;
     },
 
-    installedEditor() {
-        const { ui } = this.ctx;
+    installedEditor(summary = this.ctx.data.summary()) {
+        const { ui, fmt } = this.ctx;
         const d = this.draft;
-        const had = this.ctx.store.get().connection.installedSolarDate;
+        const conn = this.ctx.store.get().connection;
+        const had = conn.installedSolarDate;
         const opts = { row: 'installed', editLabel: 'Pick another date' };
-        const box = ui.h('div', { class: 'stack-sm' });
+        // No date set but the account's readings suggest one: fill it in once per opening (a date
+        // the user then clears stays cleared through re-renders).
+        const sug = suggestedInstall(summary, conn, ms => fmt.date(ms));
+        if (sug && !d.installed && !d.installedHinted) d.installed = sug.date;
+        d.installedHinted = true;
+        // (the row above names the sign; this only says where the date came from)
+        const box = ui.h('div', { class: 'stack-sm' },
+            sug ? ui.h('div', { class: 'da-hint' }, `The date below is filled in from your account — change it if your solar or battery went in on another day.`) : null);
         box.append(this.installedField(), ui.h('div', { class: 'da-editor-acts' },
             ui.button({ label: 'Re-fetch my usage', kind: 'primary', icon: 'refresh', onClick: () => this.refetch({ installedSolarDate: d.installed || null }, box, opts) }),
             had ? ui.button({ label: 'I have no solar', kind: 'ghost', onClick: () => { d.installed = ''; this.refetch({ installedSolarDate: null }, box, opts); } }) : null,
@@ -1683,6 +1728,8 @@ export default {
             if (isAbort(err)) { this.render(); return; }
             rows.forEach(r => r.classList.remove('da-stale'));
             this.el.querySelectorAll('.da-stale').forEach(x => x.classList.remove('da-stale'));
+            // a key Octopus rejected is dropped from storage (DataHub.load): the device card says so
+            if (err?.code === 'AUTH') this.paintDevice();
             pl.settle(state.failed || err?.step || null);
             const panel = this.failure(err, spec, {
                 // A picker's choice (meter or account) comes back in the spec it retries with.

@@ -1,6 +1,6 @@
 {
  "version": 1,
- "source": "research/plugin-kits-verified.json (verified live 2026-10-05)",
+ "source": "plugin-kits-verified.json snapshot, verified live 2026-10-05 (see docs/solar-calculator/VERIFY-market.md)",
  "priceDate": "2026-10-05",
  "kits": [
   {

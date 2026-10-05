@@ -519,13 +519,20 @@ export default {
         const ctxLine = [];
         const cov = ins?.coverage ?? summary?.coverage;
         const estDays = finite(cov?.extrapolatedSlots) ? Math.round(cov.extrapolatedSlots / 48) : 0;
+        // usage built from typed-in figures (coverage.synthetic 'manual') is no meter's
+        const manual = (cov?.synthetic || summary?.coverage?.synthetic || summary?.source) === 'manual';
+        const demo = !manual && (cov?.synthetic || summary?.coverage?.synthetic || summary?.source) === 'demo';
         if (summary) {
             const d = s => (s ? fmt.date(Date.parse(`${s}T12:00:00Z`)) : '?');
             const days = Math.round(summary.days || 0);
             // A short history is extended to a year; say how much of the year is real readings.
-            ctxLine.push(estDays > 0 && estDays < days
-                ? h('span', null, h('b', null, `${fmt.num(days - estDays)} days`), ` of half-hourly readings, extended to a year (${d(summary.from)} – ${d(summary.to)})`)
-                : h('span', null, h('b', null, `${fmt.num(days)} days`), ` of half-hourly use (${d(summary.from)} – ${d(summary.to)})`));
+            ctxLine.push(manual
+                ? h('span', null, h('b', null, 'A typical year'), ' built from your numbers')
+                : demo
+                    ? h('span', null, h('b', null, `${fmt.num(days)} days`), ` of the example household’s half-hourly use (${d(summary.from)} – ${d(summary.to)})`)
+                    : estDays > 0 && estDays < days
+                        ? h('span', null, h('b', null, `${fmt.num(days - estDays)} days`), ` of half-hourly readings, extended to a year (${d(summary.from)} – ${d(summary.to)})`)
+                        : h('span', null, h('b', null, `${fmt.num(days)} days`), ` of half-hourly use (${d(summary.from)} – ${d(summary.to)})`));
             if (summary.tariffCode) ctxLine.push(' · ', h('b', null, summary.tariffCode));
             // a postcode never breaks across lines ('SW1A' / '1AA' reads as two things)
             const postcode = summary.postcode ? String(summary.postcode).replace(/\s+/g, ' ') : null;
@@ -537,7 +544,7 @@ export default {
         return h('div', { class: 'view-head' }, h('div', null,
             h('div', { class: 'view-kicker' }, 'Usage'),
             // tabindex -1: focus lands here when a re-render removes the control the user just used
-            h('h1', { class: 'view-title', tabindex: '-1' }, 'What your meter says'),
+            h('h1', { class: 'view-title', tabindex: '-1' }, manual ? 'Your typical day (from your numbers)' : 'What your meter says'),
             summary ? h('div', { class: 'uv-context' }, h('p', { class: 'context-line' }, ctxLine), chip) : null));
     },
 

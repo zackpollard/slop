@@ -274,7 +274,7 @@ const DESIGN_CSS = `
 .dv-band-typ, .dv-band-act { position: absolute; top: 50%; border-radius: 50%; }
 .dv-band-typ { width: 14px; height: 14px; margin: -7px 0 0 -7px; background: var(--accent); box-shadow: 0 0 0 3px var(--surface); z-index: 2; }
 .dv-band-act { width: 14px; height: 14px; margin: -7px 0 0 -7px; border: 2px solid var(--text); background: var(--surface); z-index: 1; }
-.dv-band-ends { display: flex; justify-content: space-between; font-family: var(--font-mono); font-size: 10.5px; color: var(--faint); margin-top: 2px; }
+.dv-band-ends { display: flex; justify-content: space-between; font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); margin-top: 2px; }
 .dv-band-key { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; font-size: 12.5px; color: var(--text-2); }
 .dv-band-key b { font-family: var(--font-mono); font-weight: 600; color: var(--text); }
 .dv-key { display: block; }
@@ -1518,7 +1518,7 @@ export default {
         shell.rerun.show({
             text: `${fmt.gbp(h.savingsGbp)}/yr · ${h.capexGbp > 0 ? (h.paybackYears == null ? 'never pays back' : `pays back ${fmt.years(h.paybackYears)}`) : 'no cost'}`,
             actionLabel: 'See results',
-            onRun: () => { this.barShown = false; card.scrollIntoView({ behavior: 'smooth', block: 'start' }); card.querySelector('.dv-fig')?.focus?.({ preventScroll: true }); },
+            onRun: () => { this.barShown = false; card.scrollIntoView({ behavior: this.ctx.ui.scrollBehavior(), block: 'start' }); card.querySelector('.dv-fig')?.focus?.({ preventScroll: true }); },
             onDismiss: () => { this.barShown = false; },
         });
         this.barShown = true;
@@ -1691,7 +1691,7 @@ export default {
         const hl = res && sig(res.system) === sig(this.st.draft) ? res.headline : null;
         const mini = hl ? h('button', {
             type: 'button', class: 'link-btn dv-mini',
-            on: { click: () => { this.v.parts.readout.scrollIntoView({ behavior: 'smooth', block: 'start' }); this.v.parts.readout.querySelector('.dv-fig')?.focus({ preventScroll: true }); } },
+            on: { click: () => { this.v.parts.readout.scrollIntoView({ behavior: this.ctx.ui.scrollBehavior(), block: 'start' }); this.v.parts.readout.querySelector('.dv-fig')?.focus({ preventScroll: true }); } },
         }, this.ctx.ui.icon('arrowRight'), h('span', null, 'Saves ', h('b', null, this.ctx.fmt.gbp(hl.savingsGbp)), ' a year · ', hl.capexGbp > 0 ? ['pays back in ', h('b', null, this.ctx.fmt.years(hl.paybackYears))] : 'no cost', ' · see results')) : null;
         this.v.parts.bar.replaceChildren(...[
             h('div', { class: 'dv-bar-name' }, h('span', { class: 'dv-bar-pencil', 'aria-hidden': 'true' }, ui.icon('pencil')), nameInput, h('div', { class: 'dv-bar-badges' }, badges)),
@@ -2333,7 +2333,8 @@ export default {
                 this.numF('Output up to', ['inverter', 'inputs', q, 'maxAcW'], { unit: 'W', min: 0, max: 100000, step: 10 }))));
         return h('div', { class: 'stack-sm' },
             h('div', { class: 'dv-fields' },
-                this.numF('Most it sends to the house', ['inverter', 'acLimitW'], { unit: 'W', min: 0, max: 20000, step: 50, hint: `Anything above is lost to the ${fmt.num(d.inverter.acLimitW)} W limit.` }),
+                // min 1: the engine reads 0 W as "not set" (800 W), so a 0 here would show one limit and simulate another
+                this.numF('Most it sends to the house', ['inverter', 'acLimitW'], { unit: 'W', min: 1, max: 20000, step: 50, hint: `Anything above is lost to the ${fmt.num(d.inverter.acLimitW)} W limit.` }),
                 this.numF('Efficiency', ['inverter', 'etaNom'], { unit: '%', scale: 100, min: 50, max: 100, step: 0.1, dp: 1 }),
                 this.numF('Standby draw', ['inverter', 'standbyW'], { unit: 'W', min: 0, max: 100, step: 0.5, dp: 1 }),
                 this.togF('Its output can be limited remotely', ['inverter', 'supportsPowerLimit']),

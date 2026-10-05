@@ -1,6 +1,6 @@
 {
  "version": 1,
- "source": "research/ups/power-stations-verified.json (verified live 2026-10-05; VERIFY-ups corrections applied)",
+ "source": "power-stations-verified.json snapshot, verified live 2026-10-05 with the corrections in docs/solar-calculator/VERIFY-ups.md",
  "priceDate": "2026-10-05",
  "conventions": {
   "usableKwh": "Nominal LFP pack energy (DC). Notebookcheck two-load fits imply 97-101% of nominal is reachable before BMS cut-off, so treat nominal as usable DC and apply a reserve SoC (default 10%) in the simulator. AC energy delivered is lower - see the loss model.",

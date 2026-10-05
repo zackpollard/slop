@@ -88,6 +88,18 @@ const SCENARIO_MEMO_MAX = 80;
 export const ENGINE_RECOVERY_DELAYS_MS = [2000, 6000, 15000, 30000, 60000];
 
 /**
+ * Did Octopus turn the API key down? An AUTH error whose remedy is "check your key": a 401, the
+ * GraphQL invalid-key code (KT-CT-1139), no token issued, or a key no Octopus key could be. Not a
+ * token-header hiccup (AUTH with 'pickAccount') or "no account for this key" (ACCOUNT) — the key
+ * itself was accepted there.
+ * @param {any} err
+ * @returns {boolean}
+ */
+export function keyRejected(err) {
+    return err?.code === 'AUTH' && (err.action ?? 'checkKey') === 'checkKey';
+}
+
+/**
  * The price overrides Compare saved, as the verdict takes them: { [scenarioId]: { priceGbp, costs } }.
  * Compare's convention (views/compare.js): a saved System with the auto scenario's id plus
  * { priceOverride: true, overrideOf: id } whose `costs` carry the user's prices; the first saved
@@ -210,6 +222,8 @@ export function createDataHub({ engine, store: st, onNavigate, recoveryDelaysMs 
         return stableKey({ f: financeOpts(), spots: s.spots, pb: s.projectBaseW, max: s.maxPaybackYears });
     };
     const dsId = () => st.get().dataset?.id ?? null;
+    /* The user's mount spots, always as a list ([] = the engine's defaults). */
+    const spotList = () => { const sp = st.get().settings.spots; return Array.isArray(sp) ? sp : []; };
     // Shared memo promises are handed out as derived promises so one caller can't cancel another's.
     const share = p => p.then(v => v);
     const overrides = () => priceOverrides(st.get().scenarios?.saved);
@@ -224,8 +238,9 @@ export function createDataHub({ engine, store: st, onNavigate, recoveryDelaysMs 
      */
     function startVerdict(entry, ov) {
         const s = st.get().settings;
-        const opts = { finance: financeOpts(), maxPaybackYears: s.maxPaybackYears ?? 10 };
-        if (s.spots?.length) opts.spots = s.spots;
+        // Spots always go, as a list: an empty one says "our default spots" explicitly, so the
+        // engine never keeps the spots of an earlier call.
+        const opts = { finance: financeOpts(), maxPaybackYears: s.maxPaybackYears ?? 10, spots: spotList() };
         if (Object.keys(ov).length) opts.overrides = ov;
         entry.partials = [];
         const job = track(engine.call('verdict', opts, {
@@ -300,8 +315,7 @@ export function createDataHub({ engine, store: st, onNavigate, recoveryDelaysMs 
         autoScenarios() {
             if (!dsId()) return Promise.reject(noDataset());
             if (!memoAuto) {
-                const spots = st.get().settings.spots;
-                const job = track(engine.call('autoScenarios', spots?.length ? { spots } : {}));
+                const job = track(engine.call('autoScenarios', { spots: spotList() }));
                 memoAuto = job;
                 job.catch(() => { if (memoAuto === job) memoAuto = null; });
             }
@@ -476,6 +490,12 @@ export function createDataHub({ engine, store: st, onNavigate, recoveryDelaysMs 
             } catch (err) {
                 if (err?.name === 'AbortError') { if (loadJob === job) setStatus(st.get().dataset ? 'ready' : prev === 'error' ? 'error' : 'empty'); }
                 else setStatus(st.get().dataset ? 'ready' : 'error');
+                // A key Octopus turned down is no use to keep, in this tab or on this device —
+                // whichever path loaded it (the Data form, a re-fetch, the reload at start-up). Only
+                // the key this load used: one stored since (a corrected paste) is left alone.
+                if (spec?.kind === 'octopus' && keyRejected(err)) {
+                    try { if (st.getApiKey?.() === spec.apiKey) st.clearApiKey?.(); } catch { /* storage blocked: nothing kept */ }
+                }
                 throw err;
             } finally {
                 if (loadJob === job) loadJob = null;
